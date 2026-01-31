@@ -6,7 +6,7 @@ import os
 st.set_page_config(page_title="Amazon FBA Inventory", layout="wide")
 st.title("📦 Amazon FBA Inventory Dashboard")
 
-DATABASE_URL = st.secrets["DATABASE_URL"]
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 @st.cache_data(ttl=60)
 def load_data():
