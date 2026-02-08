@@ -421,12 +421,36 @@ else:
     with tab5:
         st.subheader("📋 Data Table")
         
-        # Excel Export
+        # Excel Export - з обробкою помилок
         buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_filtered.to_excel(writer, index=False, sheet_name='Inventory')
-        buffer.seek(0)
-        st.download_button(label=t["download_excel"], data=buffer, file_name=f"inventory_{selected_date}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        
+        # Підготовка даних
+        df_excel = df_filtered.copy()
+        df_excel = df_excel.fillna('')
+        
+        for col in df_excel.select_dtypes(include=['object']).columns:
+            df_excel[col] = df_excel[col].astype(str).str[:32000]
+        
+        try:
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_excel.to_excel(writer, index=False, sheet_name='Inventory')
+            buffer.seek(0)
+            
+            st.download_button(
+                label=t["download_excel"], 
+                data=buffer, 
+                file_name=f"inventory_{selected_date}.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        except Exception as e:
+            st.error(f"Помилка експорту Excel: {e}")
+            csv_data = df_filtered.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download CSV", 
+                data=csv_data, 
+                file_name=f"inventory_{selected_date}.csv", 
+                mime="text/csv"
+            )
         
         st.dataframe(df_filtered, use_container_width=True)
 
@@ -628,18 +652,47 @@ else:
                 use_container_width=True
             )
             
-            # Excel Export
+            # Excel Export - з обробкою помилок
             buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df_show.to_excel(writer, index=False, sheet_name='Orders')
-            buffer.seek(0)
             
-            st.download_button(
-                label="📥 Download Orders Excel",
-                data=buffer,
-                file_name=f"orders_{start_date}_to_{end_date}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            # Підготовка даних для Excel (очищення проблемних значень)
+            df_excel = df_show.copy()
+            
+            # 1. Конвертуємо дати в строки (уникаємо NaT проблем)
+            if 'Order Date' in df_excel.columns:
+                df_excel['Order Date'] = df_excel['Order Date'].astype(str).replace('NaT', '')
+            
+            # 2. Заміна NaN та None на порожні строки
+            df_excel = df_excel.fillna('')
+            
+            # 3. Обмежуємо довжину текстових полів (Excel limit = 32,767 символів)
+            for col in df_excel.select_dtypes(include=['object']).columns:
+                df_excel[col] = df_excel[col].astype(str).str[:32000]
+            
+            # 4. Записуємо в Excel
+            try:
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_excel.to_excel(writer, index=False, sheet_name='Orders')
+                buffer.seek(0)
+                
+                st.download_button(
+                    label="📥 Download Orders Excel",
+                    data=buffer,
+                    file_name=f"orders_{start_date}_to_{end_date}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            except Exception as e:
+                st.error(f"Помилка експорту Excel: {e}")
+                st.info("Спробуйте експорт в CSV замість цього:")
+                
+                # Fallback: CSV export
+                csv_data = df_show.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Orders CSV",
+                    data=csv_data,
+                    file_name=f"orders_{start_date}_to_{end_date}.csv",
+                    mime="text/csv"
+                )
 
 # Footer info
 st.sidebar.markdown("---")
