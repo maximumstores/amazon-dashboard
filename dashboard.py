@@ -169,22 +169,48 @@ def load_data():
 
 @st.cache_data(ttl=60)
 def load_orders():
-    """Load Orders Data"""
+    """Load Orders Data with proper price calculation"""
     try:
         engine = get_engine()
         with engine.connect() as conn:
             df = pd.read_sql(text("SELECT * FROM orders ORDER BY \"Order Date\" DESC"), conn)
         
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Виправлення дат
         df['Order Date'] = pd.to_datetime(df['Order Date'], dayfirst=True, errors='coerce')
         
-        for col in ['Quantity', 'Item Price', 'Item Tax', 'Shipping Price']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        # 🔥 ВИПРАВЛЕНО: Шукаємо правильні назви колонок
+        column_mappings = {
+            'Quantity': ['Quantity', 'quantity', 'qty'],
+            'Item Price': ['Item Price', 'item-price', 'item_price', 'price'],
+            'Item Tax': ['Item Tax', 'item-tax', 'item_tax', 'tax'],
+            'Shipping Price': ['Shipping Price', 'shipping-price', 'shipping_price', 'shipping'],
+        }
         
-        if 'Item Price' in df.columns and 'Quantity' in df.columns:
-            df['Total Price'] = df['Item Price'] * df['Quantity']
+        for target_col, possible_names in column_mappings.items():
+            found = False
+            for col_name in possible_names:
+                if col_name in df.columns:
+                    df[target_col] = pd.to_numeric(df[col_name], errors='coerce').fillna(0)
+                    found = True
+                    break
+            if not found:
+                df[target_col] = 0
+        
+        # 🔥 ОБЧИСЛЕННЯ Total Price
+        df['Total Price'] = df['Item Price'] * df['Quantity']
+        
+        # Debug output (буде видно в консолі Streamlit)
+        total_revenue = df['Total Price'].sum()
+        total_items = df['Quantity'].sum()
+        print(f"📊 Orders loaded: {len(df)} rows")
+        print(f"💰 Total Revenue: ${total_revenue:,.2f}")
+        print(f"📦 Total Items: {total_items}")
         
         return df
+        
     except Exception as e:
         st.error(f"Помилка завантаження orders: {e}")
         return pd.DataFrame()
@@ -292,10 +318,10 @@ def show_overview(df_filtered, t, selected_date):
 
     with col3:
         with st.container(border=True):
-            st.markdown("#### 📋 Data Table")
+            st.markdown("#### 📋 FBA Data Table")
             st.markdown("Full excel export")
-            if st.button("📋 View Data Table →", key="btn_table", width='stretch', type="primary"):
-                st.session_state.report_choice = "📋 Data Table"
+            if st.button("📋 View FBA Data →", key="btn_table", width='stretch', type="primary"):
+                st.session_state.report_choice = "📋 FBA Inventory Table"
                 st.rerun()
 
     st.markdown("---")
@@ -534,11 +560,11 @@ def show_ai_forecast(df, t):
 
 
 def show_data_table(df_filtered, t, selected_date):
-    """📋 Таблиця даних"""
-    st.markdown("### 📊 Inventory Dataset")
+    """📋 Таблиця даних FBA Inventory"""
+    st.markdown("### 📊 FBA Inventory Dataset")
     
     csv = df_filtered.to_csv(index=False).encode('utf-8')
-    st.download_button(label="📥 Download CSV", data=csv, file_name="inventory.csv", mime="text/csv")
+    st.download_button(label="📥 Download CSV", data=csv, file_name="fba_inventory.csv", mime="text/csv")
     
     st.dataframe(df_filtered, width='stretch', height=600)
 
@@ -574,14 +600,23 @@ def show_orders():
     st.plotly_chart(fig, width='stretch')
     
     col1, col2 = st.columns(2)
-    top_sku = df_filtered.groupby('SKU')['Total Price'].sum().nlargest(10).reset_index()
-    fig2 = px.bar(top_sku, x='Total Price', y='SKU', orientation='h', title="Top 10 SKU by Revenue")
-    col1.plotly_chart(fig2, width='stretch')
     
-    status_counts = df_filtered['Order Status'].value_counts().reset_index()
-    status_counts.columns = ['Status', 'Count']
-    fig3 = px.pie(status_counts, values='Count', names='Status', title="Order Status")
-    col2.plotly_chart(fig3, width='stretch')
+    with col1:
+        st.markdown("#### 🏆 Top 10 SKU by Revenue")
+        top_sku = df_filtered.groupby('SKU')['Total Price'].sum().nlargest(10).reset_index()
+        fig2 = px.bar(top_sku, x='Total Price', y='SKU', orientation='h')
+        fig2.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig2, width='stretch')
+    
+    with col2:
+        st.markdown("#### 📊 Order Status Distribution")
+        if 'Order Status' in df_filtered.columns:
+            status_counts = df_filtered['Order Status'].value_counts().reset_index()
+            status_counts.columns = ['Status', 'Count']
+            fig3 = px.pie(status_counts, values='Count', names='Status', hole=0.4)
+            st.plotly_chart(fig3, width='stretch')
+        else:
+            st.info("Order Status column not available")
 
 # ============================================
 # MAIN APP LOGIC
@@ -634,7 +669,7 @@ report_options = [
     "🛒 Orders Analytics",
     "🐢 Inventory Health (Aging)",
     "🧠 AI Forecast",
-    "📋 Data Table"
+    "📋 FBA Inventory Table"
 ]
 
 current_index = 0
@@ -656,8 +691,8 @@ elif report_choice == "🐢 Inventory Health (Aging)":
     show_aging(df_filtered, t)
 elif report_choice == "🧠 AI Forecast":
     show_ai_forecast(df, t)
-elif report_choice == "📋 Data Table":
+elif report_choice == "📋 FBA Inventory Table":
     show_data_table(df_filtered, t, selected_date)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v2.4 (Fixed)")
+st.sidebar.caption("📦 Amazon FBA BI System v2.5 (Orders Fixed)")
