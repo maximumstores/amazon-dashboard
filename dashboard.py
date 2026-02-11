@@ -617,14 +617,35 @@ def show_data_table(df_filtered, t, selected_date):
     
     st.dataframe(df_filtered, width='stretch', height=600)
 
-
 def show_orders():
-    """🛒 Замовлення"""
+    """🛒 Замовлення з DEBUG"""
     df_orders = load_orders()
+    
     if df_orders.empty:
         st.warning("⚠️ Дані відсутні. Запустіть amazon_orders_loader.py")
         return
+    
+    # 🔥 DEBUG PANEL
+    with st.expander("🔍 DEBUG: Database Columns Info"):
+        st.write("**Total rows in orders table:**", len(df_orders))
+        st.write("**Columns in DataFrame:**")
+        st.code(", ".join(df_orders.columns.tolist()))
         
+        st.write("**First row sample:**")
+        st.dataframe(df_orders.head(1))
+        
+        st.write("**Column types:**")
+        st.write(df_orders.dtypes)
+        
+        st.write("**Calculated fields:**")
+        st.write(f"- Item Price sum: {df_orders['Item Price'].sum()}")
+        st.write(f"- Quantity sum: {df_orders['Quantity'].sum()}")
+        st.write(f"- Total Price sum: {df_orders['Total Price'].sum()}")
+        
+        st.write("**Sample calculation (first 5 rows):**")
+        sample = df_orders[['Item Price', 'Quantity', 'Total Price']].head(5)
+        st.dataframe(sample)
+    
     st.sidebar.markdown("---")
     st.sidebar.subheader("🛒 Orders Filters")
     
