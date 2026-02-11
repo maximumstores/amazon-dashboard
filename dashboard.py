@@ -269,13 +269,14 @@ def show_overview(df_filtered, t, selected_date):
     st.markdown("---")
     
     # === NAVIGATION CARDS ===
-    col1, col2, col3 = st.columns(3)
+    # ROW 1
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         with st.container(border=True):
             st.markdown(f"#### {t['settlements_title']}")
             st.markdown("Actual Payouts, Net Profit, Fees")
-            if st.button("🏦 View Finance (Payouts) →", key="btn_settlements", width='stretch', type="primary"):
+            if st.button("🏦 View Finance (Payouts) →", key="btn_settlements", use_container_width=True, type="primary"):
                 st.session_state.report_choice = "🏦 Settlements (Payouts)"
                 st.rerun()
 
@@ -283,15 +284,23 @@ def show_overview(df_filtered, t, selected_date):
         with st.container(border=True):
             st.markdown("#### 🛒 Orders Analytics")
             st.markdown("Sales Trends, Top Products")
-            if st.button("📊 View Orders Report →", key="btn_orders", width='stretch', type="primary"):
+            if st.button("📊 View Orders Report →", key="btn_orders", use_container_width=True, type="primary"):
                 st.session_state.report_choice = "🛒 Orders Analytics"
                 st.rerun()
     
     with col3:
         with st.container(border=True):
+            st.markdown("#### 📦 Returns Analytics")
+            st.markdown("Return rates, Problem SKUs")
+            if st.button("📦 View Returns →", key="btn_returns", use_container_width=True, type="primary"):
+                st.session_state.report_choice = "📦 Returns Analytics"
+                st.rerun()
+    
+    with col4:
+        with st.container(border=True):
             st.markdown("#### 💰 Inventory Value")
             st.markdown("Money map, Pricing analytics")
-            if st.button("💰 View Inventory Value →", key="btn_finance", width='stretch', type="primary"):
+            if st.button("💰 View Inventory Value →", key="btn_finance", use_container_width=True, type="primary"):
                 st.session_state.report_choice = "💰 Inventory Value (CFO)"
                 st.rerun()
     
@@ -304,7 +313,7 @@ def show_overview(df_filtered, t, selected_date):
         with st.container(border=True):
             st.markdown("#### 🧠 AI Forecast")
             st.markdown("Sold-out predictions")
-            if st.button("🧠 View AI Forecast →", key="btn_ai", width='stretch', type="primary"):
+            if st.button("🧠 View AI Forecast →", key="btn_ai", use_container_width=True, type="primary"):
                 st.session_state.report_choice = "🧠 AI Forecast"
                 st.rerun()
 
@@ -312,7 +321,7 @@ def show_overview(df_filtered, t, selected_date):
         with st.container(border=True):
             st.markdown("#### 🐢 Inventory Health")
             st.markdown("Aging analysis")
-            if st.button("🐢 View Health Report →", key="btn_health", width='stretch', type="primary"):
+            if st.button("🐢 View Health Report →", key="btn_health", use_container_width=True, type="primary"):
                 st.session_state.report_choice = "🐢 Inventory Health (Aging)"
                 st.rerun()
 
@@ -320,7 +329,7 @@ def show_overview(df_filtered, t, selected_date):
         with st.container(border=True):
             st.markdown("#### 📋 FBA Data Table")
             st.markdown("Full excel export")
-            if st.button("📋 View FBA Data →", key="btn_table", width='stretch', type="primary"):
+            if st.button("📋 View FBA Data →", key="btn_table", use_container_width=True, type="primary"):
                 st.session_state.report_choice = "📋 FBA Inventory Table"
                 st.rerun()
 
@@ -336,8 +345,123 @@ def show_overview(df_filtered, t, selected_date):
             text='Available', color='Available', color_continuous_scale='Blues'
         )
         fig_bar.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
-        st.plotly_chart(fig_bar, width='stretch')
+        st.plotly_chart(fig_bar, use_container_width=True)
 
+def show_returns():
+    """📦 Returns Analytics"""
+    
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            df_returns = pd.read_sql(text("SELECT * FROM returns ORDER BY \"Return Date\" DESC"), conn)
+    except Exception as e:
+        st.error(f"Error loading returns: {e}")
+        return
+    
+    if df_returns.empty:
+        st.warning("⚠️ No returns data. Run amazon_returns_loader.py")
+        return
+    
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📦 Returns Filters")
+    
+    # Date filter
+    df_returns['Return Date'] = pd.to_datetime(df_returns['Return Date'], errors='coerce')
+    min_date = df_returns['Return Date'].min().date()
+    max_date = df_returns['Return Date'].max().date()
+    
+    date_range = st.sidebar.date_input(
+        "📅 Return Date:",
+        value=(max_date - dt.timedelta(days=7), max_date),
+        min_value=min_date,
+        max_value=max_date
+    )
+    
+    if len(date_range) == 2:
+        mask = (df_returns['Return Date'].dt.date >= date_range[0]) & \
+               (df_returns['Return Date'].dt.date <= date_range[1])
+        df_filtered = df_returns[mask]
+    else:
+        df_filtered = df_returns
+    
+    # KPIs
+    st.markdown("### 📦 Returns Overview")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    total_returns = len(df_filtered)
+    unique_skus = df_filtered['SKU'].nunique()
+    unique_orders = df_filtered['Order ID'].nunique()
+    
+    # Calculate return rate (need orders data)
+    try:
+        with engine.connect() as conn:
+            df_orders = pd.read_sql(text("SELECT COUNT(DISTINCT \"Order ID\") as total FROM orders"), conn)
+            total_orders = df_orders['total'].iloc[0] if not df_orders.empty else 1
+            return_rate = (unique_orders / total_orders * 100) if total_orders > 0 else 0
+    except:
+        return_rate = 0
+    
+    col1.metric("📦 Total Returns", f"{total_returns:,}")
+    col2.metric("📦 Unique SKUs", unique_skus)
+    col3.metric("📦 Affected Orders", unique_orders)
+    col4.metric("📊 Return Rate", f"{return_rate:.1f}%")
+    
+    st.markdown("---")
+    
+    # Charts
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🏆 Top 10 Returned SKUs")
+        top_skus = df_filtered['SKU'].value_counts().head(10).reset_index()
+        top_skus.columns = ['SKU', 'Returns']
+        
+        fig = px.bar(top_skus, x='Returns', y='SKU', orientation='h')
+        fig.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 📊 Return Reasons")
+        if 'Reason' in df_filtered.columns:
+            reasons = df_filtered['Reason'].value_counts().head(10).reset_index()
+            reasons.columns = ['Reason', 'Count']
+            
+            fig = px.pie(reasons, values='Count', names='Reason', hole=0.4)
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Reason data not available")
+    
+    # Return trend
+    st.markdown("#### 📈 Returns Over Time")
+    daily_returns = df_filtered.groupby(df_filtered['Return Date'].dt.date).size().reset_index()
+    daily_returns.columns = ['Date', 'Returns']
+    
+    fig = px.line(daily_returns, x='Date', y='Returns', markers=True)
+    fig.update_layout(height=300)
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Detailed table
+    st.markdown("#### 📋 Recent Returns (Last 100)")
+    display_cols = ['Return Date', 'SKU', 'Product Name', 'Quantity', 'Reason', 'Status']
+    available_cols = [c for c in display_cols if c in df_filtered.columns]
+    
+    st.dataframe(
+        df_filtered[available_cols].sort_values('Return Date', ascending=False).head(100),
+        use_container_width=True
+    )
+    
+    # SKU Analysis
+    st.markdown("#### 🔍 SKU Return Analysis")
+    sku_analysis = df_filtered.groupby('SKU').agg({
+        'Quantity': 'sum',
+        'Order ID': 'nunique'
+    }).reset_index()
+    sku_analysis.columns = ['SKU', 'Total Returned', 'Orders Affected']
+    sku_analysis = sku_analysis.sort_values('Total Returned', ascending=False).head(20)
+    
+    st.dataframe(sku_analysis, use_container_width=True)
 
 def show_settlements(t):
     """💰 Actual Financial Settlements Report"""
@@ -429,7 +553,7 @@ def show_settlements(t):
                 marker_color=daily_trend['Net Amount'].apply(lambda x: 'green' if x >= 0 else 'red'),
             ))
             fig_trend.update_layout(height=400, yaxis_title=f"Net Amount ({selected_currency})")
-            st.plotly_chart(fig_trend, width='stretch')
+            st.plotly_chart(fig_trend, use_container_width=True)
         except Exception as e:
             st.error(f"Chart error: {e}")
 
@@ -441,7 +565,7 @@ def show_settlements(t):
                 cost_breakdown = df_costs.groupby('Transaction Type')['Amount'].sum().abs().reset_index()
                 fig_pie = px.pie(cost_breakdown, values='Amount', names='Transaction Type', hole=0.4)
                 fig_pie.update_layout(height=400)
-                st.plotly_chart(fig_pie, width='stretch')
+                st.plotly_chart(fig_pie, use_container_width=True)
             else:
                 st.info("No costs in selected period")
         except Exception as e:
@@ -455,7 +579,7 @@ def show_settlements(t):
         
         st.dataframe(
             df_filtered[available_cols].sort_values('Posted Date', ascending=False).head(100), 
-            width='stretch'
+            use_container_width=True
         )
     except Exception as e:
         st.error(f"Table error: {e}")
@@ -484,11 +608,11 @@ def show_inventory_finance(df_filtered, t):
             df_money, path=['Store Name', 'SKU'], values='Stock Value',
             color='Stock Value', color_continuous_scale='RdYlGn_r'
         )
-        st.plotly_chart(fig_tree, width='stretch')
+        st.plotly_chart(fig_tree, use_container_width=True)
     
     st.subheader(t["top_money_sku"])
     df_top = df_filtered[['SKU', 'Product Name', 'Available', 'Price', 'Stock Value']].sort_values('Stock Value', ascending=False).head(10)
-    st.dataframe(df_top.style.format({'Price': "${:.2f}", 'Stock Value': "${:,.2f}"}), width='stretch')
+    st.dataframe(df_top.style.format({'Price': "${:.2f}", 'Stock Value': "${:,.2f}"}), use_container_width=True)
 
 def show_aging(df_filtered, t):
     """🐢 Здоров'я складу (Aging)"""
@@ -531,7 +655,7 @@ def show_aging(df_filtered, t):
             st.subheader(t["chart_age"])
             fig_pie = px.pie(age_sums, values='Units', names='Age Group', hole=0.4)
             fig_pie.update_layout(height=400)
-            st.plotly_chart(fig_pie, width='stretch')
+            st.plotly_chart(fig_pie, use_container_width=True)
             
         with col2:
             st.subheader(t["chart_velocity"])
@@ -555,7 +679,7 @@ def show_aging(df_filtered, t):
                         log_x=True
                     )
                     fig_scatter.update_layout(height=400)
-                    st.plotly_chart(fig_scatter, width='stretch')
+                    st.plotly_chart(fig_scatter, use_container_width=True)
                 else:
                     st.info("Недостатньо даних для графіка velocity")
             else:
@@ -601,7 +725,7 @@ def show_ai_forecast(df, t):
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=sku_data['date'], y=sku_data['Available'], name='Historical'))
             fig.add_trace(go.Scatter(x=df_forecast['date'], y=df_forecast['Predicted'], name='Forecast', line=dict(dash='dash', color='red')))
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning(t["ai_error"])
     else:
@@ -615,7 +739,7 @@ def show_data_table(df_filtered, t, selected_date):
     csv = df_filtered.to_csv(index=False).encode('utf-8')
     st.download_button(label="📥 Download CSV", data=csv, file_name="fba_inventory.csv", mime="text/csv")
     
-    st.dataframe(df_filtered, width='stretch', height=600)
+    st.dataframe(df_filtered, use_container_width=True, height=600)
 
 def show_orders():
     """🛒 Замовлення з DEBUG"""
@@ -667,7 +791,7 @@ def show_orders():
     st.markdown("#### 📈 Orders per Day")
     daily = df_filtered.groupby(df_filtered['Order Date'].dt.date)['Total Price'].sum().reset_index()
     fig = px.bar(daily, x='Order Date', y='Total Price', title="Daily Revenue")
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
     
     col1, col2 = st.columns(2)
     
@@ -676,7 +800,7 @@ def show_orders():
         top_sku = df_filtered.groupby('SKU')['Total Price'].sum().nlargest(10).reset_index()
         fig2 = px.bar(top_sku, x='Total Price', y='SKU', orientation='h')
         fig2.update_layout(yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig2, width='stretch')
+        st.plotly_chart(fig2, use_container_width=True)
     
     with col2:
         st.markdown("#### 📊 Order Status Distribution")
@@ -684,7 +808,7 @@ def show_orders():
             status_counts = df_filtered['Order Status'].value_counts().reset_index()
             status_counts.columns = ['Status', 'Count']
             fig3 = px.pie(status_counts, values='Count', names='Status', hole=0.4)
-            st.plotly_chart(fig3, width='stretch')
+            st.plotly_chart(fig3, use_container_width=True)
         else:
             st.info("Order Status column not available")
 
@@ -699,7 +823,7 @@ lang_option = st.sidebar.selectbox("🌍 Language", ["UA 🇺🇦", "EN 🇺🇸
 lang = "UA" if "UA" in lang_option else "EN" if "EN" in lang_option else "RU"
 t = translations[lang]
 
-if st.sidebar.button(t["update_btn"], width='stretch'):
+if st.sidebar.button(t["update_btn"], use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
@@ -731,12 +855,12 @@ else:
 
 st.sidebar.markdown("---")
 st.sidebar.header("📊 Reports")
-
 report_options = [
     "🏠 Overview",
     "🏦 Settlements (Payouts)",
     "💰 Inventory Value (CFO)",
     "🛒 Orders Analytics",
+    "📦 Returns Analytics",
     "🐢 Inventory Health (Aging)",
     "🧠 AI Forecast",
     "📋 FBA Inventory Table"
@@ -749,6 +873,7 @@ if st.session_state.report_choice in report_options:
 report_choice = st.sidebar.radio("Select Report:", report_options, index=current_index)
 st.session_state.report_choice = report_choice
 
+# === REPORT ROUTING (FIXED) ===
 if report_choice == "🏠 Overview":
     show_overview(df_filtered, t, selected_date)
 elif report_choice == "🏦 Settlements (Payouts)":
@@ -757,6 +882,8 @@ elif report_choice == "💰 Inventory Value (CFO)":
     show_inventory_finance(df_filtered, t)
 elif report_choice == "🛒 Orders Analytics":
     show_orders()
+elif report_choice == "📦 Returns Analytics":
+    show_returns()
 elif report_choice == "🐢 Inventory Health (Aging)":
     show_aging(df_filtered, t)
 elif report_choice == "🧠 AI Forecast":
@@ -765,4 +892,4 @@ elif report_choice == "📋 FBA Inventory Table":
     show_data_table(df_filtered, t, selected_date)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v2.5 (Orders Fixed)")
+st.sidebar.caption("📦 Amazon FBA BI System v2.5 (Returns Added)")
