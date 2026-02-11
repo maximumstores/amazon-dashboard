@@ -490,31 +490,80 @@ def show_inventory_finance(df_filtered, t):
     df_top = df_filtered[['SKU', 'Product Name', 'Available', 'Price', 'Stock Value']].sort_values('Stock Value', ascending=False).head(10)
     st.dataframe(df_top.style.format({'Price': "${:.2f}", 'Stock Value': "${:,.2f}"}), width='stretch')
 
-
 def show_aging(df_filtered, t):
     """🐢 Здоров'я складу (Aging)"""
+    
+    # Перевірка чи DataFrame не порожній
+    if df_filtered.empty:
+        st.warning("Немає даних для відображення")
+        return
+    
     age_cols = ['Upto 90 Days', '91 to 180 Days', '181 to 270 Days', '271 to 365 Days', 'More than 365 Days']
+    
+    # Знаходимо які колонки дійсно існують
     valid_age_cols = [c for c in age_cols if c in df_filtered.columns]
     
-    if valid_age_cols and df_filtered[valid_age_cols].sum().sum() > 0:
-        age_sums = df_filtered[valid_age_cols].sum().reset_index()
+    if not valid_age_cols:
+        st.warning("Дані про вік інвентарю відсутні. Перевірте звіт AGED у ETL.")
+        return
+    
+    try:
+        # Конвертуємо колонки в числа
+        df_age = df_filtered[valid_age_cols].copy()
+        for col in valid_age_cols:
+            df_age[col] = pd.to_numeric(df_age[col], errors='coerce').fillna(0)
+        
+        # Перевіряємо чи є дані
+        total_aged = df_age.sum().sum()
+        
+        if total_aged == 0:
+            st.info("Всі товари свіжі - немає застарілого інвентарю")
+            return
+        
+        # Створюємо підсумок по групам
+        age_sums = df_age.sum().reset_index()
         age_sums.columns = ['Age Group', 'Units']
+        age_sums = age_sums[age_sums['Units'] > 0]  # Тільки ненульові
         
         col1, col2 = st.columns(2)
+        
         with col1:
             st.subheader(t["chart_age"])
             fig_pie = px.pie(age_sums, values='Units', names='Age Group', hole=0.4)
+            fig_pie.update_layout(height=400)
             st.plotly_chart(fig_pie, width='stretch')
             
         with col2:
             st.subheader(t["chart_velocity"])
-            fig_scatter = px.scatter(
-                df_filtered, x='Available', y='Velocity', size='Stock Value',
-                color='Store Name', hover_name='SKU', log_x=True
-            )
-            st.plotly_chart(fig_scatter, width='stretch')
-    else:
-        st.warning("Дані про вік інвентарю відсутні. Перевірте звіт AGED у ETL.")
+            # Перевіряємо чи є потрібні колонки
+            if 'Available' in df_filtered.columns and 'Velocity' in df_filtered.columns and 'Stock Value' in df_filtered.columns:
+                # Фільтруємо валідні дані
+                df_scatter = df_filtered[
+                    (df_filtered['Available'] > 0) & 
+                    (df_filtered['Velocity'] >= 0) & 
+                    (df_filtered['Stock Value'] > 0)
+                ].copy()
+                
+                if not df_scatter.empty:
+                    fig_scatter = px.scatter(
+                        df_scatter, 
+                        x='Available', 
+                        y='Velocity', 
+                        size='Stock Value',
+                        color='Store Name' if 'Store Name' in df_scatter.columns else None,
+                        hover_name='SKU',
+                        log_x=True
+                    )
+                    fig_scatter.update_layout(height=400)
+                    st.plotly_chart(fig_scatter, width='stretch')
+                else:
+                    st.info("Недостатньо даних для графіка velocity")
+            else:
+                st.warning("Відсутні колонки для графіка velocity")
+                
+    except Exception as e:
+        st.error(f"Помилка обробки даних aging: {e}")
+        st.info("Спробуйте перезавантажити сторінку або оберіть іншу дату")
 
 
 def show_ai_forecast(df, t):
