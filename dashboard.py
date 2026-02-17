@@ -268,7 +268,9 @@ def load_sales_traffic():
     """Load Sales & Traffic data from spapi.sales_traffic"""
     try:
         engine = get_engine()
-        with engine.connect() as conn:
+        with engine.begin() as conn:
+            # Устанавливаем search_path чтобы видеть схему spapi
+            conn.execute(text("SET search_path TO spapi, public"))
             df = pd.read_sql(text("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC"), conn)
         if df.empty:
             return pd.DataFrame()
@@ -288,9 +290,13 @@ def load_sales_traffic():
 
         df['report_date'] = pd.to_datetime(df['report_date'], errors='coerce')
         df = df.dropna(subset=['report_date'])
+        
+        print(f"📈 Sales & Traffic loaded: {len(df)} rows")
         return df
     except Exception as e:
         st.error(f"Error loading sales & traffic: {e}")
+        import traceback
+        print(f"Sales & Traffic error: {traceback.format_exc()}")
         return pd.DataFrame()
 
 # ============================================
