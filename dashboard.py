@@ -263,8 +263,8 @@ def load_settlements():
         st.error(f"Error loading settlements: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=60)
-def load_sales_traffic():
+@st.cache_data(ttl=300)
+def load_sales_traffic(_v=2):
     """Load Sales & Traffic data from spapi.sales_traffic"""
     import psycopg2
     db_url = os.getenv("DATABASE_URL")
@@ -419,23 +419,7 @@ def show_sales_traffic(t):
     df_st = load_sales_traffic()
 
     if df_st.empty:
-        st.warning("⚠️ No Sales & Traffic data found.")
-        # Debug info
-        st.markdown("**Debug info:**")
-        import psycopg2
-        db_url = os.getenv("DATABASE_URL")
-        st.code(f"DATABASE_URL set: {bool(db_url)}")
-        st.code(f"DATABASE_URL starts with: {db_url[:20] if db_url else 'NOT SET'}...")
-        try:
-            conn = psycopg2.connect(db_url)
-            cur = conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM spapi.sales_traffic")
-            count = cur.fetchone()[0]
-            st.success(f"Direct psycopg2 query: {count} rows found!")
-            cur.close()
-            conn.close()
-        except Exception as e:
-            st.error(f"Direct query error: {e}")
+        st.warning("⚠️ No Sales & Traffic data. Run sales_traffic_loader.py first.")
         return
 
     # === SIDEBAR FILTERS ===
