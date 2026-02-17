@@ -267,11 +267,11 @@ def load_settlements():
 def load_sales_traffic():
     """Load Sales & Traffic data from spapi.sales_traffic"""
     try:
-        engine = get_engine()
-        with engine.begin() as conn:
-            # Устанавливаем search_path чтобы видеть схему spapi
-            conn.execute(text("SET search_path TO spapi, public"))
-            df = pd.read_sql(text("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC"), conn)
+        import psycopg2
+        conn = psycopg2.connect(DATABASE_URL.replace("postgresql://", "postgres://", 1) if DATABASE_URL.startswith("postgresql://") else DATABASE_URL)
+        df = pd.read_sql("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC", conn)
+        conn.close()
+        
         if df.empty:
             return pd.DataFrame()
 
