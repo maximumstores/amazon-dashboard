@@ -263,19 +263,19 @@ def load_settlements():
         st.error(f"Error loading settlements: {e}")
         return pd.DataFrame()
 
+d@st.cache_data(ttl=60)
 def load_sales_traffic():
     """Load Sales & Traffic data from spapi.sales_traffic"""
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            result = conn.execute(text("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC"))
-            rows = result.fetchall()
-            columns = list(result.keys())
-        
-        if not rows:
+            df = pd.read_sql(
+                text('SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC'),
+                conn
+            )
+
+        if df.empty:
             return pd.DataFrame()
-        
-        df = pd.DataFrame(rows, columns=columns)
 
         numeric_cols = [
             'sessions', 'page_views', 'units_ordered', 'units_ordered_b2b',
@@ -293,8 +293,10 @@ def load_sales_traffic():
         df['report_date'] = pd.to_datetime(df['report_date'], errors='coerce')
         df = df.dropna(subset=['report_date'])
         return df
+
     except Exception as e:
-        print(f"SALES_TRAFFIC_ERROR: {e}")
+        # Показываем ошибку в UI а не только в консоли
+        st.error(f"❌ Sales & Traffic load error: {e}")
         return pd.DataFrame()
 
 # ============================================
