@@ -263,7 +263,7 @@ def load_settlements():
         st.error(f"Error loading settlements: {e}")
         return pd.DataFrame()
 
-d@st.cache_data(ttl=60)
+@st.cache_data(ttl=60)
 def load_sales_traffic():
     """Load Sales & Traffic data from spapi.sales_traffic"""
     try:
