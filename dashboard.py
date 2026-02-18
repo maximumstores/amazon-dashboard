@@ -222,19 +222,33 @@ def load_settlements():
 
 @st.cache_data(ttl=60)
 def load_sales_traffic():
-    """Load Sales & Traffic data from spapi.sales_traffic"""
-    try:
-        engine = create_engine(DATABASE_URL)  # без connect_args
-        with engine.connect() as conn:
-            # Явно ставим search_path перед запросом
-            conn.execute(text("SET search_path TO spapi, public"))
-            df = pd.read_sql(
-                text("SELECT * FROM sales_traffic ORDER BY report_date DESC"),
-                conn
-            )
+    """Load Sales & Traffic via psycopg2 directly (same as loader)"""
+    import psycopg2
+    import psycopg2.extras
 
-        if df.empty:
+    db_url = DATABASE_URL
+    if not db_url:
+        st.error("❌ DATABASE_URL not set")
+        return pd.DataFrame()
+
+    # psycopg2 требует postgresql://, а не postgres://
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+    conn = None
+    try:
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+        cur.execute("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC")
+        rows = cur.fetchall()
+        columns = [desc[0] for desc in cur.description]
+        cur.close()
+
+        if not rows:
             return pd.DataFrame()
+
+        df = pd.DataFrame(rows, columns=columns)
 
         numeric_cols = [
             'sessions', 'page_views', 'units_ordered', 'units_ordered_b2b',
@@ -260,6 +274,9 @@ def load_sales_traffic():
     except Exception as e:
         st.error(f"❌ Sales & Traffic error: {e}")
         return pd.DataFrame()
+    finally:
+        if conn:
+            conn.close()
 
 
 # ============================================
