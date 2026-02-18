@@ -19,7 +19,10 @@ if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 def get_engine():
-    return create_engine(DATABASE_URL)
+    return create_engine(
+        DATABASE_URL,
+        connect_args={"options": "-csearch_path=spapi,public"}
+    )
 
 translations = {
     "UA": {
@@ -219,31 +222,23 @@ def load_settlements():
 
 @st.cache_data(ttl=60)
 def load_sales_traffic():
-    """Load Sales & Traffic data — supports schema-qualified table"""
+    """Load Sales & Traffic data from spapi.sales_traffic
+    
+    Все колонки в таблице TEXT (так пишет лоадер), поэтому конвертируем в numeric.
+    search_path=spapi,public задан в get_engine() — поэтому просто 'sales_traffic'.
+    """
     try:
         engine = get_engine()
-        # Пробуем разные варианты запроса
-        queries = [
-            'SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC',
-            'SELECT * FROM sales_traffic ORDER BY report_date DESC',
-        ]
-        df = pd.DataFrame()
-        last_error = None
-        for q in queries:
-            try:
-                with engine.connect() as conn:
-                    df = pd.read_sql(text(q), conn)
-                if not df.empty:
-                    break
-            except Exception as e:
-                last_error = e
-                continue
+        with engine.connect() as conn:
+            df = pd.read_sql(
+                text("SELECT * FROM sales_traffic ORDER BY report_date DESC"),
+                conn
+            )
 
         if df.empty:
-            if last_error:
-                st.error(f"❌ Sales & Traffic DB error: {last_error}")
             return pd.DataFrame()
 
+        # Все поля хранятся как TEXT, конвертируем
         numeric_cols = [
             'sessions', 'page_views', 'units_ordered', 'units_ordered_b2b',
             'total_order_items', 'total_order_items_b2b',
@@ -252,6 +247,10 @@ def load_sales_traffic():
             'buy_box_percentage', 'unit_session_percentage',
             'mobile_sessions', 'mobile_page_views',
             'browser_sessions', 'browser_page_views',
+            'mobile_session_percentage', 'mobile_page_views_percentage',
+            'mobile_unit_session_percentage', 'mobile_buy_box_percentage',
+            'browser_session_percentage', 'browser_page_views_percentage',
+            'browser_unit_session_percentage', 'browser_buy_box_percentage',
         ]
         for col in numeric_cols:
             if col in df.columns:
@@ -368,32 +367,7 @@ def show_sales_traffic(t):
     df_st = load_sales_traffic()
 
     if df_st.empty:
-        st.error("❌ No Sales & Traffic data found in database.")
-        st.info("Проверь: таблица `spapi.sales_traffic` существует и содержит данные.")
-        # Показываем диагностику
-        try:
-            engine = get_engine()
-            with engine.connect() as conn:
-                schemas = pd.read_sql(
-                    text("SELECT schema_name FROM information_schema.schemata ORDER BY schema_name"),
-                    conn
-                )
-                st.write("**Schemas in DB:**", schemas['schema_name'].tolist())
-
-                tables = pd.read_sql(
-                    text("""
-                        SELECT table_schema, table_name
-                        FROM information_schema.tables
-                        WHERE table_type = 'BASE TABLE'
-                          AND table_schema NOT IN ('pg_catalog', 'information_schema')
-                        ORDER BY table_schema, table_name
-                    """),
-                    conn
-                )
-                st.write("**All tables:**")
-                st.dataframe(tables)
-        except Exception as e:
-            st.error(f"DB diagnostic error: {e}")
+        st.warning("⚠️ No Sales & Traffic data found.")
         return
 
     # === SIDEBAR FILTERS ===
