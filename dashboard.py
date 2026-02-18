@@ -9,6 +9,7 @@ import numpy as np
 import datetime as dt
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+from inventory_planning_section import show_inventory_planning
 
 load_dotenv()
 
@@ -567,25 +568,19 @@ def insights_orders(df_filtered):
 
 
 # ============================================
-# OVERVIEW CONSOLIDATED INSIGHTS (NEW)
+# OVERVIEW CONSOLIDATED INSIGHTS
 # ============================================
 
 def show_overview_insights(df_inventory):
-    """
-    Зведений блок інсайтів з усіх модулів на головному Overview.
-    Використовує Streamlit tabs для чіткого поділу.
-    """
     st.markdown("---")
     st.markdown("## 🧠 Business Intelligence: Зведені інсайти")
     st.caption("Автоматичний аналіз всіх модулів — без переходу по звітах")
 
-    # --- Load all data silently ---
     df_settlements = load_settlements()
     df_st          = load_sales_traffic()
     df_orders      = load_orders()
     df_returns_raw, df_orders_raw = load_returns()
 
-    # --- Prepare returns ---
     df_returns = pd.DataFrame()
     return_rate = 0
     if not df_returns_raw.empty:
@@ -613,7 +608,6 @@ def show_overview_insights(df_inventory):
                     return_rate = (unique_return_orders / total_orders * 100) if total_orders > 0 else 0
                     break
 
-    # --- Tab layout ---
     tabs = st.tabs([
         "💰 Inventory",
         "🏦 Settlements",
@@ -622,14 +616,12 @@ def show_overview_insights(df_inventory):
         "📦 Returns",
     ])
 
-    # TAB 1: Inventory
     with tabs[0]:
         if not df_inventory.empty and 'Stock Value' in df_inventory.columns:
             insights_inventory(df_inventory)
         else:
             st.info("📦 Дані по інвентарю відсутні")
 
-    # TAB 2: Settlements (last 30 days)
     with tabs[1]:
         if not df_settlements.empty:
             max_d = df_settlements['Posted Date'].max()
@@ -638,7 +630,6 @@ def show_overview_insights(df_inventory):
         else:
             st.info("🏦 Дані по виплатах відсутні. Запусти amazon_settlement_loader.py")
 
-    # TAB 3: Sales & Traffic (last 14 days)
     with tabs[2]:
         if not df_st.empty:
             max_d = df_st['report_date'].max()
@@ -659,7 +650,6 @@ def show_overview_insights(df_inventory):
         else:
             st.info("📈 Дані Sales & Traffic відсутні. Запусти sales_traffic_loader.py")
 
-    # TAB 4: Orders (last 30 days)
     with tabs[3]:
         if not df_orders.empty:
             max_d = df_orders['Order Date'].max()
@@ -668,7 +658,6 @@ def show_overview_insights(df_inventory):
         else:
             st.info("🛒 Дані замовлень відсутні. Запусти amazon_orders_loader.py")
 
-    # TAB 5: Returns (last 30 days)
     with tabs[4]:
         if not df_returns.empty:
             max_d = df_returns['Return Date'].max()
@@ -742,17 +731,17 @@ def show_overview(df_filtered, t, selected_date):
                 st.rerun()
     with col2:
         with st.container(border=True):
+            st.markdown("#### 📦 Inventory Planning ⭐")
+            st.markdown("Restock, Velocity, Aged Stock")
+            if st.button("📦 View Planning →", key="btn_planning", use_container_width=True, type="primary"):
+                st.session_state.report_choice = "📦 FBA Inventory Planning"
+                st.rerun()
+    with col3:
+        with st.container(border=True):
             st.markdown("#### 🧠 AI Forecast")
             st.markdown("Sold-out predictions")
             if st.button("🧠 View AI Forecast →", key="btn_ai", use_container_width=True, type="primary"):
                 st.session_state.report_choice = "🧠 AI Forecast"
-                st.rerun()
-    with col3:
-        with st.container(border=True):
-            st.markdown("#### 🐢 Inventory Health")
-            st.markdown("Aging analysis")
-            if st.button("🐢 View Health Report →", key="btn_health", use_container_width=True, type="primary"):
-                st.session_state.report_choice = "🐢 Inventory Health (Aging)"
                 st.rerun()
     with col4:
         with st.container(border=True):
@@ -773,9 +762,6 @@ def show_overview(df_filtered, t, selected_date):
         fig_bar.update_layout(yaxis={'categoryorder': 'total ascending'}, height=400)
         st.plotly_chart(fig_bar, use_container_width=True)
 
-    # =============================================
-    # 🧠 CONSOLIDATED INSIGHTS — всі модулі разом
-    # =============================================
     show_overview_insights(df_filtered)
 
 
@@ -1500,6 +1486,7 @@ report_options = [
     "🛒 Orders Analytics",
     "📦 Returns Analytics",
     "🐢 Inventory Health (Aging)",
+    "📦 FBA Inventory Planning",
     "🧠 AI Forecast",
     "📋 FBA Inventory Table"
 ]
@@ -1525,10 +1512,12 @@ elif report_choice == "📦 Returns Analytics":
     show_returns()
 elif report_choice == "🐢 Inventory Health (Aging)":
     show_aging(df_filtered, t)
+elif report_choice == "📦 FBA Inventory Planning":
+    show_inventory_planning(t)
 elif report_choice == "🧠 AI Forecast":
     show_ai_forecast(df, t)
 elif report_choice == "📋 FBA Inventory Table":
     show_data_table(df_filtered, t, selected_date)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v3.2")
+st.sidebar.caption("📦 Amazon FBA BI System v3.3")
