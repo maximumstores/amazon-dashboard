@@ -264,12 +264,11 @@ def load_settlements():
         return pd.DataFrame()
 
 @st.cache_data(ttl=300)
-def load_sales_traffic(cache_version=3):
+def load_sales_traffic(cache_version=4):
     """Load Sales & Traffic data from spapi.sales_traffic"""
     try:
-        engine = create_engine(DATABASE_URL, connect_args={"options": "-csearch_path=spapi,public"})
-        with engine.connect() as conn:
-            df = pd.read_sql(text("SELECT * FROM sales_traffic ORDER BY report_date DESC"), conn)
+        engine = get_engine()
+        df = pd.read_sql_query("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC", engine)
         
         if df.empty:
             return pd.DataFrame()
@@ -292,6 +291,7 @@ def load_sales_traffic(cache_version=3):
         return df
     except Exception as e:
         import traceback
+        st.error(f"Sales & Traffic DB error: {e}")
         print(f"❌ Sales & Traffic error:\n{traceback.format_exc()}")
         return pd.DataFrame()
 
