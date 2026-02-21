@@ -615,13 +615,12 @@ def make_amazon_url(domain, asin):
     return f"https://www.amazon.{domain}/dp/{asin}"
 
 
-def show_country_asin_insights(df, has_domain):
-    """Auto insight cards: worst country, worst ASIN, best country, most reviews."""
-    st.markdown("### 🧠 Автоінсайти по країнах та ASINах")
+def show_global_insights(df, has_domain):
+    """Big visual insight block: worst/best ASIN and country with mini progress bars."""
+    st.markdown("### 🧠 Автоінсайти")
 
-    cols = st.columns(4)
+    asin_stats, dom_stats = None, None
 
-    # --- Worst ASIN globally ---
     if 'asin' in df.columns:
         asin_stats = df.groupby('asin').agg(
             Reviews=('rating', 'count'),
@@ -631,27 +630,6 @@ def show_country_asin_insights(df, has_domain):
         asin_stats['Neg %'] = (asin_stats['Neg'] / asin_stats['Reviews'] * 100).round(1)
         asin_stats = asin_stats[asin_stats['Reviews'] >= 5]
 
-        if not asin_stats.empty:
-            worst_asin = asin_stats.loc[asin_stats['Neg %'].idxmax()]
-            best_asin  = asin_stats.loc[asin_stats['Rating'].idxmax()]
-
-            em = "🔴" if worst_asin['Neg %'] > 20 else "🟡"
-            with cols[0]:
-                insight_card(em, "Найгірший ASIN",
-                    f"<b>{worst_asin['asin']}</b><br>"
-                    f"Рейтинг: {worst_asin['Rating']:.2f}★ · "
-                    f"Негативних: <b>{worst_asin['Neg %']:.1f}%</b> ({int(worst_asin['Neg'])} відг.)",
-                    "#2b0d0d" if worst_asin['Neg %'] > 20 else "#2b2400"
-                )
-            with cols[1]:
-                insight_card("🟢", "Найкращий ASIN",
-                    f"<b>{best_asin['asin']}</b><br>"
-                    f"Рейтинг: <b>{best_asin['Rating']:.2f}★</b> · "
-                    f"Негативних: {best_asin['Neg %']:.1f}%",
-                    "#0d2b1e"
-                )
-
-    # --- Worst / Best country ---
     if has_domain and 'domain' in df.columns:
         dom_stats = df.groupby('domain').agg(
             Reviews=('rating', 'count'),
@@ -661,27 +639,254 @@ def show_country_asin_insights(df, has_domain):
         dom_stats['Neg %'] = (dom_stats['Neg'] / dom_stats['Reviews'] * 100).round(1)
         dom_stats = dom_stats[dom_stats['Reviews'] >= 5]
 
-        if not dom_stats.empty:
-            worst_dom = dom_stats.loc[dom_stats['Neg %'].idxmax()]
-            best_dom  = dom_stats.loc[dom_stats['Rating'].idxmax()]
-            worst_label = DOMAIN_LABELS.get(worst_dom['domain'], worst_dom['domain'])
-            best_label  = DOMAIN_LABELS.get(best_dom['domain'], best_dom['domain'])
+    col1, col2, col3, col4 = st.columns(4)
 
-            em = "🔴" if worst_dom['Neg %'] > 20 else "🟡"
-            with cols[2]:
-                insight_card(em, "Найгірша країна",
-                    f"<b>{worst_label}</b><br>"
-                    f"Рейтинг: {worst_dom['Rating']:.2f}★ · "
-                    f"Негативних: <b>{worst_dom['Neg %']:.1f}%</b>",
-                    "#2b0d0d" if worst_dom['Neg %'] > 20 else "#2b2400"
-                )
-            with cols[3]:
-                insight_card("🟢", "Найкраща країна",
-                    f"<b>{best_label}</b><br>"
-                    f"Рейтинг: <b>{best_dom['Rating']:.2f}★</b> · "
-                    f"Негативних: {best_dom['Neg %']:.1f}%",
-                    "#0d2b1e"
-                )
+    # ---- Worst ASIN ----
+    if asin_stats is not None and not asin_stats.empty:
+        worst_a = asin_stats.loc[asin_stats['Neg %'].idxmax()]
+        best_a  = asin_stats.loc[asin_stats['Rating'].idxmax()]
+
+        # Find which country worst ASIN belongs to
+        worst_asin_country = ""
+        if has_domain and 'domain' in df.columns:
+            asin_dom = df[df['asin'] == worst_a['asin']].groupby('domain')['rating'].count()
+            if not asin_dom.empty:
+                top_dom = asin_dom.idxmax()
+                worst_asin_country = DOMAIN_LABELS.get(top_dom, top_dom)
+
+        # Find which country best ASIN belongs to
+        best_asin_country = ""
+        if has_domain and 'domain' in df.columns:
+            asin_dom2 = df[df['asin'] == best_a['asin']].groupby('domain')['rating'].count()
+            if not asin_dom2.empty:
+                top_dom2 = asin_dom2.idxmax()
+                best_asin_country = DOMAIN_LABELS.get(top_dom2, top_dom2)
+
+        neg_pct = worst_a['Neg %']
+        bar_color = "#F44336" if neg_pct > 20 else "#FFC107"
+        country_line = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>🌍 {worst_asin_country}</div>" if worst_asin_country else ""
+
+        with col1:
+            st.markdown(f"""
+            <div style="background:#1e1e2e;border-left:5px solid {bar_color};border-radius:10px;padding:16px 20px;height:140px">
+              <div style="font-size:11px;color:#888;margin-bottom:4px">🔴 НАЙГІРШИЙ ASIN</div>
+              <div style="font-size:20px;font-weight:800;color:#fff;letter-spacing:1px">{worst_a['asin']}</div>
+              {country_line}
+              <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
+                <span style="color:#aaa;font-size:12px">⭐ {worst_a['Rating']:.2f}★</span>
+                <span style="color:{bar_color};font-size:12px;font-weight:700">🔴 {neg_pct:.1f}% neg</span>
+                <span style="color:#666;font-size:12px">{int(worst_a['Reviews'])} відг.</span>
+              </div>
+              <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
+                <div style="width:{min(neg_pct,100):.0f}%;background:{bar_color};border-radius:4px;height:5px"></div>
+              </div>
+            </div>""", unsafe_allow_html=True)
+
+        rating_color = "#4CAF50" if best_a['Rating'] >= 4.4 else "#FFC107"
+        country_line2 = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>🌍 {best_asin_country}</div>" if best_asin_country else ""
+        with col2:
+            st.markdown(f"""
+            <div style="background:#1e1e2e;border-left:5px solid {rating_color};border-radius:10px;padding:16px 20px;height:140px">
+              <div style="font-size:11px;color:#888;margin-bottom:4px">🟢 НАЙКРАЩИЙ ASIN</div>
+              <div style="font-size:20px;font-weight:800;color:#fff;letter-spacing:1px">{best_a['asin']}</div>
+              {country_line2}
+              <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
+                <span style="color:{rating_color};font-size:12px;font-weight:700">⭐ {best_a['Rating']:.2f}★</span>
+                <span style="color:#aaa;font-size:12px">🔴 {best_a['Neg %']:.1f}% neg</span>
+                <span style="color:#666;font-size:12px">{int(best_a['Reviews'])} відг.</span>
+              </div>
+              <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
+                <div style="width:{((best_a['Rating']-1)/4*100):.0f}%;background:{rating_color};border-radius:4px;height:5px"></div>
+              </div>
+            </div>""", unsafe_allow_html=True)
+
+    # ---- Worst / Best country ----
+    if dom_stats is not None and not dom_stats.empty:
+        worst_d = dom_stats.loc[dom_stats['Neg %'].idxmax()]
+        best_d  = dom_stats.loc[dom_stats['Rating'].idxmax()]
+        worst_label = DOMAIN_LABELS.get(worst_d['domain'], worst_d['domain'])
+        best_label  = DOMAIN_LABELS.get(best_d['domain'], best_d['domain'])
+
+        # Find which ASIN pulls worst country down
+        worst_country_asin = ""
+        if 'asin' in df.columns:
+            df_wdom = df[df['domain'] == worst_d['domain']]
+            if not df_wdom.empty:
+                per_asin = df_wdom.groupby('asin').agg(
+                    Neg=('rating', lambda x: (x<=2).sum()),
+                    Reviews=('rating','count')
+                ).reset_index()
+                per_asin['Neg %'] = per_asin['Neg'] / per_asin['Reviews'] * 100
+                per_asin = per_asin[per_asin['Reviews'] >= 3]
+                if not per_asin.empty:
+                    worst_country_asin = per_asin.loc[per_asin['Neg %'].idxmax(), 'asin']
+
+        # Find which ASIN lifts best country up
+        best_country_asin = ""
+        if 'asin' in df.columns:
+            df_bdom = df[df['domain'] == best_d['domain']]
+            if not df_bdom.empty:
+                per_asin2 = df_bdom.groupby('asin').agg(
+                    Rating=('rating','mean'), Reviews=('rating','count')
+                ).reset_index()
+                per_asin2 = per_asin2[per_asin2['Reviews'] >= 3]
+                if not per_asin2.empty:
+                    best_country_asin = per_asin2.loc[per_asin2['Rating'].idxmax(), 'asin']
+
+        neg_pct = worst_d['Neg %']
+        bar_color = "#F44336" if neg_pct > 20 else "#FFC107"
+        asin_line_w = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>📦 Головний: {worst_country_asin}</div>" if worst_country_asin else ""
+        asin_line_b = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>📦 Головний: {best_country_asin}</div>" if best_country_asin else ""
+
+        with col3:
+            st.markdown(f"""
+            <div style="background:#1e1e2e;border-left:5px solid {bar_color};border-radius:10px;padding:16px 20px;height:140px">
+              <div style="font-size:11px;color:#888;margin-bottom:4px">🔴 НАЙГІРША КРАЇНА</div>
+              <div style="font-size:18px;font-weight:800;color:#fff">{worst_label}</div>
+              {asin_line_w}
+              <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
+                <span style="color:#aaa;font-size:12px">⭐ {worst_d['Rating']:.2f}★</span>
+                <span style="color:{bar_color};font-size:12px;font-weight:700">🔴 {neg_pct:.1f}% neg</span>
+                <span style="color:#666;font-size:12px">{int(worst_d['Reviews'])} відг.</span>
+              </div>
+              <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
+                <div style="width:{min(neg_pct,100):.0f}%;background:{bar_color};border-radius:4px;height:5px"></div>
+              </div>
+            </div>""", unsafe_allow_html=True)
+
+        rating_color = "#4CAF50" if best_d['Rating'] >= 4.4 else "#FFC107"
+        with col4:
+            st.markdown(f"""
+            <div style="background:#1e1e2e;border-left:5px solid {rating_color};border-radius:10px;padding:16px 20px;height:140px">
+              <div style="font-size:11px;color:#888;margin-bottom:4px">🟢 НАЙКРАЩА КРАЇНА</div>
+              <div style="font-size:18px;font-weight:800;color:#fff">{best_label}</div>
+              {asin_line_b}
+              <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
+                <span style="color:{rating_color};font-size:12px;font-weight:700">⭐ {best_d['Rating']:.2f}★</span>
+                <span style="color:#aaa;font-size:12px">🔴 {best_d['Neg %']:.1f}% neg</span>
+                <span style="color:#666;font-size:12px">{int(best_d['Reviews'])} відг.</span>
+              </div>
+              <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
+                <div style="width:{((best_d['Rating']-1)/4*100):.0f}%;background:{rating_color};border-radius:4px;height:5px"></div>
+              </div>
+            </div>""", unsafe_allow_html=True)
+
+
+def show_single_asin_detail(df_asin, asin, has_domain):
+    """Detailed block for ONE selected ASIN: rating by country, star dist, top neg reviews."""
+    total = len(df_asin)
+    if total == 0:
+        st.info("Немає відгуків по цьому ASIN.")
+        return
+
+    avg_r   = df_asin['rating'].mean()
+    neg_cnt = int((df_asin['rating'] <= 2).sum())
+    pos_cnt = int((df_asin['rating'] >= 4).sum())
+    neg_pct = neg_cnt / total * 100
+
+    # ---- Mini KPI row ----
+    r_color = "#4CAF50" if avg_r >= 4.4 else "#FFC107" if avg_r >= 4.0 else "#F44336"
+    n_color = "#4CAF50" if neg_pct <= 10 else "#FFC107" if neg_pct <= 20 else "#F44336"
+
+    st.markdown(f"""
+    <div style="background:#1e1e2e;border-radius:12px;padding:18px 24px;margin-bottom:16px;display:flex;gap:40px;align-items:center">
+      <div>
+        <div style="font-size:11px;color:#888">ASIN</div>
+        <div style="font-size:20px;font-weight:800;color:#fff;letter-spacing:1px">{asin}</div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:#888">Середній рейтинг</div>
+        <div style="font-size:28px;font-weight:800;color:{r_color}">{avg_r:.2f}★</div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:#888">Всього відгуків</div>
+        <div style="font-size:28px;font-weight:800;color:#fff">{total}</div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:#888">🔴 Негативних</div>
+        <div style="font-size:28px;font-weight:800;color:{n_color}">{neg_pct:.1f}%</div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:#888">🟢 Позитивних</div>
+        <div style="font-size:28px;font-weight:800;color:#4CAF50">{pos_cnt/total*100:.1f}%</div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+
+    # ---- Star distribution ----
+    with col1:
+        st.markdown("#### ⭐ Розподіл зірок")
+        star_counts = df_asin['rating'].value_counts().reindex([5,4,3,2,1]).fillna(0).reset_index()
+        star_counts.columns = ['Stars', 'Count']
+        star_counts['Pct'] = (star_counts['Count'] / total * 100).round(1)
+        star_counts['label'] = star_counts['Stars'].astype(str) + '★'
+        color_map = {5:'#4CAF50',4:'#8BC34A',3:'#FFC107',2:'#FF9800',1:'#F44336'}
+        fig = go.Figure(go.Bar(
+            x=star_counts['Count'], y=star_counts['label'], orientation='h',
+            marker_color=[color_map.get(int(s),'#888') for s in star_counts['Stars']],
+            text=[f"{c:.0f} ({p:.0f}%)" for c,p in zip(star_counts['Count'], star_counts['Pct'])],
+            textposition='outside'
+        ))
+        fig.update_layout(
+            yaxis=dict(categoryorder='array', categoryarray=['1★','2★','3★','4★','5★']),
+            height=260, margin=dict(l=5,r=60,t=10,b=10)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ---- Rating by country (if domain available) ----
+    with col2:
+        if has_domain and 'domain' in df_asin.columns and df_asin['domain'].nunique() > 1:
+            st.markdown("#### 🌍 Рейтинг по країнах для цього ASIN")
+            dom_s = df_asin.groupby('domain').agg(
+                Reviews=('rating','count'), Rating=('rating','mean'),
+                Neg=('rating', lambda x: (x<=2).sum())
+            ).reset_index()
+            dom_s['Neg %'] = (dom_s['Neg']/dom_s['Reviews']*100).round(1)
+            dom_s['Country'] = dom_s['domain'].map(lambda x: DOMAIN_LABELS.get(x, x))
+            dom_s = dom_s.sort_values('Rating', ascending=True)
+            colors = ['#F44336' if r<4.0 else '#FFC107' if r<4.4 else '#4CAF50' for r in dom_s['Rating']]
+            fig2 = go.Figure(go.Bar(
+                x=dom_s['Rating'], y=dom_s['Country'], orientation='h',
+                marker_color=colors,
+                text=[f"{r:.2f}★  {n:.0f}% neg" for r,n in zip(dom_s['Rating'], dom_s['Neg %'])],
+                textposition='outside'
+            ))
+            fig2.add_vline(x=4.0, line_dash="dash", line_color="orange")
+            fig2.update_layout(height=260, xaxis_range=[1,5.8], margin=dict(l=5,r=80,t=10,b=10))
+            st.plotly_chart(fig2, use_container_width=True)
+        else:
+            st.markdown("#### 📊 Рейтинг по часу")
+            if 'review_date' in df_asin.columns:
+                df_time = df_asin.dropna(subset=['review_date']).copy()
+                df_time['month'] = df_time['review_date'].dt.to_period('M').astype(str)
+                monthly = df_time.groupby('month')['rating'].mean().reset_index()
+                fig_t = px.line(monthly, x='month', y='rating', markers=True)
+                fig_t.add_hline(y=4.0, line_dash='dash', line_color='orange')
+                fig_t.update_layout(height=260, yaxis_range=[1,5])
+                st.plotly_chart(fig_t, use_container_width=True)
+
+    # ---- Top negative reviews ----
+    st.markdown("#### 🔴 Останні негативні відгуки (1-2★)")
+    neg_df = df_asin[df_asin['rating'] <= 2].sort_values('review_date', ascending=False).head(5)
+    if not neg_df.empty:
+        for _, row in neg_df.iterrows():
+            domain_str = f" · {DOMAIN_LABELS.get(row.get('domain',''), row.get('domain',''))}" if 'domain' in neg_df.columns else ""
+            date_str = str(row['review_date'])[:10] if pd.notna(row.get('review_date')) else ''
+            stars = '★' * int(row['rating']) + '☆' * (5 - int(row['rating']))
+            title = row.get('title', '') or ''
+            content = (row.get('content', '') or '')[:300]
+            st.markdown(f"""
+            <div style="background:#1e1e2e;border-left:4px solid #F44336;border-radius:8px;padding:12px 16px;margin-bottom:8px">
+              <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                <span style="color:#F44336;font-weight:700">{stars}</span>
+                <span style="color:#666;font-size:12px">{date_str}{domain_str}</span>
+              </div>
+              <div style="color:#fff;font-weight:600;margin-bottom:4px">{title}</div>
+              <div style="color:#aaa;font-size:13px;line-height:1.5">{content}{"..." if len(row.get("content","") or "") > 300 else ""}</div>
+            </div>""", unsafe_allow_html=True)
+    else:
+        st.success("🎉 Негативних відгуків немає!")
 
 
 def show_asin_links_table(df, has_domain):
@@ -853,21 +1058,34 @@ def show_reviews(t):
     neg_count    = int((df['rating'] <= 2).sum())
     pos_count    = int((df['rating'] >= 4).sum())
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    total_asins = df['asin'].nunique() if 'asin' in df.columns else 0
+    total_asins_db = df_all['asin'].nunique() if 'asin' in df_all.columns else 0
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric(t["total_reviews"],     f"{total_revs:,}")
-    c2.metric(t["avg_review_rating"], f"{avg_rating:.2f} ⭐")
-    c3.metric(t["verified_pct"],      f"{verified_pct:.1f}%")
-    c4.metric("🔴 Негативних (1-2★)", f"{neg_count:,}")
-    c5.metric("🟢 Позитивних (4-5★)", f"{pos_count:,}")
+    c2.metric("📦 ASINів у фільтрі",  f"{total_asins:,}",
+              delta=f"з {total_asins_db} в базі" if total_asins != total_asins_db else None,
+              delta_color="off")
+    c3.metric(t["avg_review_rating"], f"{avg_rating:.2f} ⭐")
+    c4.metric(t["verified_pct"],      f"{verified_pct:.1f}%")
+    c5.metric("🔴 Негативних (1-2★)", f"{neg_count:,}")
+    c6.metric("🟢 Позитивних (4-5★)", f"{pos_count:,}")
 
     st.markdown("---")
 
     # ============================================
-    # 🧠 AUTO INSIGHTS — country & ASIN level
+    # 🧠 AUTO INSIGHTS — big visual cards
     # ============================================
-    show_country_asin_insights(df, has_domain)
+    show_global_insights(df_all if selected_asin is None else df, has_domain)
 
     st.markdown("---")
+
+    # ============================================
+    # 📦 SINGLE ASIN DETAIL (when ASIN selected)
+    # ============================================
+    if selected_asin is not None:
+        show_single_asin_detail(df, selected_asin, has_domain)
+        st.markdown("---")
 
     # ============================================
     # 🌍 COUNTRY BREAKDOWN
@@ -1576,4 +1794,4 @@ elif report_choice == "🧠 AI Forecast":              show_ai_forecast(df, t)
 elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filtered, t, selected_date)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v3.7 🌍")
+st.sidebar.caption("📦 Amazon FBA BI System v4.0 🌍")
