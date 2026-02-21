@@ -6,4 +6,4 @@ openpyxl
 scikit-learn
 python-dotenv
 SQLAlchemy
-
+matplotlib
