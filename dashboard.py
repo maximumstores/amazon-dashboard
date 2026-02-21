@@ -3,7 +3,6 @@ import pandas as pd
 import os
 import plotly.express as px
 import plotly.graph_objects as go
-import io
 from sklearn.linear_model import LinearRegression
 import numpy as np
 import datetime as dt
@@ -66,13 +65,12 @@ translations = {
         "st_conversion": "Конверсія",
         "st_revenue": "Дохід",
         "st_buy_box": "Buy Box %",
-        # Reviews
         "reviews_title": "⭐ Відгуки покупців",
         "total_reviews": "Всього відгуків",
         "avg_review_rating": "Середній рейтинг",
         "verified_pct": "Верифіковані (%)",
         "star_dist": "Розподіл по зірках",
-        "worst_asin": "Проблемні ASIN (1-2 зірки)",
+        "worst_asin": "Проблемні ASIN (1-2★)",
     },
     "EN": {
         "title": "📦 Amazon FBA: Business Intelligence Hub",
@@ -115,13 +113,12 @@ translations = {
         "st_conversion": "Conversion",
         "st_revenue": "Revenue",
         "st_buy_box": "Buy Box %",
-        # Reviews
         "reviews_title": "⭐ Customer Reviews",
         "total_reviews": "Total Reviews",
         "avg_review_rating": "Average Rating",
         "verified_pct": "Verified (%)",
         "star_dist": "Star Distribution",
-        "worst_asin": "Problematic ASINs (1-2 Stars)",
+        "worst_asin": "Problematic ASINs (1-2★)",
     },
     "RU": {
         "title": "📦 Amazon FBA: Business Intelligence Hub",
@@ -164,13 +161,12 @@ translations = {
         "st_conversion": "Конверсия",
         "st_revenue": "Доход",
         "st_buy_box": "Buy Box %",
-        # Reviews
         "reviews_title": "⭐ Отзывы покупателей",
         "total_reviews": "Всего отзывов",
         "avg_review_rating": "Средний рейтинг",
         "verified_pct": "Верифицированные (%)",
         "star_dist": "Распределение по звездам",
-        "worst_asin": "Проблемные ASIN (1-2 звезды)",
+        "worst_asin": "Проблемные ASIN (1-2★)",
     }
 }
 
@@ -198,11 +194,11 @@ def load_orders():
             df = pd.read_sql(text('SELECT * FROM orders ORDER BY "Order Date" DESC'), conn)
         if df.empty:
             return pd.DataFrame()
-        df['Order Date'] = pd.to_datetime(df['Order Date'], dayfirst=True, errors='coerce')
+        df['Order Date'] = pd.to_datetime(df['Order Date'], dayfirst=False, errors='coerce')
         column_mappings = {
-            'Quantity': ['Quantity', 'quantity', 'qty'],
-            'Item Price': ['Item Price', 'item-price', 'item_price', 'price'],
-            'Item Tax': ['Item Tax', 'item-tax', 'item_tax', 'tax'],
+            'Quantity':       ['Quantity', 'quantity', 'qty'],
+            'Item Price':     ['Item Price', 'item-price', 'item_price', 'price'],
+            'Item Tax':       ['Item Tax', 'item-tax', 'item_tax', 'tax'],
             'Shipping Price': ['Shipping Price', 'shipping-price', 'shipping_price', 'shipping'],
         }
         for target_col, possible_names in column_mappings.items():
@@ -229,9 +225,9 @@ def load_settlements():
             df = pd.read_sql(text('SELECT * FROM settlements ORDER BY "Posted Date" DESC'), conn)
         if df.empty:
             return pd.DataFrame()
-        df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0.0)
-        df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
-        df['Posted Date'] = pd.to_datetime(df['Posted Date'], dayfirst=True, errors='coerce')
+        df['Amount']      = pd.to_numeric(df['Amount'], errors='coerce').fillna(0.0)
+        df['Quantity']    = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
+        df['Posted Date'] = pd.to_datetime(df['Posted Date'], dayfirst=False, errors='coerce')
         if 'Currency' not in df.columns:
             df['Currency'] = 'USD'
         df = df.dropna(subset=['Posted Date'])
@@ -245,47 +241,39 @@ def load_settlements():
 def load_sales_traffic():
     import psycopg2
     import psycopg2.extras
-
     db_url = DATABASE_URL
     if not db_url:
         return pd.DataFrame()
-
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
-
     conn = None
     try:
         conn = psycopg2.connect(db_url)
-        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur  = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         cur.execute("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC")
-        rows = cur.fetchall()
+        rows    = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
         cur.close()
-
         if not rows:
             return pd.DataFrame()
-
         df = pd.DataFrame(rows, columns=columns)
-
         numeric_cols = [
-            'sessions', 'page_views', 'units_ordered', 'units_ordered_b2b',
-            'total_order_items', 'total_order_items_b2b',
-            'ordered_product_sales', 'ordered_product_sales_b2b',
-            'session_percentage', 'page_views_percentage',
-            'buy_box_percentage', 'unit_session_percentage',
-            'mobile_sessions', 'mobile_page_views',
-            'browser_sessions', 'browser_page_views',
-            'mobile_session_percentage', 'mobile_page_views_percentage',
-            'mobile_unit_session_percentage', 'mobile_buy_box_percentage',
-            'browser_session_percentage', 'browser_page_views_percentage',
-            'browser_unit_session_percentage', 'browser_buy_box_percentage',
+            'sessions','page_views','units_ordered','units_ordered_b2b',
+            'total_order_items','total_order_items_b2b',
+            'ordered_product_sales','ordered_product_sales_b2b',
+            'session_percentage','page_views_percentage',
+            'buy_box_percentage','unit_session_percentage',
+            'mobile_sessions','mobile_page_views',
+            'browser_sessions','browser_page_views',
+            'mobile_session_percentage','mobile_page_views_percentage',
+            'mobile_unit_session_percentage','mobile_buy_box_percentage',
+            'browser_session_percentage','browser_page_views_percentage',
+            'browser_unit_session_percentage','browser_buy_box_percentage',
         ]
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
         df['report_date'] = pd.to_datetime(df['report_date'], errors='coerce')
-
         if 'created_at' in df.columns:
             created = pd.to_datetime(df['created_at'], errors='coerce').dt.normalize()
             if df['report_date'].isna().all():
@@ -293,12 +281,10 @@ def load_sales_traffic():
             elif df['report_date'].isna().any():
                 mask = df['report_date'].isna()
                 df.loc[mask, 'report_date'] = created[mask]
-
         df['report_date'] = df['report_date'].dt.normalize()
         df = df.dropna(subset=['report_date'])
         return df
-
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
     finally:
         if conn:
@@ -313,7 +299,7 @@ def load_returns():
             df_returns = pd.read_sql(text('SELECT * FROM returns ORDER BY "Return Date" DESC'), conn)
             df_orders  = pd.read_sql(text("SELECT * FROM orders"), conn)
         return df_returns, df_orders
-    except Exception as e:
+    except Exception:
         return pd.DataFrame(), pd.DataFrame()
 
 
@@ -322,33 +308,35 @@ def load_reviews():
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            df = pd.read_sql(text('SELECT * FROM amazon_reviews ORDER BY created_at DESC'), conn)
+            df = pd.read_sql(text('SELECT * FROM amazon_reviews ORDER BY review_date DESC'), conn)
         if df.empty:
             return pd.DataFrame()
         df['review_date'] = pd.to_datetime(df['review_date'], errors='coerce')
-        df['rating'] = pd.to_numeric(df['rating'], errors='coerce').fillna(0)
+        df['rating']      = pd.to_numeric(df['rating'], errors='coerce').fillna(0).astype(int)
+        if 'is_verified' in df.columns:
+            df['is_verified'] = df['is_verified'].astype(bool)
         return df
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
 
 # ============================================
-# INSIGHT CARD
+# HELPERS
 # ============================================
 
 def insight_card(emoji, title, text, color="#1e1e2e"):
     st.markdown(f"""
-    <div style="
-        background: {color};
-        border-left: 4px solid #4472C4;
-        border-radius: 8px;
-        padding: 14px 18px;
-        margin-bottom: 10px;
-    ">
-        <div style="font-size:16px; font-weight:700; color:#fff; margin-bottom:4px;">{emoji} {title}</div>
-        <div style="font-size:14px; color:#ccc; line-height:1.5;">{text}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    <div style="background:{color};border-left:4px solid #4472C4;border-radius:8px;
+                padding:14px 18px;margin-bottom:10px;">
+        <div style="font-size:16px;font-weight:700;color:#fff;margin-bottom:4px;">{emoji} {title}</div>
+        <div style="font-size:14px;color:#ccc;line-height:1.5;">{text}</div>
+    </div>""", unsafe_allow_html=True)
+
+
+def balanced_reviews(df, max_per_star=100):
+    """Up to max_per_star reviews per rating level (1-5). Max 500 total."""
+    parts = [df[df['rating'] == s].head(max_per_star) for s in [1, 2, 3, 4, 5]]
+    return pd.concat(parts, ignore_index=True) if parts else df
 
 
 # ============================================
@@ -358,291 +346,159 @@ def insight_card(emoji, title, text, color="#1e1e2e"):
 def insights_sales_traffic(df_filtered, asin_stats):
     st.markdown("---")
     st.markdown("### 🧠 Автоматические инсайты")
-
     total_sessions = int(df_filtered['sessions'].sum())
     total_units    = int(df_filtered['units_ordered'].sum())
     total_revenue  = df_filtered['ordered_product_sales'].sum()
     avg_conv       = (total_units / total_sessions * 100) if total_sessions > 0 else 0
     avg_buy_box    = df_filtered['buy_box_percentage'].mean()
-
-    mobile_sessions  = df_filtered['mobile_sessions'].sum() if 'mobile_sessions' in df_filtered.columns else 0
-    browser_sessions = df_filtered['browser_sessions'].sum() if 'browser_sessions' in df_filtered.columns else 0
-    mobile_pct = (mobile_sessions / (mobile_sessions + browser_sessions) * 100) if (mobile_sessions + browser_sessions) > 0 else 0
-
-    avg_conv_all = asin_stats['Conv %'].median()
-    low_conv = asin_stats[(asin_stats['Sessions'] > asin_stats['Sessions'].median()) & (asin_stats['Conv %'] < avg_conv_all)]
-    low_bb   = asin_stats[asin_stats['Buy Box %'] < 80]
-    revenue_per_session = total_revenue / total_sessions if total_sessions > 0 else 0
-
+    mob            = df_filtered['mobile_sessions'].sum() if 'mobile_sessions' in df_filtered.columns else 0
+    bro            = df_filtered['browser_sessions'].sum() if 'browser_sessions' in df_filtered.columns else 0
+    mobile_pct     = (mob / (mob + bro) * 100) if (mob + bro) > 0 else 0
+    avg_conv_all   = asin_stats['Conv %'].median()
+    low_conv       = asin_stats[(asin_stats['Sessions'] > asin_stats['Sessions'].median()) & (asin_stats['Conv %'] < avg_conv_all)]
+    low_bb         = asin_stats[asin_stats['Buy Box %'] < 80]
+    rev_per_sess   = total_revenue / total_sessions if total_sessions > 0 else 0
     cols = st.columns(2)
     i = 0
-
-    if avg_conv >= 12:
-        txt = f"Конверсия <b>{avg_conv:.1f}%</b> — выше нормы Amazon (10-15%). Отличный результат, масштабируй рекламу на топ ASINы."
-        em, col = "🟢", "#0d2b1e"
-    elif avg_conv >= 8:
-        txt = f"Конверсия <b>{avg_conv:.1f}%</b> — в норме. Есть потенциал улучшить через A+ контент и отзывы."
-        em, col = "🟡", "#2b2400"
-    else:
-        txt = f"Конверсия <b>{avg_conv:.1f}%</b> — ниже нормы. Проверь главное фото, цену и отзывы на топ ASINах."
-        em, col = "🔴", "#2b0d0d"
-    with cols[i % 2]: insight_card(em, "Конверсия", txt, col)
-    i += 1
-
-    if avg_buy_box >= 95:
-        txt = f"Buy Box <b>{avg_buy_box:.1f}%</b> — отлично. Конкуренты не перебивают цену."
-        em, col = "🟢", "#0d2b1e"
-    elif avg_buy_box >= 80:
-        txt = f"Buy Box <b>{avg_buy_box:.1f}%</b> — норма. Но {len(low_bb)} ASINов теряют Buy Box — проверь их цены."
-        em, col = "🟡", "#2b2400"
-    else:
-        txt = f"Buy Box <b>{avg_buy_box:.1f}%</b> — критично низко! {len(low_bb)} ASINов теряют продажи конкурентам. Срочно проверь репрайсер."
-        em, col = "🔴", "#2b0d0d"
-    with cols[i % 2]: insight_card(em, "Buy Box", txt, col)
-    i += 1
-
-    if mobile_pct >= 60:
-        txt = f"<b>{mobile_pct:.0f}%</b> трафика с мобильного. Главное фото должно быть читаемым на экране 5″."
-        em, col = "📱", "#1a1a2e"
-    else:
-        txt = f"<b>{mobile_pct:.0f}%</b> мобильного трафика — ниже среднего по Amazon (~65%)."
-        em, col = "📱", "#1a1a2e"
-    with cols[i % 2]: insight_card(em, "Мобайл vs Браузер", txt, col)
-    i += 1
-
+    if avg_conv >= 12:   txt, em, col = f"Конверсия <b>{avg_conv:.1f}%</b> — выше нормы. Масштабируй рекламу!", "🟢", "#0d2b1e"
+    elif avg_conv >= 8:  txt, em, col = f"Конверсия <b>{avg_conv:.1f}%</b> — в норме. Потенциал через A+.", "🟡", "#2b2400"
+    else:                txt, em, col = f"Конверсия <b>{avg_conv:.1f}%</b> — ниже нормы. Проверь фото и цену.", "🔴", "#2b0d0d"
+    with cols[i%2]: insight_card(em, "Конверсия", txt, col); i+=1
+    if avg_buy_box >= 95:  txt, em, col = f"Buy Box <b>{avg_buy_box:.1f}%</b> — отлично!", "🟢", "#0d2b1e"
+    elif avg_buy_box >= 80: txt, em, col = f"Buy Box <b>{avg_buy_box:.1f}%</b> — норма. {len(low_bb)} ASINов теряют.", "🟡", "#2b2400"
+    else:                   txt, em, col = f"Buy Box <b>{avg_buy_box:.1f}%</b> — критично! Проверь репрайсер.", "🔴", "#2b0d0d"
+    with cols[i%2]: insight_card(em, "Buy Box", txt, col); i+=1
+    txt = f"<b>{mobile_pct:.0f}%</b> мобильного трафика {'— норма.' if mobile_pct >= 60 else '— ниже среднего ~65%.'}"
+    with cols[i%2]: insight_card("📱", "Мобайл", txt, "#1a1a2e"); i+=1
     if len(low_conv) > 0:
-        top_problem = low_conv.nlargest(1, 'Sessions').iloc[0]
-        txt = f"<b>{len(low_conv)} ASINов</b> с высоким трафиком и низкой конверсией. Самый критичный: <b>{top_problem['ASIN']}</b> — {int(top_problem['Sessions'])} сессий, конверсия {top_problem['Conv %']:.1f}%."
-        em, col = "🔴", "#2b0d0d"
-    else:
-        txt = "Все ASINы с высоким трафиком конвертят хорошо. Отличная работа!"
-        em, col = "🟢", "#0d2b1e"
-    with cols[i % 2]: insight_card(em, "Упущенная выручка", txt, col)
-    i += 1
-
-    txt = f"Каждая сессия приносит в среднем <b>${revenue_per_session:.2f}</b>. Увеличь трафик на 1000 сессий → +${revenue_per_session*1000:,.0f} выручки."
-    with cols[i % 2]: insight_card("💡", "Цена сессии", txt, "#1a1a2e")
-    i += 1
-
+        top = low_conv.nlargest(1,'Sessions').iloc[0]
+        txt, em, col = f"<b>{len(low_conv)} ASINов</b> с высоким трафиком и низкой конверсией. Критичный: <b>{top['ASIN']}</b>.", "🔴", "#2b0d0d"
+    else: txt, em, col = "Все ASINы с высоким трафиком конвертят хорошо!", "🟢", "#0d2b1e"
+    with cols[i%2]: insight_card(em, "Упущенная выручка", txt, col); i+=1
+    with cols[i%2]: insight_card("💡", "Цена сессии", f"Каждая сессия → <b>${rev_per_sess:.2f}</b>. +1000 сессий = +${rev_per_sess*1000:,.0f}.", "#1a1a2e"); i+=1
     if not asin_stats.empty:
-        top = asin_stats.nlargest(1, 'Revenue').iloc[0]
-        top_pct = (top['Revenue'] / total_revenue * 100) if total_revenue > 0 else 0
-        txt = f"<b>{top['ASIN']}</b> генерирует ${top['Revenue']:,.0f} ({top_pct:.0f}% всей выручки). Приоритет по рекламному бюджету и наличию на складе."
-        with cols[i % 2]: insight_card("🏆", "Главный ASIN", txt, "#1a2b1e")
+        top = asin_stats.nlargest(1,'Revenue').iloc[0]
+        top_pct = top['Revenue']/total_revenue*100 if total_revenue > 0 else 0
+        with cols[i%2]: insight_card("🏆", "Главный ASIN", f"<b>{top['ASIN']}</b> = ${top['Revenue']:,.0f} ({top_pct:.0f}%).", "#1a2b1e")
 
 
 def insights_settlements(df_filtered):
     st.markdown("---")
     st.markdown("### 🧠 Автоматические инсайты")
-
-    net    = df_filtered['Amount'].sum()
-    gross  = df_filtered[(df_filtered['Transaction Type'] == 'Order') & (df_filtered['Amount'] > 0)]['Amount'].sum()
-    fees   = df_filtered[
-        (df_filtered['Amount'] < 0) &
-        (df_filtered['Transaction Type'] != 'Refund') &
-        (~df_filtered['Transaction Type'].str.lower().str.contains('other', na=False))
-    ]['Amount'].sum()
-    refunds= df_filtered[df_filtered['Transaction Type'] == 'Refund']['Amount'].sum()
-
-    fee_pct    = (abs(fees) / gross * 100) if gross > 0 else 0
-    refund_pct = (abs(refunds) / gross * 100) if gross > 0 else 0
-    margin_pct = (net / gross * 100) if gross > 0 else 0
-
-    cols = st.columns(2)
-    i = 0
-
-    if margin_pct >= 30:
-        txt = f"Чистая маржа <b>{margin_pct:.1f}%</b> — отличный результат. Бизнес очень здоровый."
-        em, col = "🟢", "#0d2b1e"
-    elif margin_pct >= 15:
-        txt = f"Чистая маржа <b>{margin_pct:.1f}%</b> — норма для FBA. Есть пространство для оптимизации комиссий."
-        em, col = "🟡", "#2b2400"
-    else:
-        txt = f"Чистая маржа <b>{margin_pct:.1f}%</b> — низко. Нужно срочно анализировать структуру расходов."
-        em, col = "🔴", "#2b0d0d"
-    with cols[i % 2]: insight_card(em, "Чистая маржа", txt, col)
-    i += 1
-
-    if fee_pct <= 30:
-        txt = f"Комиссии составляют <b>{fee_pct:.1f}%</b> от продаж — в норме для FBA."
-        em, col = "🟢", "#0d2b1e"
-    elif fee_pct <= 40:
-        txt = f"Комиссии <b>{fee_pct:.1f}%</b> — немного высоко. Проверь FBA fees на крупные/тяжелые SKU."
-        em, col = "🟡", "#2b2400"
-    else:
-        txt = f"Комиссии <b>{fee_pct:.1f}%</b> — слишком высоко! Проанализируй размеры и вес товаров."
-        em, col = "🔴", "#2b0d0d"
-    with cols[i % 2]: insight_card(em, "Нагрузка комиссий", txt, col)
-    i += 1
-
-    if refund_pct <= 3:
-        txt = f"Возвраты <b>{refund_pct:.1f}%</b> от продаж — отлично, клиенты довольны."
-        em, col = "🟢", "#0d2b1e"
-    elif refund_pct <= 8:
-        txt = f"Возвраты <b>{refund_pct:.1f}%</b> — умеренно. Загляни в отчёт Returns чтобы найти проблемные SKU."
-        em, col = "🟡", "#2b2400"
-    else:
-        txt = f"Возвраты <b>{refund_pct:.1f}%</b> — критично высоко! Немедленно проверь причины возвратов, это угрожает аккаунту."
-        em, col = "🔴", "#2b0d0d"
-    with cols[i % 2]: insight_card(em, "Возвраты", txt, col)
-    i += 1
-
-    txt = f"Валовые продажи <b>${gross:,.0f}</b> → после комиссий и возвратов на руки <b>${net:,.0f}</b>. Комиссии съедают ${abs(fees):,.0f}."
-    with cols[i % 2]: insight_card("💰", "Итог по деньгам", txt, "#1a1a2e")
+    net     = df_filtered['Amount'].sum()
+    gross   = df_filtered[(df_filtered['Transaction Type']=='Order')&(df_filtered['Amount']>0)]['Amount'].sum()
+    fees    = df_filtered[(df_filtered['Amount']<0)&(df_filtered['Transaction Type']!='Refund')&(~df_filtered['Transaction Type'].str.lower().str.contains('other',na=False))]['Amount'].sum()
+    refunds = df_filtered[df_filtered['Transaction Type']=='Refund']['Amount'].sum()
+    fee_pct    = abs(fees)/gross*100 if gross>0 else 0
+    refund_pct = abs(refunds)/gross*100 if gross>0 else 0
+    margin_pct = net/gross*100 if gross>0 else 0
+    cols = st.columns(2); i = 0
+    if margin_pct >= 30:  txt, em, col = f"Маржа <b>{margin_pct:.1f}%</b> — отлично!", "🟢", "#0d2b1e"
+    elif margin_pct >= 15: txt, em, col = f"Маржа <b>{margin_pct:.1f}%</b> — норма для FBA.", "🟡", "#2b2400"
+    else:                  txt, em, col = f"Маржа <b>{margin_pct:.1f}%</b> — низко! Анализируй расходы.", "🔴", "#2b0d0d"
+    with cols[i%2]: insight_card(em, "Чистая маржа", txt, col); i+=1
+    if fee_pct <= 30:  txt, em, col = f"Комиссии <b>{fee_pct:.1f}%</b> — в норме.", "🟢", "#0d2b1e"
+    elif fee_pct <= 40: txt, em, col = f"Комиссии <b>{fee_pct:.1f}%</b> — немного высоко.", "🟡", "#2b2400"
+    else:               txt, em, col = f"Комиссии <b>{fee_pct:.1f}%</b> — слишком высоко!", "🔴", "#2b0d0d"
+    with cols[i%2]: insight_card(em, "Нагрузка комиссий", txt, col); i+=1
+    if refund_pct <= 3:  txt, em, col = f"Возвраты <b>{refund_pct:.1f}%</b> — отлично.", "🟢", "#0d2b1e"
+    elif refund_pct <= 8: txt, em, col = f"Возвраты <b>{refund_pct:.1f}%</b> — умеренно.", "🟡", "#2b2400"
+    else:                 txt, em, col = f"Возвраты <b>{refund_pct:.1f}%</b> — критично!", "🔴", "#2b0d0d"
+    with cols[i%2]: insight_card(em, "Возвраты", txt, col); i+=1
+    with cols[i%2]: insight_card("💰", "Итог", f"Продажи <b>${gross:,.0f}</b> → на руки <b>${net:,.0f}</b>. Комиссии: ${abs(fees):,.0f}.", "#1a1a2e")
 
 
 def insights_returns(df_filtered, return_rate):
     st.markdown("---")
     st.markdown("### 🧠 Автоматические инсайты")
-
-    total_val = df_filtered['Return Value'].sum()
+    total_val  = df_filtered['Return Value'].sum()
     top_reason = df_filtered['Reason'].value_counts().index[0] if 'Reason' in df_filtered.columns and not df_filtered.empty else None
-    top_sku = df_filtered['SKU'].value_counts().index[0] if not df_filtered.empty else None
-
-    cols = st.columns(2)
-    i = 0
-
-    if return_rate <= 3:
-        txt = f"Уровень возвратов <b>{return_rate:.1f}%</b> — отлично. Клиенты получают именно то, что ожидали."
-        em, col = "🟢", "#0d2b1e"
-    elif return_rate <= 8:
-        txt = f"Уровень возвратов <b>{return_rate:.1f}%</b> — приемлемо, но есть куда расти. Проверь топ причины возвратов."
-        em, col = "🟡", "#2b2400"
-    else:
-        txt = f"Уровень возвратов <b>{return_rate:.1f}%</b> — опасно высоко! Amazon может заблокировать листинги. Нужны срочные меры."
-        em, col = "🔴", "#2b0d0d"
-    with cols[i % 2]: insight_card(em, "Уровень возвратов", txt, col)
-    i += 1
-
-    txt = f"Возвраты стоят тебе <b>${total_val:,.0f}</b> за период. Это не только потеря выручки — ещё FBA processing fees за каждый возврат."
-    with cols[i % 2]: insight_card("💸", "Финансовый ущерб", txt, "#2b1a00")
-    i += 1
-
+    top_sku    = df_filtered['SKU'].value_counts().index[0] if not df_filtered.empty else None
+    cols = st.columns(2); i = 0
+    if return_rate <= 3:  txt, em, col = f"Возвраты <b>{return_rate:.1f}%</b> — отлично.", "🟢", "#0d2b1e"
+    elif return_rate <= 8: txt, em, col = f"Возвраты <b>{return_rate:.1f}%</b> — приемлемо.", "🟡", "#2b2400"
+    else:                  txt, em, col = f"Возвраты <b>{return_rate:.1f}%</b> — опасно!", "🔴", "#2b0d0d"
+    with cols[i%2]: insight_card(em, "Уровень возвратов", txt, col); i+=1
+    with cols[i%2]: insight_card("💸", "Ущерб", f"Возвраты стоят <b>${total_val:,.0f}</b>.", "#2b1a00"); i+=1
     if top_reason:
-        txt = f"Главная причина возвратов: <b>«{top_reason}»</b>. Если это «не соответствует описанию» — фикс в описании или фото решит большую часть проблемы."
-        with cols[i % 2]: insight_card("🔍", "Главная причина", txt, "#1a1a2e")
-        i += 1
-
+        with cols[i%2]: insight_card("🔍", "Главная причина", f"<b>«{top_reason}»</b>", "#1a1a2e"); i+=1
     if top_sku:
         count = df_filtered['SKU'].value_counts().iloc[0]
-        txt = f"Самый возвращаемый SKU: <b>{top_sku}</b> ({count} возвратов). Начни разбор именно с него — максимальный эффект."
-        with cols[i % 2]: insight_card("⚠️", "Проблемный SKU", txt, "#2b0d0d")
+        with cols[i%2]: insight_card("⚠️", "Проблемный SKU", f"<b>{top_sku}</b> ({count} возвратов).", "#2b0d0d")
 
 
 def insights_inventory(df_filtered):
     st.markdown("---")
     st.markdown("### 🧠 Автоматические инсайты")
-
     total_val   = df_filtered['Stock Value'].sum()
     total_units = df_filtered['Available'].sum()
     avg_vel     = df_filtered['Velocity'].mean() if 'Velocity' in df_filtered.columns else 0
-    top_frozen  = df_filtered.nlargest(1, 'Stock Value').iloc[0] if not df_filtered.empty else None
-    dead_stock  = df_filtered[df_filtered['Velocity'] == 0] if 'Velocity' in df_filtered.columns else pd.DataFrame()
-
-    cols = st.columns(2)
-    i = 0
-
-    txt = f"В товарных остатках заморожено <b>${total_val:,.0f}</b>. При velocity {avg_vel:.2f} ед/день запас уйдёт примерно за {int(total_units / avg_vel / 30) if avg_vel > 0 else '∞'} мес."
-    with cols[i % 2]: insight_card("🧊", "Заморозка капитала", txt, "#1a1a2e")
-    i += 1
-
+    top_frozen  = df_filtered.nlargest(1,'Stock Value').iloc[0] if not df_filtered.empty else None
+    dead_stock  = df_filtered[df_filtered['Velocity']==0] if 'Velocity' in df_filtered.columns else pd.DataFrame()
+    cols = st.columns(2); i = 0
+    months = int(total_units/avg_vel/30) if avg_vel > 0 else 0
+    with cols[i%2]: insight_card("🧊","Заморозка капитала",f"Заморожено <b>${total_val:,.0f}</b>. Запас на {months if avg_vel>0 else '∞'} мес.","#1a1a2e"); i+=1
     if top_frozen is not None:
-        pct = (top_frozen['Stock Value'] / total_val * 100) if total_val > 0 else 0
-        txt = f"SKU <b>{top_frozen['SKU']}</b> держит ${top_frozen['Stock Value']:,.0f} ({pct:.0f}% всего капитала). Убедись, что этот товар хорошо продаётся."
-        with cols[i % 2]: insight_card("🏦", "Главный актив", txt, "#1a2b1e")
-        i += 1
-
+        pct = top_frozen['Stock Value']/total_val*100 if total_val > 0 else 0
+        with cols[i%2]: insight_card("🏦","Главный актив",f"<b>{top_frozen['SKU']}</b> держит ${top_frozen['Stock Value']:,.0f} ({pct:.0f}%).","#1a2b1e"); i+=1
     if len(dead_stock) > 0:
         dead_val = dead_stock['Stock Value'].sum()
-        txt = f"<b>{len(dead_stock)} SKU</b> с нулевой скоростью продаж — заморожено <b>${dead_val:,.0f}</b>. Рассмотри ликвидацию через Outlet или снижение цены."
-        with cols[i % 2]: insight_card("☠️", "Мёртвый сток", txt, "#2b0d0d")
-        i += 1
-
-    days_stock = int(total_units / (avg_vel * 30) * 30) if avg_vel > 0 else 999
-    if days_stock <= 30:
-        txt = f"Запасов хватит на <b>{days_stock} дней</b> — риск out of stock! Срочно размести заказ у поставщика."
-        em, col = "🔴", "#2b0d0d"
-    elif days_stock <= 60:
-        txt = f"Запасов на <b>{days_stock} дней</b> — нужно планировать поставку в ближайшие 2 недели."
-        em, col = "🟡", "#2b2400"
-    else:
-        txt = f"Запасов на <b>{days_stock} дней</b> — запас достаточный, можно не торопиться с поставкой."
-        em, col = "🟢", "#0d2b1e"
-    with cols[i % 2]: insight_card(em, "Оборачиваемость", txt, col)
+        with cols[i%2]: insight_card("☠️","Мёртвый сток",f"<b>{len(dead_stock)} SKU</b> без продаж — ${dead_val:,.0f}. Рассмотри ликвидацию.","#2b0d0d"); i+=1
+    days = int(total_units/(avg_vel*30)*30) if avg_vel > 0 else 999
+    if days <= 30:   txt, em, col = f"Запасов на <b>{days} дней</b> — риск out of stock!", "🔴", "#2b0d0d"
+    elif days <= 60: txt, em, col = f"Запасов на <b>{days} дней</b> — планируй поставку.", "🟡", "#2b2400"
+    else:            txt, em, col = f"Запасов на <b>{days} дней</b> — достаточно.", "🟢", "#0d2b1e"
+    with cols[i%2]: insight_card(em,"Оборачиваемость",txt,col)
 
 
 def insights_orders(df_filtered):
     st.markdown("---")
     st.markdown("### 🧠 Автоматические инсайты")
-
     total_rev    = df_filtered['Total Price'].sum()
     total_orders = df_filtered['Order ID'].nunique()
-    total_items  = df_filtered['Quantity'].sum()
-    avg_order    = total_rev / total_orders if total_orders > 0 else 0
-    days         = max((df_filtered['Order Date'].max() - df_filtered['Order Date'].min()).days, 1)
-    rev_per_day  = total_rev / days
+    avg_order    = total_rev/total_orders if total_orders > 0 else 0
+    days         = max((df_filtered['Order Date'].max()-df_filtered['Order Date'].min()).days,1)
+    rev_per_day  = total_rev/days
     top_sku      = df_filtered.groupby('SKU')['Total Price'].sum().nlargest(1)
-
-    cols = st.columns(2)
-    i = 0
-
-    txt = f"Средний чек <b>${avg_order:.2f}</b>. Подними его через Bundle или upsell — +10% к AOV = +${total_rev*0.1:,.0f} выручки за период."
-    with cols[i % 2]: insight_card("🛒", "Средний чек", txt, "#1a1a2e")
-    i += 1
-
-    txt = f"В среднем <b>${rev_per_day:,.0f}/день</b> выручки за выбранный период. Экстраполяция на месяц: <b>${rev_per_day*30:,.0f}</b>."
-    with cols[i % 2]: insight_card("📈", "Дневная выручка", txt, "#1a2b1e")
-    i += 1
-
+    cols = st.columns(2); i = 0
+    with cols[i%2]: insight_card("🛒","Средний чек",f"<b>${avg_order:.2f}</b>. +10% к AOV = +${total_rev*0.1:,.0f}.","#1a1a2e"); i+=1
+    with cols[i%2]: insight_card("📈","Дневная выручка",f"<b>${rev_per_day:,.0f}/день</b>. Прогноз на месяц: ${rev_per_day*30:,.0f}.","#1a2b1e"); i+=1
     if not top_sku.empty:
-        sku_name = top_sku.index[0]
-        sku_rev  = top_sku.iloc[0]
-        pct = (sku_rev / total_rev * 100) if total_rev > 0 else 0
-        txt = f"<b>{sku_name}</b> даёт {pct:.0f}% выручки (${sku_rev:,.0f}). Высокая концентрация риска — если этот SKU выйдет из строя, потери будут ощутимы."
-        with cols[i % 2]: insight_card("⚡", "Концентрация риска", txt, "#2b1a00")
+        sku_name, sku_rev = top_sku.index[0], top_sku.iloc[0]
+        pct = sku_rev/total_rev*100 if total_rev > 0 else 0
+        with cols[i%2]: insight_card("⚡","Концентрация риска",f"<b>{sku_name}</b> = {pct:.0f}% (${sku_rev:,.0f}). Диверсифицируй.","#2b1a00")
 
 
-def insights_reviews(df_filtered):
+def insights_reviews(df, asin=None):
     st.markdown("---")
-    st.markdown("### 🧠 Автоматические инсайты (Reviews)")
-
-    total = len(df_filtered)
+    label = f"ASIN {asin}" if asin else "всем ASINам"
+    st.markdown(f"### 🧠 Инсайты по {label}")
+    total = len(df)
     if total == 0:
+        st.info("Нет данных для инсайтов.")
         return
-
-    avg_rating = df_filtered['rating'].mean()
-    negative_df = df_filtered[df_filtered['rating'] <= 2]
-    neg_pct = (len(negative_df) / total) * 100
-
-    cols = st.columns(2)
-    i = 0
-
-    if avg_rating >= 4.4:
-        txt = f"Средний балл <b>{avg_rating:.1f}</b> — отличный показатель! Листинги хорошо конвертят трафик благодаря социальному доверию."
-        em, col = "🟢", "#0d2b1e"
-    elif avg_rating >= 4.0:
-        txt = f"Средний балл <b>{avg_rating:.1f}</b> — в норме, но есть риск скатиться ниже 4.0. Стоит поработать с возражениями."
-        em, col = "🟡", "#2b2400"
-    else:
-        txt = f"Средний балл <b>{avg_rating:.1f}</b> — критично! Рейтинг ниже 4 звезд сильно режет конверсию и удорожает рекламу (PPC)."
-        em, col = "🔴", "#2b0d0d"
-    with cols[i % 2]: insight_card(em, "Здоровье рейтинга", txt, col)
-    i += 1
-
-    if neg_pct <= 10:
-        txt = f"Всего <b>{neg_pct:.1f}%</b> негативных отзывов (1-2 звезды). Продукт полностью соответствует ожиданиям рынка."
-        em, col = "🟢", "#0d2b1e"
-    else:
-        txt = f"<b>{neg_pct:.1f}%</b> отзывов — негативные! Внимательно прочитай их тексты ниже, чтобы исправить проблему на производстве (или размерную сетку)."
-        em, col = "🔴", "#2b0d0d"
-    with cols[i % 2]: insight_card(em, "Уровень негатива", txt, col)
-    i += 1
-
-    if not negative_df.empty:
-        worst_asin = negative_df['asin'].value_counts().index[0]
-        worst_count = negative_df['asin'].value_counts().iloc[0]
-        txt = f"ASIN <b>{worst_asin}</b> собрал больше всего негатива ({worst_count} шт). Проверь вкладку Returns для этого товара."
-        with cols[i % 2]: insight_card("⚠️", "Токсичный ASIN", txt, "#2b0d0d")
+    avg_rating = df['rating'].mean()
+    neg_df     = df[df['rating'] <= 2]
+    pos_df     = df[df['rating'] >= 4]
+    neg_pct    = len(neg_df)/total*100
+    pos_pct    = len(pos_df)/total*100
+    cols = st.columns(2); i = 0
+    if avg_rating >= 4.4:   txt, em, col = f"Средний балл <b>{avg_rating:.1f}★</b> — отлично! Сильное социальное доверие.", "🟢", "#0d2b1e"
+    elif avg_rating >= 4.0: txt, em, col = f"Средний балл <b>{avg_rating:.1f}★</b> — норма, риск упасть ниже 4.0.", "🟡", "#2b2400"
+    else:                   txt, em, col = f"Средний балл <b>{avg_rating:.1f}★</b> — критично! Режет конверсию и удорожает PPC.", "🔴", "#2b0d0d"
+    with cols[i%2]: insight_card(em,"Здоровье рейтинга",txt,col); i+=1
+    if neg_pct <= 10:  txt, em, col = f"Всего <b>{neg_pct:.1f}%</b> негативных (1-2★). Продукт оправдывает ожидания.", "🟢", "#0d2b1e"
+    elif neg_pct <= 20: txt, em, col = f"<b>{neg_pct:.1f}%</b> негативных — системная проблема. Читай тексты 1★.", "🟡", "#2b2400"
+    else:               txt, em, col = f"<b>{neg_pct:.1f}%</b> негативных — критично! Срочно фикси продукт или листинг.", "🔴", "#2b0d0d"
+    with cols[i%2]: insight_card(em,"Уровень негатива",txt,col); i+=1
+    with cols[i%2]: insight_card("💚","Лояльность",f"<b>{pos_pct:.1f}%</b> позитивных (4-5★). База лояльных покупателей.","#0d2b1e" if pos_pct>=70 else "#2b2400"); i+=1
+    if 'is_verified' in df.columns:
+        ver_pct = df['is_verified'].mean()*100
+        with cols[i%2]: insight_card("✅","Верификация",f"<b>{ver_pct:.1f}%</b> верифицированы {'— высокое доверие у Amazon.' if ver_pct>=80 else '— следи за политикой.'}","#1a1a2e"); i+=1
+    if asin is None and not neg_df.empty and 'asin' in neg_df.columns:
+        worst = neg_df['asin'].value_counts()
+        if not worst.empty:
+            with cols[i%2]: insight_card("⚠️","Токсичный ASIN",f"<b>{worst.index[0]}</b> — {worst.iloc[0]} негативных. Начни анализ с него.","#2b0d0d")
 
 
 # ============================================
@@ -652,964 +508,590 @@ def insights_reviews(df_filtered):
 def show_overview_insights(df_inventory):
     st.markdown("---")
     st.markdown("## 🧠 Business Intelligence: Зведені інсайти")
-    st.caption("Автоматичний аналіз всіх модулів — без переходу по звітах")
+    st.caption("Автоматичний аналіз всіх модулів")
 
     df_settlements = load_settlements()
     df_st          = load_sales_traffic()
     df_orders      = load_orders()
-    df_returns_raw, df_orders_raw = load_returns()
+    df_ret_raw, df_ord_raw = load_returns()
     df_reviews     = load_reviews()
 
-    # Prepare returns
-    df_returns = pd.DataFrame()
+    df_returns  = pd.DataFrame()
     return_rate = 0
-    if not df_returns_raw.empty:
-        df_ret = df_returns_raw.copy()
+    if not df_ret_raw.empty:
+        df_ret = df_ret_raw.copy()
         df_ret['Return Date'] = pd.to_datetime(df_ret['Return Date'], errors='coerce')
-        if 'Price' not in df_ret.columns and not df_orders_raw.empty:
-            for col in ['Item Price', 'item-price', 'item_price', 'price', 'Price']:
-                if col in df_orders_raw.columns:
-                    df_orders_raw[col] = pd.to_numeric(df_orders_raw[col], errors='coerce')
-                    price_map = df_orders_raw.groupby('SKU')[col].mean().to_dict()
-                    df_ret['Price'] = df_ret['SKU'].map(price_map).fillna(0)
+        if 'Price' not in df_ret.columns and not df_ord_raw.empty:
+            for col in ['Item Price','item-price','item_price','price','Price']:
+                if col in df_ord_raw.columns:
+                    df_ord_raw[col] = pd.to_numeric(df_ord_raw[col], errors='coerce')
+                    df_ret['Price'] = df_ret['SKU'].map(df_ord_raw.groupby('SKU')[col].mean()).fillna(0)
                     break
-        if 'Price' not in df_ret.columns:
-            df_ret['Price'] = 0
+        if 'Price' not in df_ret.columns: df_ret['Price'] = 0
         df_ret['Price']        = pd.to_numeric(df_ret['Price'], errors='coerce').fillna(0)
-        df_ret['Quantity']     = pd.to_numeric(df_ret.get('Quantity', 1), errors='coerce').fillna(1)
+        df_ret['Quantity']     = pd.to_numeric(df_ret.get('Quantity',1), errors='coerce').fillna(1)
         df_ret['Return Value'] = df_ret['Price'] * df_ret['Quantity']
         df_returns = df_ret
-
-        if not df_orders_raw.empty:
-            for col in ['Order ID', 'order-id', 'order_id', 'OrderID']:
-                if col in df_orders_raw.columns:
-                    total_orders = df_orders_raw[col].nunique()
-                    unique_return_orders = df_returns['Order ID'].nunique() if 'Order ID' in df_returns.columns else 0
-                    return_rate = (unique_return_orders / total_orders * 100) if total_orders > 0 else 0
+        if not df_ord_raw.empty:
+            for col in ['Order ID','order-id','order_id','OrderID']:
+                if col in df_ord_raw.columns:
+                    total_orders = df_ord_raw[col].nunique()
+                    unique_ret   = df_returns['Order ID'].nunique() if 'Order ID' in df_returns.columns else 0
+                    return_rate  = unique_ret/total_orders*100 if total_orders > 0 else 0
                     break
 
-    tabs = st.tabs([
-        "💰 Inventory",
-        "🏦 Settlements",
-        "📈 Sales & Traffic",
-        "🛒 Orders",
-        "📦 Returns",
-        "⭐ Reviews",
-    ])
+    tabs = st.tabs(["💰 Inventory","🏦 Settlements","📈 Sales & Traffic","🛒 Orders","📦 Returns","⭐ Reviews"])
 
     with tabs[0]:
         if not df_inventory.empty and 'Stock Value' in df_inventory.columns:
             insights_inventory(df_inventory)
-        else:
-            st.info("📦 Дані по інвентарю відсутні")
+        else: st.info("📦 Дані по інвентарю відсутні")
 
     with tabs[1]:
         if not df_settlements.empty:
-            max_d = df_settlements['Posted Date'].max()
+            max_d  = df_settlements['Posted Date'].max()
             df_s30 = df_settlements[df_settlements['Posted Date'] >= max_d - dt.timedelta(days=30)]
             insights_settlements(df_s30 if not df_s30.empty else df_settlements)
-        else:
-            st.info("🏦 Дані по виплатах відсутні. Запусти amazon_settlement_loader.py")
+        else: st.info("🏦 Дані по виплатах відсутні.")
 
     with tabs[2]:
         if not df_st.empty:
-            max_d = df_st['report_date'].max()
-            df_st14 = df_st[df_st['report_date'] >= max_d - dt.timedelta(days=14)]
-            df_use = df_st14 if not df_st14.empty else df_st
-
+            max_d   = df_st['report_date'].max()
+            df_use  = df_st[df_st['report_date'] >= max_d - dt.timedelta(days=14)]
+            df_use  = df_use if not df_use.empty else df_st
             asin_col = 'child_asin' if 'child_asin' in df_use.columns else df_use.columns[0]
-            asin_stats = df_use.groupby(asin_col).agg({
-                'sessions': 'sum',
-                'units_ordered': 'sum',
-                'ordered_product_sales': 'sum',
-                'buy_box_percentage': 'mean',
-            }).reset_index()
-            asin_stats.columns = ['ASIN', 'Sessions', 'Units', 'Revenue', 'Buy Box %']
-            asin_stats['Conv %'] = (asin_stats['Units'] / asin_stats['Sessions'] * 100).fillna(0)
-
-            insights_sales_traffic(df_use, asin_stats)
-        else:
-            st.info("📈 Дані Sales & Traffic відсутні. Запусти sales_traffic_loader.py")
+            as_ = df_use.groupby(asin_col).agg({'sessions':'sum','units_ordered':'sum','ordered_product_sales':'sum','buy_box_percentage':'mean'}).reset_index()
+            as_.columns = ['ASIN','Sessions','Units','Revenue','Buy Box %']
+            as_['Conv %'] = (as_['Units']/as_['Sessions']*100).fillna(0)
+            insights_sales_traffic(df_use, as_)
+        else: st.info("📈 Дані Sales & Traffic відсутні.")
 
     with tabs[3]:
         if not df_orders.empty:
-            max_d = df_orders['Order Date'].max()
+            max_d  = df_orders['Order Date'].max()
             df_o30 = df_orders[df_orders['Order Date'] >= max_d - dt.timedelta(days=30)]
             insights_orders(df_o30 if not df_o30.empty else df_orders)
-        else:
-            st.info("🛒 Дані замовлень відсутні. Запусти amazon_orders_loader.py")
+        else: st.info("🛒 Дані замовлень відсутні.")
 
     with tabs[4]:
         if not df_returns.empty:
-            max_d = df_returns['Return Date'].max()
+            max_d  = df_returns['Return Date'].max()
             df_r30 = df_returns[df_returns['Return Date'] >= max_d - dt.timedelta(days=30)]
             insights_returns(df_r30 if not df_r30.empty else df_returns, return_rate)
-        else:
-            st.info("📦 Дані повернень відсутні. Запусти amazon_returns_loader.py")
+        else: st.info("📦 Дані повернень відсутні.")
 
     with tabs[5]:
-        if not df_reviews.empty:
-            insights_reviews(df_reviews)
-        else:
-            st.info("⭐ Дані відгуків відсутні. Перевір ETL-скрипт (Apify → Postgres).")
+        if not df_reviews.empty: insights_reviews(df_reviews, asin=None)
+        else: st.info("⭐ Дані відгуків відсутні.")
 
 
 # ============================================
-# REPORT FUNCTIONS
+# REVIEWS MODULE
+# ============================================
+
+def show_reviews(t):
+    df_all = load_reviews()
+    if df_all.empty:
+        st.warning("⚠️ Не знайдено даних про відгуки. Перевірте ETL-скрипт (Apify → Postgres).")
+        return
+
+    # Sidebar filters
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("⭐ Фільтри відгуків")
+    asins = sorted(df_all['asin'].dropna().unique().tolist()) if 'asin' in df_all.columns else []
+    asin_options  = ['🌐 Всі ASINи'] + asins
+    sel_raw       = st.sidebar.selectbox("📦 ASIN:", asin_options, key="rev_asin")
+    selected_asin = None if sel_raw == '🌐 Всі ASINи' else sel_raw
+    star_filter   = st.sidebar.multiselect("⭐ Рейтинг (фільтр):", [5, 4, 3, 2, 1], default=[], key="rev_stars")
+
+    # Apply
+    df = df_all.copy()
+    if selected_asin:
+        df = df[df['asin'] == selected_asin]
+    if star_filter:
+        df = df[df['rating'].isin(star_filter)]
+    if df.empty:
+        st.warning("Немає відгуків за цими фільтрами.")
+        return
+
+    # Header
+    asin_label = selected_asin if selected_asin else "Всі ASINи"
+    st.markdown(f"### {t['reviews_title']} — {asin_label}")
+
+    total_revs   = len(df)
+    avg_rating   = df['rating'].mean()
+    verified_pct = df['is_verified'].mean()*100 if 'is_verified' in df.columns and total_revs > 0 else 0
+    neg_count    = int((df['rating'] <= 2).sum())
+    pos_count    = int((df['rating'] >= 4).sum())
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric(t["total_reviews"],     f"{total_revs:,}")
+    c2.metric(t["avg_review_rating"], f"{avg_rating:.2f} ⭐")
+    c3.metric(t["verified_pct"],      f"{verified_pct:.1f}%")
+    c4.metric("🔴 Негативних (1-2★)", f"{neg_count:,}")
+    c5.metric("🟢 Позитивних (4-5★)", f"{pos_count:,}")
+
+    st.markdown("---")
+
+    # ---- OVERVIEW MODE: all ASINs comparison ----
+    if selected_asin is None and 'asin' in df.columns:
+        st.markdown("### 📊 Порівняння ASINів")
+
+        asin_stats = df.groupby('asin').agg(
+            Reviews=('rating','count'),
+            Rating=('rating','mean'),
+            Neg=('rating', lambda x: (x<=2).sum()),
+            Pos=('rating', lambda x: (x>=4).sum()),
+        ).reset_index()
+        asin_stats.columns = ['ASIN','Відгуків','Рейтинг','Негативних','Позитивних']
+        asin_stats['Neg %'] = (asin_stats['Негативних']/asin_stats['Відгуків']*100).round(1)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### ⭐ Середній рейтинг по ASINах")
+            asin_sort = asin_stats.sort_values('Рейтинг', ascending=True)
+            colors = ['#F44336' if r<4.0 else '#FFC107' if r<4.4 else '#4CAF50' for r in asin_sort['Рейтинг']]
+            fig = go.Figure(go.Bar(
+                x=asin_sort['Рейтинг'], y=asin_sort['ASIN'], orientation='h',
+                marker_color=colors,
+                text=[f"{v:.2f}★" for v in asin_sort['Рейтинг']], textposition='outside'
+            ))
+            fig.add_vline(x=4.0, line_dash="dash", line_color="orange", annotation_text="Поріг 4.0")
+            fig.update_layout(height=max(300, len(asin_sort)*38), xaxis_range=[1, 5.5])
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            st.markdown("#### 🔴 % Негативних по ASINах")
+            asin_neg = asin_stats.sort_values('Neg %', ascending=False)
+            neg_colors = ['#F44336' if v>20 else '#FFC107' if v>10 else '#4CAF50' for v in asin_neg['Neg %']]
+            fig2 = go.Figure(go.Bar(
+                x=asin_neg['Neg %'], y=asin_neg['ASIN'], orientation='h',
+                marker_color=neg_colors,
+                text=[f"{v:.1f}%" for v in asin_neg['Neg %']], textposition='outside'
+            ))
+            fig2.update_layout(height=max(300, len(asin_neg)*38))
+            st.plotly_chart(fig2, use_container_width=True)
+
+        st.markdown("#### 📋 Зведена таблиця по ASINах")
+        st.dataframe(
+            asin_stats.sort_values('Рейтинг').style
+                .format({'Рейтинг':'{:.2f}', 'Neg %':'{:.1f}%'})
+                .background_gradient(subset=['Рейтинг'], cmap='RdYlGn')
+                .background_gradient(subset=['Neg %'], cmap='RdYlGn_r'),
+            use_container_width=True
+        )
+        st.markdown("---")
+        st.markdown("### 📊 Загальний розподіл зірок")
+
+    # ---- Star distribution + worst ASINs ----
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f"#### {t['star_dist']}")
+        star_counts = df['rating'].value_counts().reindex([5,4,3,2,1]).fillna(0).reset_index()
+        star_counts.columns = ['Зірки','Кількість']
+        star_counts['label'] = star_counts['Зірки'].astype(str) + '★'
+        color_map = {5:'#4CAF50',4:'#8BC34A',3:'#FFC107',2:'#FF9800',1:'#F44336'}
+        fig_stars = go.Figure(go.Bar(
+            x=star_counts['Кількість'], y=star_counts['label'], orientation='h',
+            marker_color=[color_map.get(int(s),'#888') for s in star_counts['Зірки']],
+            text=star_counts['Кількість'], textposition='outside'
+        ))
+        fig_stars.update_layout(
+            yaxis=dict(categoryorder='array', categoryarray=['1★','2★','3★','4★','5★']),
+            height=300, margin=dict(l=10,r=40,t=20,b=20)
+        )
+        st.plotly_chart(fig_stars, use_container_width=True)
+
+    with col2:
+        st.markdown(f"#### {t['worst_asin']}")
+        bad = df_all[df_all['rating'] <= 2]
+        if 'asin' in bad.columns and not bad.empty:
+            bad_asins = bad['asin'].value_counts().head(8).reset_index()
+            bad_asins.columns = ['ASIN','Негативних']
+            fig_bad = px.bar(bad_asins, x='ASIN', y='Негативних', text='Негативних',
+                             color='Негативних', color_continuous_scale='Reds')
+            fig_bad.update_layout(height=300, showlegend=False)
+            st.plotly_chart(fig_bad, use_container_width=True)
+        else:
+            st.success("🎉 Негативних відгуків не знайдено!")
+
+    # ---- Insights ----
+    insights_reviews(df, asin=selected_asin)
+
+    # ---- Balanced table ----
+    st.markdown("---")
+    st.markdown("### 📋 Тексти відгуків (до 100 на кожну зірку, max 500)")
+    st.caption("Сортування: спочатку 1★ — щоб проблеми були першими")
+
+    df_table = balanced_reviews(df, max_per_star=100).sort_values('rating', ascending=True)
+    display_cols   = ['review_date','asin','rating','title','content','product_attributes','author','is_verified']
+    available_cols = [c for c in display_cols if c in df_table.columns]
+
+    st.dataframe(df_table[available_cols], use_container_width=True, height=450)
+
+    star_summary = df_table['rating'].value_counts().sort_index(ascending=False)
+    summary_str  = " | ".join([f"{s}★: {c}" for s,c in star_summary.items()])
+    st.caption(f"Показано {len(df_table)} з {len(df)} відгуків · {summary_str}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button("📥 Вибірка balanced (CSV)",
+            df_table[available_cols].to_csv(index=False).encode('utf-8'),
+            f"reviews_balanced_{asin_label}.csv","text/csv")
+    with col2:
+        st.download_button("📥 Всі відфільтровані (CSV)",
+            df[available_cols].to_csv(index=False).encode('utf-8'),
+            f"reviews_full_{asin_label}.csv","text/csv")
+
+
+# ============================================
+# OTHER REPORT FUNCTIONS
 # ============================================
 
 def show_overview(df_filtered, t, selected_date):
     st.markdown("### 📊 Business Dashboard Overview")
     st.caption(f"Data snapshot: {selected_date}")
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric(label=t["total_sku"], value=len(df_filtered))
-    with col2:
-        st.metric(label=t["total_avail"], value=f"{int(df_filtered['Available'].sum()):,}")
-    with col3:
-        total_val = df_filtered['Stock Value'].sum()
-        st.metric(label=t["total_value"], value=f"${total_val:,.0f}")
-    with col4:
-        velocity_sum = df_filtered['Velocity'].sum() * 30
-        st.metric(label=t["velocity_30"], value=f"{int(velocity_sum):,} units")
-
+    col1,col2,col3,col4 = st.columns(4)
+    with col1: st.metric(t["total_sku"], len(df_filtered))
+    with col2: st.metric(t["total_avail"], f"{int(df_filtered['Available'].sum()):,}")
+    with col3: st.metric(t["total_value"], f"${df_filtered['Stock Value'].sum():,.0f}")
+    with col4: st.metric(t["velocity_30"], f"{int(df_filtered['Velocity'].sum()*30):,} units")
     st.markdown("---")
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        with st.container(border=True):
-            st.markdown(f"#### {t['settlements_title']}")
-            st.markdown("Actual Payouts, Net Profit, Fees")
-            if st.button("🏦 View Finance (Payouts) →", key="btn_settlements", use_container_width=True, type="primary"):
-                st.session_state.report_choice = "🏦 Settlements (Payouts)"
-                st.rerun()
-    with col2:
-        with st.container(border=True):
-            st.markdown("#### 📈 Sales & Traffic")
-            st.markdown("Sessions, Conversions, Buy Box")
-            if st.button("📈 View Traffic →", key="btn_sales_traffic", use_container_width=True, type="primary"):
-                st.session_state.report_choice = "📈 Sales & Traffic"
-                st.rerun()
-    with col3:
-        with st.container(border=True):
-            st.markdown("#### 🛒 Orders Analytics")
-            st.markdown("Sales Trends, Top Products")
-            if st.button("📊 View Orders Report →", key="btn_orders", use_container_width=True, type="primary"):
-                st.session_state.report_choice = "🛒 Orders Analytics"
-                st.rerun()
-    with col4:
-        with st.container(border=True):
-            st.markdown("#### 📦 Returns Analytics")
-            st.markdown("Return rates, Problem SKUs")
-            if st.button("📦 View Returns →", key="btn_returns", use_container_width=True, type="primary"):
-                st.session_state.report_choice = "📦 Returns Analytics"
-                st.rerun()
-
+    col1,col2,col3,col4 = st.columns(4)
+    btns = [
+        (col1, f"#### {t['settlements_title']}", "Payouts, Net Profit, Fees", "🏦 View Finance →","btn_s","🏦 Settlements (Payouts)"),
+        (col2, "#### 📈 Sales & Traffic","Sessions, Conversions, Buy Box","📈 View Traffic →","btn_st","📈 Sales & Traffic"),
+        (col3, "#### 🛒 Orders Analytics","Sales Trends, Top Products","📊 View Orders →","btn_o","🛒 Orders Analytics"),
+        (col4, "#### 📦 Returns Analytics","Return rates, Problem SKUs","📦 View Returns →","btn_r","📦 Returns Analytics"),
+    ]
+    for c,hdr,sub,btn_lbl,key,dest in btns:
+        with c:
+            with st.container(border=True):
+                st.markdown(hdr); st.markdown(sub)
+                if st.button(btn_lbl, key=key, use_container_width=True, type="primary"):
+                    st.session_state.report_choice = dest; st.rerun()
     st.markdown("")
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        with st.container(border=True):
-            st.markdown("#### 💰 Inventory Value")
-            st.markdown("Money map, Pricing analytics")
-            if st.button("💰 View Inventory Value →", key="btn_finance", use_container_width=True, type="primary"):
-                st.session_state.report_choice = "💰 Inventory Value (CFO)"
-                st.rerun()
-    with col2:
-        with st.container(border=True):
-            st.markdown("#### 🧠 AI Forecast")
-            st.markdown("Sold-out predictions")
-            if st.button("🧠 View AI Forecast →", key="btn_ai", use_container_width=True, type="primary"):
-                st.session_state.report_choice = "🧠 AI Forecast"
-                st.rerun()
-    with col3:
-        with st.container(border=True):
-            st.markdown("#### 🐢 Inventory Health")
-            st.markdown("Aging analysis")
-            if st.button("🐢 View Health Report →", key="btn_health", use_container_width=True, type="primary"):
-                st.session_state.report_choice = "🐢 Inventory Health (Aging)"
-                st.rerun()
-    with col4:
-        with st.container(border=True):
-            st.markdown("#### ⭐ Amazon Reviews")
-            st.markdown("Ratings, sentiment, problem ASINs")
-            if st.button("⭐ View Reviews →", key="btn_reviews", use_container_width=True, type="primary"):
-                st.session_state.report_choice = "⭐ Amazon Reviews"
-                st.rerun()
-
+    col1,col2,col3,col4 = st.columns(4)
+    btns2 = [
+        (col1,"#### 💰 Inventory Value","Money map, Pricing","💰 View Inventory →","btn_f","💰 Inventory Value (CFO)"),
+        (col2,"#### 🧠 AI Forecast","Sold-out predictions","🧠 View AI Forecast →","btn_a","🧠 AI Forecast"),
+        (col3,"#### 🐢 Inventory Health","Aging analysis","🐢 View Health →","btn_h","🐢 Inventory Health (Aging)"),
+        (col4,"#### ⭐ Amazon Reviews","Ratings, problem ASINs","⭐ View Reviews →","btn_rev","⭐ Amazon Reviews"),
+    ]
+    for c,hdr,sub,btn_lbl,key,dest in btns2:
+        with c:
+            with st.container(border=True):
+                st.markdown(hdr); st.markdown(sub)
+                if st.button(btn_lbl, key=key, use_container_width=True, type="primary"):
+                    st.session_state.report_choice = dest; st.rerun()
     st.markdown("---")
-    st.markdown("### 📊 Quick Overview: Top 15 SKU by Stock Level")
+    st.markdown("### 📊 Quick Overview: Top 15 SKU by Stock")
     if not df_filtered.empty:
-        df_top = df_filtered.nlargest(15, 'Available')
-        fig_bar = px.bar(
-            df_top, x='Available', y='SKU', orientation='h',
-            text='Available', color='Available', color_continuous_scale='Blues'
-        )
-        fig_bar.update_layout(yaxis={'categoryorder': 'total ascending'}, height=400)
-        st.plotly_chart(fig_bar, use_container_width=True)
-
+        df_top = df_filtered.nlargest(15,'Available')
+        fig = px.bar(df_top, x='Available', y='SKU', orientation='h',
+                     text='Available', color='Available', color_continuous_scale='Blues')
+        fig.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
+        st.plotly_chart(fig, use_container_width=True)
     show_overview_insights(df_filtered)
-
-
-def show_reviews(t):
-    df_reviews = load_reviews()
-
-    if df_reviews.empty:
-        st.warning("⚠️ Не знайдено даних про відгуки. Перевірте, чи працює ETL-скрипт (Apify -> Postgres).")
-        return
-
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("⭐ Фільтри відгуків")
-
-    asins = ['All'] + sorted(df_reviews['asin'].dropna().unique().tolist())
-    selected_asin = st.sidebar.selectbox("📦 ASIN:", asins)
-
-    stars = ['All', 5, 4, 3, 2, 1]
-    selected_star = st.sidebar.selectbox("⭐ Rating:", stars)
-
-    df_filtered = df_reviews.copy()
-    if selected_asin != 'All':
-        df_filtered = df_filtered[df_filtered['asin'] == selected_asin]
-    if selected_star != 'All':
-        df_filtered = df_filtered[df_filtered['rating'] == selected_star]
-
-    if df_filtered.empty:
-        st.warning("Немає відгуків за цими фільтрами.")
-        return
-
-    st.markdown(f"### {t['reviews_title']}")
-
-    total_revs   = len(df_filtered)
-    avg_rating   = df_filtered['rating'].mean()
-    verified_pct = (df_filtered['is_verified'].sum() / total_revs * 100) if total_revs > 0 and 'is_verified' in df_filtered.columns else 0
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric(t["total_reviews"],      f"{total_revs:,}")
-    col2.metric(t["avg_review_rating"],  f"{avg_rating:.2f} ⭐")
-    col3.metric(t["verified_pct"],       f"{verified_pct:.1f}%")
-
-    st.markdown("---")
-    col_chart1, col_chart2 = st.columns([1, 1])
-
-    with col_chart1:
-        st.subheader(t["star_dist"])
-        star_counts = df_filtered['rating'].value_counts().reindex([5, 4, 3, 2, 1]).fillna(0).reset_index()
-        star_counts.columns = ['Звезды', 'Количество']
-        fig_stars = px.bar(
-            star_counts, x='Количество', y='Звезды', orientation='h',
-            color='Звезды', color_continuous_scale='RdYlGn', text='Количество'
-        )
-        fig_stars.update_layout(
-            yaxis=dict(type='category', categoryorder='array', categoryarray=[1, 2, 3, 4, 5]),
-            height=350
-        )
-        st.plotly_chart(fig_stars, use_container_width=True)
-
-    with col_chart2:
-        st.subheader(t["worst_asin"])
-        bad_reviews = df_reviews[df_reviews['rating'] <= 2]
-        if not bad_reviews.empty:
-            bad_asins = bad_reviews['asin'].value_counts().head(5).reset_index()
-            bad_asins.columns = ['ASIN', 'Negative Reviews']
-            fig_bad = px.bar(
-                bad_asins, x='ASIN', y='Negative Reviews',
-                text='Negative Reviews', color_discrete_sequence=['#FF6B6B']
-            )
-            fig_bad.update_layout(height=350)
-            st.plotly_chart(fig_bad, use_container_width=True)
-        else:
-            st.success("🎉 Негативных отзывов не найдено!")
-
-    insights_reviews(df_filtered)
-
-    st.markdown("---")
-    st.markdown("### 📋 Тексти відгуків (топ-100 за датою)")
-    display_cols   = ['review_date', 'asin', 'rating', 'title', 'content', 'product_attributes', 'author', 'is_verified']
-    available_cols = [c for c in display_cols if c in df_filtered.columns]
-    st.dataframe(
-        df_filtered[available_cols].sort_values('rating', ascending=True).head(100),
-        use_container_width=True,
-        height=400
-    )
-
-    csv = df_filtered.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Download Reviews CSV",
-        data=csv,
-        file_name="amazon_reviews.csv",
-        mime="text/csv"
-    )
 
 
 def show_sales_traffic(t):
     df_st = load_sales_traffic()
-
     if df_st.empty:
-        st.warning("⚠️ No Sales & Traffic data found.")
-        return
-
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📈 Sales & Traffic Filters")
-
+        st.warning("⚠️ No Sales & Traffic data found."); return
+    st.sidebar.markdown("---"); st.sidebar.subheader("📈 Sales & Traffic Filters")
     min_date = df_st['report_date'].min().date()
     max_date = df_st['report_date'].max().date()
-
-    date_range = st.sidebar.date_input(
-        "📅 Date Range:",
-        value=(max(min_date, max_date - dt.timedelta(days=14)), max_date),
-        min_value=min_date,
-        max_value=max_date,
-        key="st_date_range"
-    )
-
-    if len(date_range) == 2:
-        mask = (df_st['report_date'].dt.date >= date_range[0]) & \
-               (df_st['report_date'].dt.date <= date_range[1])
+    date_range = st.sidebar.date_input("📅 Date Range:",
+        value=(max(min_date, max_date-dt.timedelta(days=14)), max_date),
+        min_value=min_date, max_value=max_date, key="st_date_range")
+    if len(date_range)==2:
+        mask = (df_st['report_date'].dt.date>=date_range[0])&(df_st['report_date'].dt.date<=date_range[1])
         df_filtered = df_st[mask]
     else:
         df_filtered = df_st
-
     if df_filtered.empty:
-        st.warning("No data for selected period")
-        return
-
+        st.warning("No data for selected period"); return
     st.markdown(f"### {t['sales_traffic_title']}")
-    st.caption(f"Period: {date_range[0]} → {date_range[1]}" if len(date_range) == 2 else "")
-
-    total_sessions   = int(df_filtered['sessions'].sum())
-    total_page_views = int(df_filtered['page_views'].sum())
-    total_units      = int(df_filtered['units_ordered'].sum())
-    total_revenue    = df_filtered['ordered_product_sales'].sum()
-    avg_conversion   = (total_units / total_sessions * 100) if total_sessions > 0 else 0
-    avg_buy_box      = df_filtered['buy_box_percentage'].mean()
-
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
-    col1.metric(t["st_sessions"],    f"{total_sessions:,}")
-    col2.metric(t["st_page_views"],  f"{total_page_views:,}")
-    col3.metric(t["st_units"],       f"{total_units:,}")
-    col4.metric(t["st_revenue"],     f"${total_revenue:,.2f}")
-    col5.metric(t["st_conversion"],  f"{avg_conversion:.2f}%")
-    col6.metric(t["st_buy_box"],     f"{avg_buy_box:.1f}%")
-
-    st.markdown("---")
-    st.markdown("### 📈 Daily Trends")
-
-    daily = df_filtered.groupby(df_filtered['report_date'].dt.date).agg({
-        'sessions': 'sum',
-        'page_views': 'sum',
-        'units_ordered': 'sum',
-        'ordered_product_sales': 'sum',
-    }).reset_index()
-    daily.columns = ['Date', 'Sessions', 'Page Views', 'Units', 'Revenue']
-    daily['Conversion %'] = (daily['Units'] / daily['Sessions'] * 100).fillna(0)
-
-    col1, col2 = st.columns(2)
+    ts = int(df_filtered['sessions'].sum()); tpv = int(df_filtered['page_views'].sum())
+    tu = int(df_filtered['units_ordered'].sum()); tr = df_filtered['ordered_product_sales'].sum()
+    ac = tu/ts*100 if ts>0 else 0; ab = df_filtered['buy_box_percentage'].mean()
+    c1,c2,c3,c4,c5,c6 = st.columns(6)
+    c1.metric(t["st_sessions"],f"{ts:,}"); c2.metric(t["st_page_views"],f"{tpv:,}")
+    c3.metric(t["st_units"],f"{tu:,}"); c4.metric(t["st_revenue"],f"${tr:,.2f}")
+    c5.metric(t["st_conversion"],f"{ac:.2f}%"); c6.metric(t["st_buy_box"],f"{ab:.1f}%")
+    st.markdown("---"); st.markdown("### 📈 Daily Trends")
+    daily = df_filtered.groupby(df_filtered['report_date'].dt.date).agg(
+        {'sessions':'sum','page_views':'sum','units_ordered':'sum','ordered_product_sales':'sum'}).reset_index()
+    daily.columns = ['Date','Sessions','Page Views','Units','Revenue']
+    daily['Conversion %'] = (daily['Units']/daily['Sessions']*100).fillna(0)
+    col1,col2 = st.columns(2)
     with col1:
         st.markdown("#### 👁 Sessions & Page Views")
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=daily['Date'], y=daily['Sessions'], name='Sessions', marker_color='#4472C4'))
-        fig.add_trace(go.Scatter(x=daily['Date'], y=daily['Page Views'], name='Page Views',
-                                 mode='lines+markers', line=dict(color='#ED7D31', width=2), yaxis='y2'))
-        fig.update_layout(
-            yaxis=dict(title='Sessions'),
-            yaxis2=dict(title='Page Views', overlaying='y', side='right'),
-            height=380, legend=dict(orientation='h', y=1.12)
-        )
+        fig.add_trace(go.Bar(x=daily['Date'],y=daily['Sessions'],name='Sessions',marker_color='#4472C4'))
+        fig.add_trace(go.Scatter(x=daily['Date'],y=daily['Page Views'],name='Page Views',mode='lines+markers',line=dict(color='#ED7D31',width=2),yaxis='y2'))
+        fig.update_layout(yaxis=dict(title='Sessions'),yaxis2=dict(title='Page Views',overlaying='y',side='right'),height=380,legend=dict(orientation='h',y=1.12))
         st.plotly_chart(fig, use_container_width=True)
-
     with col2:
         st.markdown("#### 💰 Revenue & Units")
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=daily['Date'], y=daily['Revenue'], name='Revenue $', marker_color='#70AD47'))
-        fig.add_trace(go.Scatter(x=daily['Date'], y=daily['Units'], name='Units',
-                                 mode='lines+markers', line=dict(color='#FFC000', width=2), yaxis='y2'))
-        fig.update_layout(
-            yaxis=dict(title='Revenue $'),
-            yaxis2=dict(title='Units Ordered', overlaying='y', side='right'),
-            height=380, legend=dict(orientation='h', y=1.12)
-        )
+        fig.add_trace(go.Bar(x=daily['Date'],y=daily['Revenue'],name='Revenue $',marker_color='#70AD47'))
+        fig.add_trace(go.Scatter(x=daily['Date'],y=daily['Units'],name='Units',mode='lines+markers',line=dict(color='#FFC000',width=2),yaxis='y2'))
+        fig.update_layout(yaxis=dict(title='Revenue $'),yaxis2=dict(title='Units',overlaying='y',side='right'),height=380,legend=dict(orientation='h',y=1.12))
         st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("#### 📊 Conversion Rate Trend")
-    fig_conv = go.Figure()
-    fig_conv.add_trace(go.Scatter(
-        x=daily['Date'], y=daily['Conversion %'],
-        mode='lines+markers+text',
-        text=[f"{v:.1f}%" for v in daily['Conversion %']],
-        textposition='top center',
-        line=dict(color='#5B9BD5', width=3),
-        marker=dict(size=8),
-    ))
-    fig_conv.update_layout(height=300, yaxis_title='Conversion %')
+    fig_conv = go.Figure(go.Scatter(x=daily['Date'],y=daily['Conversion %'],mode='lines+markers+text',
+        text=[f"{v:.1f}%" for v in daily['Conversion %']],textposition='top center',line=dict(color='#5B9BD5',width=3),marker=dict(size=8)))
+    fig_conv.update_layout(height=300,yaxis_title='Conversion %')
     st.plotly_chart(fig_conv, use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("### 🏆 Top ASINs Performance")
-
+    st.markdown("---"); st.markdown("### 🏆 Top ASINs Performance")
     asin_col = 'child_asin' if 'child_asin' in df_filtered.columns else df_filtered.columns[0]
-    asin_stats = df_filtered.groupby(asin_col).agg({
-        'sessions': 'sum',
-        'page_views': 'sum',
-        'units_ordered': 'sum',
-        'ordered_product_sales': 'sum',
-        'buy_box_percentage': 'mean',
-    }).reset_index()
-    asin_stats.columns = ['ASIN', 'Sessions', 'Page Views', 'Units', 'Revenue', 'Buy Box %']
-    asin_stats['Conv %'] = (asin_stats['Units'] / asin_stats['Sessions'] * 100).fillna(0)
-
-    col1, col2 = st.columns(2)
+    as_ = df_filtered.groupby(asin_col).agg({'sessions':'sum','page_views':'sum','units_ordered':'sum','ordered_product_sales':'sum','buy_box_percentage':'mean'}).reset_index()
+    as_.columns=['ASIN','Sessions','Page Views','Units','Revenue','Buy Box %']
+    as_['Conv %'] = (as_['Units']/as_['Sessions']*100).fillna(0)
+    col1,col2 = st.columns(2)
     with col1:
         st.markdown("#### 💰 Top 15 by Revenue")
-        top_rev = asin_stats.nlargest(15, 'Revenue')
-        fig = px.bar(top_rev, x='Revenue', y='ASIN', orientation='h',
-                     text='Revenue', color='Revenue', color_continuous_scale='Greens')
-        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, height=450)
-        fig.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
+        fig = px.bar(as_.nlargest(15,'Revenue'),x='Revenue',y='ASIN',orientation='h',text='Revenue',color='Revenue',color_continuous_scale='Greens')
+        fig.update_layout(yaxis={'categoryorder':'total ascending'},height=450); fig.update_traces(texttemplate='$%{text:,.0f}',textposition='outside')
         st.plotly_chart(fig, use_container_width=True)
-
     with col2:
         st.markdown("#### 👁 Top 15 by Sessions")
-        top_sess = asin_stats.nlargest(15, 'Sessions')
-        fig = px.bar(top_sess, x='Sessions', y='ASIN', orientation='h',
-                     text='Sessions', color='Sessions', color_continuous_scale='Blues')
-        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, height=450)
+        fig = px.bar(as_.nlargest(15,'Sessions'),x='Sessions',y='ASIN',orientation='h',text='Sessions',color='Sessions',color_continuous_scale='Blues')
+        fig.update_layout(yaxis={'categoryorder':'total ascending'},height=450)
         st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("### 📊 Sessions vs Conversion (Opportunity Map)")
-    st.caption("Big circles = more revenue. Red = low conversion, Green = high. Top-right = winners!")
-
-    asin_scatter = asin_stats[asin_stats['Sessions'] > 0].copy()
-    if not asin_scatter.empty:
-        fig_scatter = px.scatter(
-            asin_scatter, x='Sessions', y='Conv %',
-            size='Revenue', color='Conv %',
-            hover_data=['ASIN', 'Units', 'Revenue', 'Buy Box %'],
-            color_continuous_scale='RdYlGn', size_max=40,
-        )
-        avg_sessions = asin_scatter['Sessions'].median()
-        avg_conv     = asin_scatter['Conv %'].median()
-        fig_scatter.add_hline(y=avg_conv, line_dash="dash", line_color="gray", opacity=0.5,
-                              annotation_text=f"Median Conv: {avg_conv:.1f}%")
-        fig_scatter.add_vline(x=avg_sessions, line_dash="dash", line_color="gray", opacity=0.5,
-                              annotation_text=f"Median Sessions: {int(avg_sessions)}")
-        fig_scatter.update_layout(height=500)
-        st.plotly_chart(fig_scatter, use_container_width=True)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("#### 🔴 High Traffic, Low Conversion (Fix Listing!)")
-            problem = asin_scatter[
-                (asin_scatter['Sessions'] > avg_sessions) & (asin_scatter['Conv %'] < avg_conv)
-            ].sort_values('Sessions', ascending=False).head(10)
-            if not problem.empty:
-                st.dataframe(
-                    problem[['ASIN', 'Sessions', 'Conv %', 'Units', 'Revenue', 'Buy Box %']].style.format({
-                        'Conv %': '{:.2f}%', 'Revenue': '${:,.2f}', 'Buy Box %': '{:.1f}%'
-                    }),
-                    use_container_width=True
-                )
-            else:
-                st.success("No underperformers found!")
-
-        with col2:
-            st.markdown("#### 🟢 Stars: High Traffic + High Conversion")
-            stars = asin_scatter[
-                (asin_scatter['Sessions'] > avg_sessions) & (asin_scatter['Conv %'] > avg_conv)
-            ].sort_values('Revenue', ascending=False).head(10)
-            if not stars.empty:
-                st.dataframe(
-                    stars[['ASIN', 'Sessions', 'Conv %', 'Units', 'Revenue', 'Buy Box %']].style.format({
-                        'Conv %': '{:.2f}%', 'Revenue': '${:,.2f}', 'Buy Box %': '{:.1f}%'
-                    }),
-                    use_container_width=True
-                )
-            else:
-                st.info("Not enough data yet")
-
-    st.markdown("---")
-
-    if 'mobile_sessions' in df_filtered.columns and 'browser_sessions' in df_filtered.columns:
-        total_mobile  = int(df_filtered['mobile_sessions'].sum())
-        total_browser = int(df_filtered['browser_sessions'].sum())
-        if total_mobile > 0 or total_browser > 0:
-            st.markdown("### 📱 Mobile vs Browser")
-            col1, col2 = st.columns(2)
-            with col1:
-                fig_device = px.pie(
-                    values=[total_mobile, total_browser],
-                    names=['Mobile App', 'Browser'],
-                    hole=0.45,
-                    color_discrete_sequence=['#4472C4', '#ED7D31']
-                )
-                fig_device.update_layout(height=350)
-                st.plotly_chart(fig_device, use_container_width=True)
-            with col2:
-                st.metric("📱 Mobile Sessions",  f"{total_mobile:,}")
-                st.metric("💻 Browser Sessions", f"{total_browser:,}")
-                mobile_pct = total_mobile / (total_mobile + total_browser) * 100 if (total_mobile + total_browser) > 0 else 0
-                st.metric("📱 Mobile Share", f"{mobile_pct:.1f}%")
-            st.markdown("---")
-
-    st.markdown("### 🏷 Buy Box Analysis")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### ⚠️ Low Buy Box ASINs (<80%)")
-        low_bb = asin_stats[asin_stats['Buy Box %'] < 80].sort_values('Buy Box %').head(15)
-        if not low_bb.empty:
-            fig = px.bar(low_bb, x='Buy Box %', y='ASIN', orientation='h',
-                         color='Buy Box %', color_continuous_scale='RdYlGn', text='Buy Box %')
-            fig.update_layout(yaxis={'categoryorder': 'total ascending'}, height=400)
-            fig.update_traces(texttemplate='%{text:.0f}%', textposition='outside')
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.success("All ASINs have Buy Box > 80%! 🎉")
-    with col2:
-        st.markdown("#### 📊 Buy Box Distribution")
-        fig = px.histogram(asin_stats, x='Buy Box %', nbins=20, color_discrete_sequence=['#4472C4'])
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("### 📋 Full ASIN Data")
-    asin_display = asin_stats.sort_values('Revenue', ascending=False)
-    st.dataframe(
-        asin_display.style.format({
-            'Revenue': '${:,.2f}', 'Conv %': '{:.2f}%', 'Buy Box %': '{:.1f}%',
-        }),
-        use_container_width=True, height=500
-    )
-
-    csv = asin_display.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Download Sales & Traffic CSV",
-        data=csv,
-        file_name=f"sales_traffic_{date_range[0]}_{date_range[1]}.csv" if len(date_range) == 2 else "sales_traffic.csv",
-        mime="text/csv"
-    )
-
-    insights_sales_traffic(df_filtered, asin_stats)
+    st.markdown("---"); st.markdown("### 📋 Full ASIN Data")
+    st.dataframe(as_.sort_values('Revenue',ascending=False).style.format({'Revenue':'${:,.2f}','Conv %':'{:.2f}%','Buy Box %':'{:.1f}%'}),use_container_width=True,height=500)
+    csv = as_.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Download CSV", csv, "sales_traffic.csv","text/csv")
+    insights_sales_traffic(df_filtered, as_)
 
 
 def show_settlements(t):
     df_settlements = load_settlements()
     if df_settlements.empty:
-        st.warning("⚠️ No settlement data found. Please run 'amazon_settlement_loader.py'.")
-        return
-
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("💰 Settlement Filters")
-
+        st.warning("⚠️ No settlement data found."); return
+    st.sidebar.markdown("---"); st.sidebar.subheader("💰 Settlement Filters")
     currencies = ['All'] + sorted(df_settlements['Currency'].dropna().unique().tolist())
-    selected_currency = st.sidebar.selectbox(t["currency_select"], currencies, index=1 if "USD" in currencies else 0)
-
+    sel_cur = st.sidebar.selectbox(t["currency_select"], currencies, index=1 if "USD" in currencies else 0)
     min_date = df_settlements['Posted Date'].min().date()
     max_date = df_settlements['Posted Date'].max().date()
-    date_range = st.sidebar.date_input(
-        "📅 Transaction Date:",
-        value=(max_date - dt.timedelta(days=30), max_date),
-        min_value=min_date, max_value=max_date
-    )
-
-    df_filtered = df_settlements.copy()
-    if selected_currency != 'All':
-        df_filtered = df_filtered[df_filtered['Currency'] == selected_currency]
-    if len(date_range) == 2:
-        mask = (df_filtered['Posted Date'].dt.date >= date_range[0]) & \
-               (df_filtered['Posted Date'].dt.date <= date_range[1])
-        df_filtered = df_filtered[mask]
-
-    if df_filtered.empty:
-        st.warning("No data for selected filters")
-        return
-
+    date_range = st.sidebar.date_input("📅 Transaction Date:",value=(max_date-dt.timedelta(days=30),max_date),min_value=min_date,max_value=max_date)
+    df_f = df_settlements.copy()
+    if sel_cur != 'All': df_f = df_f[df_f['Currency']==sel_cur]
+    if len(date_range)==2:
+        df_f = df_f[(df_f['Posted Date'].dt.date>=date_range[0])&(df_f['Posted Date'].dt.date<=date_range[1])]
+    if df_f.empty:
+        st.warning("No data for selected filters"); return
     st.markdown(f"### {t['settlements_title']}")
-
-    net_payout  = df_filtered['Amount'].sum()
-    gross_sales = df_filtered[(df_filtered['Transaction Type'] == 'Order') & (df_filtered['Amount'] > 0)]['Amount'].sum()
-    refunds     = df_filtered[df_filtered['Transaction Type'] == 'Refund']['Amount'].sum()
-    fees        = df_filtered[(df_filtered['Amount'] < 0) & (df_filtered['Transaction Type'] != 'Refund')]['Amount'].sum()
-    currency_symbol = "$" if selected_currency in ['USD', 'CAD', 'All'] else ""
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric(t['net_payout'],    f"{currency_symbol}{net_payout:,.2f}")
-    col2.metric(t['gross_sales'],   f"{currency_symbol}{gross_sales:,.2f}")
-    col3.metric(t['total_refunds'], f"{currency_symbol}{refunds:,.2f}")
-    col4.metric(t['total_fees'],    f"{currency_symbol}{fees:,.2f}")
-
+    net = df_f['Amount'].sum()
+    gross = df_f[(df_f['Transaction Type']=='Order')&(df_f['Amount']>0)]['Amount'].sum()
+    refunds = df_f[df_f['Transaction Type']=='Refund']['Amount'].sum()
+    fees = df_f[(df_f['Amount']<0)&(df_f['Transaction Type']!='Refund')]['Amount'].sum()
+    sym = "$" if sel_cur in ['USD','CAD','All'] else ""
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric(t['net_payout'],f"{sym}{net:,.2f}"); c2.metric(t['gross_sales'],f"{sym}{gross:,.2f}")
+    c3.metric(t['total_refunds'],f"{sym}{refunds:,.2f}"); c4.metric(t['total_fees'],f"{sym}{fees:,.2f}")
     st.markdown("---")
-
-    col1, col2 = st.columns([2, 1])
+    col1,col2 = st.columns([2,1])
     with col1:
         st.subheader(t['chart_payout_trend'])
-        daily_trend = df_filtered.groupby(df_filtered['Posted Date'].dt.date)['Amount'].sum().reset_index()
-        daily_trend.columns = ['Date', 'Net Amount']
-        fig_trend = go.Figure()
-        fig_trend.add_trace(go.Bar(
-            x=daily_trend['Date'], y=daily_trend['Net Amount'],
-            marker_color=daily_trend['Net Amount'].apply(lambda x: 'green' if x >= 0 else 'red'),
-        ))
-        fig_trend.update_layout(height=400, yaxis_title=f"Net Amount ({selected_currency})")
-        st.plotly_chart(fig_trend, use_container_width=True)
-
+        dt_ = df_f.groupby(df_f['Posted Date'].dt.date)['Amount'].sum().reset_index()
+        dt_.columns=['Date','Net Amount']
+        fig = go.Figure(go.Bar(x=dt_['Date'],y=dt_['Net Amount'],marker_color=dt_['Net Amount'].apply(lambda x:'green' if x>=0 else 'red')))
+        fig.update_layout(height=400,yaxis_title=f"Net Amount ({sel_cur})")
+        st.plotly_chart(fig, use_container_width=True)
     with col2:
         st.subheader(t['chart_fee_breakdown'])
-        df_costs = df_filtered[df_filtered['Amount'] < 0]
+        df_costs = df_f[df_f['Amount']<0]
         if not df_costs.empty:
-            cost_breakdown = df_costs.groupby('Transaction Type')['Amount'].sum().abs().reset_index()
-            fig_pie = px.pie(cost_breakdown, values='Amount', names='Transaction Type', hole=0.4)
-            fig_pie.update_layout(height=400)
-            st.plotly_chart(fig_pie, use_container_width=True)
-        else:
-            st.info("No costs in selected period")
-
-    st.markdown("#### 📋 Transaction Details")
-    display_cols = ['Posted Date', 'Transaction Type', 'Order ID', 'Amount', 'Currency', 'Description']
-    available_cols = [c for c in display_cols if c in df_filtered.columns]
-    st.dataframe(
-        df_filtered[available_cols].sort_values('Posted Date', ascending=False).head(100),
-        use_container_width=True
-    )
-
-    insights_settlements(df_filtered)
+            cb = df_costs.groupby('Transaction Type')['Amount'].sum().abs().reset_index()
+            fig = px.pie(cb,values='Amount',names='Transaction Type',hole=0.4)
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else: st.info("No costs in selected period")
+    disp = ['Posted Date','Transaction Type','Order ID','Amount','Currency','Description']
+    st.dataframe(df_f[[c for c in disp if c in df_f.columns]].sort_values('Posted Date',ascending=False).head(100),use_container_width=True)
+    insights_settlements(df_f)
 
 
 def show_returns():
-    df_returns_raw, df_orders = load_returns()
-
-    if df_returns_raw.empty:
-        st.warning("⚠️ No returns data. Run amazon_returns_loader.py")
-        return
-
-    df_returns = df_returns_raw.copy()
-    df_returns['Return Date'] = pd.to_datetime(df_returns['Return Date'], errors='coerce')
-    df_returns['Day of Week'] = df_returns['Return Date'].dt.day_name()
-
-    if 'Price' not in df_returns.columns and not df_orders.empty:
+    df_ret_raw, df_orders = load_returns()
+    if df_ret_raw.empty:
+        st.warning("⚠️ No returns data."); return
+    df_r = df_ret_raw.copy()
+    df_r['Return Date'] = pd.to_datetime(df_r['Return Date'], errors='coerce')
+    if 'Price' not in df_r.columns and not df_orders.empty:
         try:
-            price_col_found = None
-            for col in ['Item Price', 'item-price', 'item_price', 'price', 'Price']:
+            for col in ['Item Price','item-price','item_price','price','Price']:
                 if col in df_orders.columns:
-                    price_col_found = col
+                    df_orders[col] = pd.to_numeric(df_orders[col],errors='coerce')
+                    df_r['Price'] = df_r['SKU'].map(df_orders.groupby('SKU')[col].mean()).fillna(0)
                     break
-            if price_col_found:
-                df_orders[price_col_found] = pd.to_numeric(df_orders[price_col_found], errors='coerce')
-                price_map = df_orders.groupby('SKU')[price_col_found].mean().to_dict()
-                df_returns['Price'] = df_returns['SKU'].map(price_map).fillna(0)
-            else:
-                df_returns['Price'] = 0
-        except:
-            df_returns['Price'] = 0
-    elif 'Price' not in df_returns.columns:
-        df_returns['Price'] = 0
-
-    df_returns['Price']        = pd.to_numeric(df_returns['Price'], errors='coerce').fillna(0)
-    df_returns['Quantity']     = pd.to_numeric(df_returns['Quantity'], errors='coerce').fillna(1)
-    df_returns['Return Value'] = df_returns['Price'] * df_returns['Quantity']
-
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📦 Returns Filters")
-
-    min_date = df_returns['Return Date'].min().date()
-    max_date = df_returns['Return Date'].max().date()
-    date_range = st.sidebar.date_input(
-        "📅 Return Date:",
-        value=(max_date - dt.timedelta(days=30), max_date),
-        min_value=min_date, max_value=max_date
-    )
-
-    selected_store = 'All'
-    if 'Store Name' in df_returns.columns:
-        stores = ['All'] + sorted(df_returns['Store Name'].dropna().unique().tolist())
-        selected_store = st.sidebar.selectbox("🏪 Store:", stores)
-
-    if len(date_range) == 2:
-        mask = (df_returns['Return Date'].dt.date >= date_range[0]) & \
-               (df_returns['Return Date'].dt.date <= date_range[1])
-        df_filtered = df_returns[mask]
-    else:
-        df_filtered = df_returns
-
-    if selected_store != 'All':
-        df_filtered = df_filtered[df_filtered['Store Name'] == selected_store]
-
+        except: df_r['Price'] = 0
+    elif 'Price' not in df_r.columns: df_r['Price'] = 0
+    df_r['Price']        = pd.to_numeric(df_r['Price'],errors='coerce').fillna(0)
+    df_r['Quantity']     = pd.to_numeric(df_r['Quantity'],errors='coerce').fillna(1)
+    df_r['Return Value'] = df_r['Price'] * df_r['Quantity']
+    st.sidebar.markdown("---"); st.sidebar.subheader("📦 Returns Filters")
+    min_date = df_r['Return Date'].min().date(); max_date = df_r['Return Date'].max().date()
+    date_range = st.sidebar.date_input("📅 Return Date:",value=(max_date-dt.timedelta(days=30),max_date),min_value=min_date,max_value=max_date)
+    sel_store = 'All'
+    if 'Store Name' in df_r.columns:
+        stores = ['All'] + sorted(df_r['Store Name'].dropna().unique().tolist())
+        sel_store = st.sidebar.selectbox("🏪 Store:", stores)
+    df_f = df_r[(df_r['Return Date'].dt.date>=date_range[0])&(df_r['Return Date'].dt.date<=date_range[1])] if len(date_range)==2 else df_r
+    if sel_store != 'All': df_f = df_f[df_f['Store Name']==sel_store]
     st.markdown("### 📦 Returns Overview")
-
-    total_returns      = len(df_filtered)
-    unique_skus        = df_filtered['SKU'].nunique()
-    unique_orders      = df_filtered['Order ID'].nunique()
-    total_return_value = df_filtered['Return Value'].sum()
-    avg_return_value   = df_filtered['Return Value'].mean()
-
-    return_rate = 0
+    rr = 0
     try:
         if not df_orders.empty:
-            for col in ['Order ID', 'order-id', 'order_id', 'OrderID']:
+            for col in ['Order ID','order-id','order_id','OrderID']:
                 if col in df_orders.columns:
-                    total_orders = df_orders[col].nunique()
-                    return_rate  = (unique_orders / total_orders * 100) if total_orders > 0 else 0
+                    rr = df_f['Order ID'].nunique()/df_orders[col].nunique()*100 if df_orders[col].nunique()>0 else 0
                     break
-    except:
-        pass
-
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("📦 Total Returns",  f"{total_returns:,}")
-    col2.metric("📦 Unique SKUs",    unique_skus)
-    col3.metric("📊 Return Rate",    f"{return_rate:.1f}%")
-    col4.metric("💰 Return Value",   f"${total_return_value:,.2f}")
-    col5.metric("💵 Avg Return",     f"${avg_return_value:.2f}")
-
+    except: pass
+    c1,c2,c3,c4,c5 = st.columns(5)
+    c1.metric("📦 Total Returns",f"{len(df_f):,}"); c2.metric("📦 Unique SKUs",df_f['SKU'].nunique())
+    c3.metric("📊 Return Rate",f"{rr:.1f}%"); c4.metric("💰 Return Value",f"${df_f['Return Value'].sum():,.2f}")
+    c5.metric("💵 Avg Return",f"${df_f['Return Value'].mean():.2f}")
     st.markdown("---")
-    st.markdown("### 💰 Financial Impact")
-
-    col1, col2, col3 = st.columns(3)
+    col1,col2,col3 = st.columns(3)
     with col1:
         st.markdown("#### 💵 Return Value by SKU (Top 10)")
-        top_value = df_filtered.groupby('SKU')['Return Value'].sum().nlargest(10).reset_index()
-        fig = px.bar(top_value, x='Return Value', y='SKU', orientation='h',
-                     text='Return Value', color='Return Value', color_continuous_scale='Reds')
-        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, height=350)
-        fig.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
+        tv = df_f.groupby('SKU')['Return Value'].sum().nlargest(10).reset_index()
+        fig = px.bar(tv,x='Return Value',y='SKU',orientation='h',text='Return Value',color='Return Value',color_continuous_scale='Reds')
+        fig.update_layout(yaxis={'categoryorder':'total ascending'},height=350); fig.update_traces(texttemplate='$%{text:,.0f}',textposition='outside')
         st.plotly_chart(fig, use_container_width=True)
-
     with col2:
         st.markdown("#### 📊 Daily Return Value")
-        daily_value = df_filtered.groupby(df_filtered['Return Date'].dt.date)['Return Value'].sum().reset_index()
-        daily_value.columns = ['Date', 'Value']
-        fig = px.area(daily_value, x='Date', y='Value', line_shape='spline', color_discrete_sequence=['#FF6B6B'])
-        fig.update_layout(height=350)
-        st.plotly_chart(fig, use_container_width=True)
-
+        dv = df_f.groupby(df_f['Return Date'].dt.date)['Return Value'].sum().reset_index(); dv.columns=['Date','Value']
+        fig = px.area(dv,x='Date',y='Value',line_shape='spline',color_discrete_sequence=['#FF6B6B'])
+        fig.update_layout(height=350); st.plotly_chart(fig, use_container_width=True)
     with col3:
-        if 'Reason' in df_filtered.columns:
+        if 'Reason' in df_f.columns:
             st.markdown("#### 💸 Return Value by Reason")
-            reason_value = df_filtered.groupby('Reason')['Return Value'].sum().nlargest(8).reset_index()
-            fig = px.pie(reason_value, values='Return Value', names='Reason',
-                         hole=0.4, color_discrete_sequence=px.colors.sequential.RdBu)
-            fig.update_layout(height=350)
-            st.plotly_chart(fig, use_container_width=True)
-
+            rv = df_f.groupby('Reason')['Return Value'].sum().nlargest(8).reset_index()
+            fig = px.pie(rv,values='Return Value',names='Reason',hole=0.4,color_discrete_sequence=px.colors.sequential.RdBu)
+            fig.update_layout(height=350); st.plotly_chart(fig, use_container_width=True)
     st.markdown("---")
-
-    col1, col2 = st.columns(2)
+    col1,col2 = st.columns(2)
     with col1:
         st.markdown("#### 🏆 Top 15 Returned SKUs")
-        top_skus = df_filtered['SKU'].value_counts().head(15).reset_index()
-        top_skus.columns = ['SKU', 'Returns']
-        fig = px.bar(top_skus, x='Returns', y='SKU', orientation='h',
-                     color='Returns', color_continuous_scale='Oranges', text='Returns')
-        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, height=450)
-        st.plotly_chart(fig, use_container_width=True)
-
+        ts = df_f['SKU'].value_counts().head(15).reset_index(); ts.columns=['SKU','Returns']
+        fig = px.bar(ts,x='Returns',y='SKU',orientation='h',color='Returns',color_continuous_scale='Oranges',text='Returns')
+        fig.update_layout(yaxis={'categoryorder':'total ascending'},height=450); st.plotly_chart(fig, use_container_width=True)
     with col2:
-        if 'Reason' in df_filtered.columns:
-            st.markdown("#### 📊 Return Reasons Distribution")
-            reasons = df_filtered['Reason'].value_counts().head(10).reset_index()
-            reasons.columns = ['Reason', 'Count']
-            fig = px.pie(reasons, values='Count', names='Reason', hole=0.4,
-                         color_discrete_sequence=px.colors.sequential.RdBu)
-            fig.update_layout(height=450)
-            st.plotly_chart(fig, use_container_width=True)
-
+        if 'Reason' in df_f.columns:
+            st.markdown("#### 📊 Return Reasons")
+            rs = df_f['Reason'].value_counts().head(10).reset_index(); rs.columns=['Reason','Count']
+            fig = px.pie(rs,values='Count',names='Reason',hole=0.4,color_discrete_sequence=px.colors.sequential.RdBu)
+            fig.update_layout(height=450); st.plotly_chart(fig, use_container_width=True)
     st.markdown("---")
-    st.markdown("### 📋 Recent Returns (Last 100)")
-    display_cols    = ['Return Date', 'SKU', 'Product Name', 'Quantity', 'Price', 'Return Value', 'Reason', 'Status']
-    available_cols  = [c for c in display_cols if c in df_filtered.columns]
-    st.dataframe(
-        df_filtered[available_cols].sort_values('Return Date', ascending=False).head(100).style.format({
-            'Price': '${:.2f}', 'Return Value': '${:.2f}'
-        }),
-        use_container_width=True
-    )
-
-    st.markdown("---")
-    csv = df_filtered.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Download Returns Data (CSV)",
-        data=csv,
-        file_name=f"returns_{date_range[0]}_{date_range[1]}.csv",
-        mime="text/csv"
-    )
-
-    insights_returns(df_filtered, return_rate)
+    dc = ['Return Date','SKU','Product Name','Quantity','Price','Return Value','Reason','Status']
+    st.dataframe(df_f[[c for c in dc if c in df_f.columns]].sort_values('Return Date',ascending=False).head(100).style.format({'Price':'${:.2f}','Return Value':'${:.2f}'}),use_container_width=True)
+    st.download_button("📥 Download Returns CSV",df_f.to_csv(index=False).encode('utf-8'),"returns.csv","text/csv")
+    insights_returns(df_f, rr)
 
 
 def show_inventory_finance(df_filtered, t):
-    total_val = df_filtered['Stock Value'].sum()
-    col1, col2, col3 = st.columns(3)
-    col1.metric("💰 Total Inventory Value", f"${total_val:,.2f}")
-    avg_price = df_filtered[df_filtered['Price'] > 0]['Price'].mean()
-    col2.metric(t["avg_price"], f"${avg_price:,.2f}" if not pd.isna(avg_price) else "$0")
-    total_units = df_filtered['Available'].sum()
-    avg_value_per_unit = total_val / total_units if total_units > 0 else 0
-    col3.metric("💵 Avg Value per Unit", f"${avg_value_per_unit:.2f}")
-
-    st.markdown("---")
-    st.subheader(t["chart_value_treemap"])
-    df_money = df_filtered[df_filtered['Stock Value'] > 0]
-    if not df_money.empty:
-        fig_tree = px.treemap(
-            df_money, path=['Store Name', 'SKU'], values='Stock Value',
-            color='Stock Value', color_continuous_scale='RdYlGn_r'
-        )
-        st.plotly_chart(fig_tree, use_container_width=True)
-
+    tv = df_filtered['Stock Value'].sum(); tu = df_filtered['Available'].sum()
+    ap = df_filtered[df_filtered['Price']>0]['Price'].mean()
+    c1,c2,c3 = st.columns(3)
+    c1.metric("💰 Total Inventory Value",f"${tv:,.2f}")
+    c2.metric(t["avg_price"],f"${ap:,.2f}" if not pd.isna(ap) else "$0")
+    c3.metric("💵 Avg Value per Unit",f"${tv/tu:.2f}" if tu>0 else "$0")
+    st.markdown("---"); st.subheader(t["chart_value_treemap"])
+    dm = df_filtered[df_filtered['Stock Value']>0]
+    if not dm.empty:
+        fig = px.treemap(dm,path=['Store Name','SKU'],values='Stock Value',color='Stock Value',color_continuous_scale='RdYlGn_r')
+        st.plotly_chart(fig, use_container_width=True)
     st.subheader(t["top_money_sku"])
-    df_top = df_filtered[['SKU', 'Product Name', 'Available', 'Price', 'Stock Value']]\
-        .sort_values('Stock Value', ascending=False).head(10)
-    st.dataframe(df_top.style.format({'Price': "${:.2f}", 'Stock Value': "${:,.2f}"}), use_container_width=True)
-
+    dt_ = df_filtered[['SKU','Product Name','Available','Price','Stock Value']].sort_values('Stock Value',ascending=False).head(10)
+    st.dataframe(dt_.style.format({'Price':"${:.2f}",'Stock Value':"${:,.2f}"}),use_container_width=True)
     insights_inventory(df_filtered)
 
 
 def show_aging(df_filtered, t):
-    if df_filtered.empty:
-        st.warning("No data")
-        return
-
-    age_cols       = ['Upto 90 Days', '91 to 180 Days', '181 to 270 Days', '271 to 365 Days', 'More than 365 Days']
-    valid_age_cols = [c for c in age_cols if c in df_filtered.columns]
-
-    if not valid_age_cols:
-        st.warning("Aging data not available. Check AGED report in ETL.")
-        return
-
-    df_age = df_filtered[valid_age_cols].copy()
-    for col in valid_age_cols:
-        df_age[col] = pd.to_numeric(df_age[col], errors='coerce').fillna(0)
-
-    if df_age.sum().sum() == 0:
-        st.info("All inventory is fresh — no aged stock")
-        return
-
-    age_sums = df_age.sum().reset_index()
-    age_sums.columns = ['Age Group', 'Units']
-    age_sums = age_sums[age_sums['Units'] > 0]
-
-    col1, col2 = st.columns(2)
+    if df_filtered.empty: st.warning("No data"); return
+    age_cols = ['Upto 90 Days','91 to 180 Days','181 to 270 Days','271 to 365 Days','More than 365 Days']
+    valid    = [c for c in age_cols if c in df_filtered.columns]
+    if not valid: st.warning("Aging data not available."); return
+    da = df_filtered[valid].copy()
+    for c in valid: da[c] = pd.to_numeric(da[c],errors='coerce').fillna(0)
+    if da.sum().sum()==0: st.info("All inventory is fresh"); return
+    as_ = da.sum().reset_index(); as_.columns=['Age Group','Units']; as_ = as_[as_['Units']>0]
+    col1,col2 = st.columns(2)
     with col1:
         st.subheader(t["chart_age"])
-        fig_pie = px.pie(age_sums, values='Units', names='Age Group', hole=0.4)
-        fig_pie.update_layout(height=400)
-        st.plotly_chart(fig_pie, use_container_width=True)
-
+        fig = px.pie(as_,values='Units',names='Age Group',hole=0.4); fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
     with col2:
         st.subheader(t["chart_velocity"])
-        if all(c in df_filtered.columns for c in ['Available', 'Velocity', 'Stock Value']):
-            df_scatter = df_filtered[
-                (df_filtered['Available'] > 0) &
-                (df_filtered['Velocity'] >= 0) &
-                (df_filtered['Stock Value'] > 0)
-            ].copy()
-            if not df_scatter.empty:
-                fig_scatter = px.scatter(
-                    df_scatter, x='Available', y='Velocity', size='Stock Value',
-                    color='Store Name' if 'Store Name' in df_scatter.columns else None,
-                    hover_name='SKU', log_x=True
-                )
-                fig_scatter.update_layout(height=400)
-                st.plotly_chart(fig_scatter, use_container_width=True)
+        if all(c in df_filtered.columns for c in ['Available','Velocity','Stock Value']):
+            ds = df_filtered[(df_filtered['Available']>0)&(df_filtered['Velocity']>=0)&(df_filtered['Stock Value']>0)].copy()
+            if not ds.empty:
+                fig = px.scatter(ds,x='Available',y='Velocity',size='Stock Value',color='Store Name' if 'Store Name' in ds.columns else None,hover_name='SKU',log_x=True)
+                fig.update_layout(height=400); st.plotly_chart(fig, use_container_width=True)
 
 
 def show_ai_forecast(df, t):
     st.markdown("### Select SKU for Forecast")
     skus = sorted(df['SKU'].unique())
-    if not skus:
-        st.info("No SKU available")
-        return
-
-    col1, col2 = st.columns([2, 1])
-    target_sku    = col1.selectbox(t["ai_select"], skus)
-    forecast_days = col2.slider(t["ai_days"], 7, 90, 30)
-
-    sku_data = df[df['SKU'] == target_sku].copy().sort_values('created_at')
-    sku_data['date_ordinal'] = sku_data['created_at'].map(dt.datetime.toordinal)
-
-    if len(sku_data) >= 3:
-        X = sku_data[['date_ordinal']]
-        y = sku_data['Available']
-        model = LinearRegression().fit(X, y)
-
-        last_date    = sku_data['created_at'].max()
-        future_dates = [last_date + dt.timedelta(days=x) for x in range(1, forecast_days + 1)]
-        future_ord   = np.array([d.toordinal() for d in future_dates]).reshape(-1, 1)
-        predictions  = [max(0, int(p)) for p in model.predict(future_ord)]
-
-        df_forecast = pd.DataFrame({'date': future_dates, 'Predicted': predictions})
-        sold_out = df_forecast[df_forecast['Predicted'] == 0]
-        if not sold_out.empty:
-            st.error(f"{t['ai_result_date']} **{sold_out.iloc[0]['date'].date()}**")
-        else:
-            st.success(t['ai_ok'])
-
+    if not skus: st.info("No SKU available"); return
+    col1,col2 = st.columns([2,1])
+    target_sku    = col1.selectbox(t["ai_select"],skus)
+    forecast_days = col2.slider(t["ai_days"],7,90,30)
+    sd = df[df['SKU']==target_sku].copy().sort_values('created_at')
+    sd['date_ordinal'] = sd['created_at'].map(dt.datetime.toordinal)
+    if len(sd)>=3:
+        model = LinearRegression().fit(sd[['date_ordinal']], sd['Available'])
+        last  = sd['created_at'].max()
+        fd    = [last+dt.timedelta(days=x) for x in range(1,forecast_days+1)]
+        fo    = np.array([d.toordinal() for d in fd]).reshape(-1,1)
+        preds = [max(0,int(p)) for p in model.predict(fo)]
+        df_fc = pd.DataFrame({'date':fd,'Predicted':preds})
+        so    = df_fc[df_fc['Predicted']==0]
+        if not so.empty: st.error(f"{t['ai_result_date']} **{so.iloc[0]['date'].date()}**")
+        else:             st.success(t['ai_ok'])
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=sku_data['created_at'], y=sku_data['Available'], name='Historical'))
-        fig.add_trace(go.Scatter(x=df_forecast['date'], y=df_forecast['Predicted'],
-                                 name='Forecast', line=dict(dash='dash', color='red')))
+        fig.add_trace(go.Scatter(x=sd['created_at'],y=sd['Available'],name='Historical'))
+        fig.add_trace(go.Scatter(x=df_fc['date'],y=df_fc['Predicted'],name='Forecast',line=dict(dash='dash',color='red')))
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning(t["ai_error"])
+    else: st.warning(t["ai_error"])
 
 
 def show_data_table(df_filtered, t, selected_date):
     st.markdown("### 📊 FBA Inventory Dataset")
-    csv = df_filtered.to_csv(index=False).encode('utf-8')
-    st.download_button(label="📥 Download CSV", data=csv, file_name="fba_inventory.csv", mime="text/csv")
+    st.download_button("📥 Download CSV",df_filtered.to_csv(index=False).encode('utf-8'),"fba_inventory.csv","text/csv")
     st.dataframe(df_filtered, use_container_width=True, height=600)
 
 
 def show_orders():
     df_orders = load_orders()
-    if df_orders.empty:
-        st.warning("⚠️ No orders data. Run amazon_orders_loader.py")
-        return
-
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🛒 Orders Filters")
-
-    min_date = df_orders['Order Date'].min().date()
-    max_date = df_orders['Order Date'].max().date()
-    date_range = st.sidebar.date_input(
-        "📅 Date Range:",
-        value=(max_date - dt.timedelta(days=7), max_date),
-        min_value=min_date, max_value=max_date
-    )
-
-    if len(date_range) == 2:
-        df_filtered = df_orders[
-            (df_orders['Order Date'].dt.date >= date_range[0]) &
-            (df_orders['Order Date'].dt.date <= date_range[1])
-        ]
-    else:
-        df_filtered = df_orders
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("📦 Orders",  df_filtered['Order ID'].nunique())
-    col2.metric("💰 Revenue", f"${df_filtered['Total Price'].sum():,.2f}")
-    col3.metric("📦 Items",   int(df_filtered['Quantity'].sum()))
-
+    if df_orders.empty: st.warning("⚠️ No orders data."); return
+    st.sidebar.markdown("---"); st.sidebar.subheader("🛒 Orders Filters")
+    min_date = df_orders['Order Date'].min().date(); max_date = df_orders['Order Date'].max().date()
+    date_range = st.sidebar.date_input("📅 Date Range:",value=(max_date-dt.timedelta(days=7),max_date),min_value=min_date,max_value=max_date)
+    df_f = df_orders[(df_orders['Order Date'].dt.date>=date_range[0])&(df_orders['Order Date'].dt.date<=date_range[1])] if len(date_range)==2 else df_orders
+    c1,c2,c3 = st.columns(3)
+    c1.metric("📦 Orders",df_f['Order ID'].nunique()); c2.metric("💰 Revenue",f"${df_f['Total Price'].sum():,.2f}"); c3.metric("📦 Items",int(df_f['Quantity'].sum()))
     st.markdown("#### 📈 Daily Revenue")
-    daily = df_filtered.groupby(df_filtered['Order Date'].dt.date)['Total Price'].sum().reset_index()
-    fig = px.bar(daily, x='Order Date', y='Total Price', title="Daily Revenue")
+    daily = df_f.groupby(df_f['Order Date'].dt.date)['Total Price'].sum().reset_index()
+    fig = px.bar(daily,x='Order Date',y='Total Price',title="Daily Revenue")
     st.plotly_chart(fig, use_container_width=True)
-
-    col1, col2 = st.columns(2)
+    col1,col2 = st.columns(2)
     with col1:
         st.markdown("#### 🏆 Top 10 SKU by Revenue")
-        top_sku = df_filtered.groupby('SKU')['Total Price'].sum().nlargest(10).reset_index()
-        fig2 = px.bar(top_sku, x='Total Price', y='SKU', orientation='h')
-        fig2.update_layout(yaxis={'categoryorder': 'total ascending'})
+        ts = df_f.groupby('SKU')['Total Price'].sum().nlargest(10).reset_index()
+        fig2 = px.bar(ts,x='Total Price',y='SKU',orientation='h'); fig2.update_layout(yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig2, use_container_width=True)
     with col2:
-        if 'Order Status' in df_filtered.columns:
-            st.markdown("#### 📊 Order Status Distribution")
-            status_counts = df_filtered['Order Status'].value_counts().reset_index()
-            status_counts.columns = ['Status', 'Count']
-            fig3 = px.pie(status_counts, values='Count', names='Status', hole=0.4)
-            st.plotly_chart(fig3, use_container_width=True)
-
-    insights_orders(df_filtered)
+        if 'Order Status' in df_f.columns:
+            st.markdown("#### 📊 Order Status")
+            sc = df_f['Order Status'].value_counts().reset_index(); sc.columns=['Status','Count']
+            fig3 = px.pie(sc,values='Count',names='Status',hole=0.4); st.plotly_chart(fig3, use_container_width=True)
+    insights_orders(df_f)
 
 
 # ============================================
@@ -1619,82 +1101,54 @@ def show_orders():
 if 'report_choice' not in st.session_state:
     st.session_state.report_choice = "🏠 Overview"
 
-lang_option = st.sidebar.selectbox("🌍 Language", ["UA 🇺🇦", "EN 🇺🇸", "RU 🌍"], index=0)
+lang_option = st.sidebar.selectbox("🌍 Language", ["UA 🇺🇦","EN 🇺🇸","RU 🌍"], index=0)
 lang = "UA" if "UA" in lang_option else "EN" if "EN" in lang_option else "RU"
-t = translations[lang]
+t    = translations[lang]
 
 if st.sidebar.button(t["update_btn"], use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
+    st.cache_data.clear(); st.rerun()
 
 df = load_data()
 
 if not df.empty:
-    for col in ['Available', 'Price', 'Velocity', 'Stock Value']:
-        if col not in df.columns:
-            df[col] = 0
+    for col in ['Available','Price','Velocity','Stock Value']:
+        if col not in df.columns: df[col] = 0
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
     df['Stock Value'] = df['Available'] * df['Price']
-    df['created_at'] = pd.to_datetime(df['created_at'])
-    df['date'] = df['created_at'].dt.date
-
+    df['created_at']  = pd.to_datetime(df['created_at'])
+    df['date']        = df['created_at'].dt.date
     st.sidebar.header(t["sidebar_title"])
-    dates = sorted(df['date'].unique(), reverse=True)
+    dates         = sorted(df['date'].unique(), reverse=True)
     selected_date = st.sidebar.selectbox(t["date_label"], dates) if dates else None
-
-    stores = [t["all_stores"]] + list(df['Store Name'].unique()) if 'Store Name' in df.columns else [t["all_stores"]]
+    stores        = [t["all_stores"]] + list(df['Store Name'].unique()) if 'Store Name' in df.columns else [t["all_stores"]]
     selected_store = st.sidebar.selectbox(t["store_label"], stores)
-
-    df_filtered = df[df['date'] == selected_date] if selected_date else df
+    df_filtered    = df[df['date']==selected_date] if selected_date else df
     if selected_store != t["all_stores"]:
-        df_filtered = df_filtered[df_filtered['Store Name'] == selected_store]
+        df_filtered = df_filtered[df_filtered['Store Name']==selected_store]
 else:
-    df_filtered   = pd.DataFrame()
-    selected_date = None
+    df_filtered = pd.DataFrame(); selected_date = None
 
 st.sidebar.markdown("---")
 st.sidebar.header("📊 Reports")
 report_options = [
-    "🏠 Overview",
-    "📈 Sales & Traffic",
-    "🏦 Settlements (Payouts)",
-    "💰 Inventory Value (CFO)",
-    "🛒 Orders Analytics",
-    "📦 Returns Analytics",
-    "⭐ Amazon Reviews",
-    "🐢 Inventory Health (Aging)",
-    "🧠 AI Forecast",
-    "📋 FBA Inventory Table"
+    "🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
+    "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
+    "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast","📋 FBA Inventory Table"
 ]
-
-current_index = 0
-if st.session_state.report_choice in report_options:
-    current_index = report_options.index(st.session_state.report_choice)
-
+current_index = report_options.index(st.session_state.report_choice) if st.session_state.report_choice in report_options else 0
 report_choice = st.sidebar.radio("Select Report:", report_options, index=current_index)
 st.session_state.report_choice = report_choice
 
-if report_choice == "🏠 Overview":
-    show_overview(df_filtered, t, selected_date)
-elif report_choice == "📈 Sales & Traffic":
-    show_sales_traffic(t)
-elif report_choice == "🏦 Settlements (Payouts)":
-    show_settlements(t)
-elif report_choice == "💰 Inventory Value (CFO)":
-    show_inventory_finance(df_filtered, t)
-elif report_choice == "🛒 Orders Analytics":
-    show_orders()
-elif report_choice == "📦 Returns Analytics":
-    show_returns()
-elif report_choice == "⭐ Amazon Reviews":
-    show_reviews(t)
-elif report_choice == "🐢 Inventory Health (Aging)":
-    show_aging(df_filtered, t)
-elif report_choice == "🧠 AI Forecast":
-    show_ai_forecast(df, t)
-elif report_choice == "📋 FBA Inventory Table":
-    show_data_table(df_filtered, t, selected_date)
+if   report_choice == "🏠 Overview":                show_overview(df_filtered, t, selected_date)
+elif report_choice == "📈 Sales & Traffic":          show_sales_traffic(t)
+elif report_choice == "🏦 Settlements (Payouts)":   show_settlements(t)
+elif report_choice == "💰 Inventory Value (CFO)":   show_inventory_finance(df_filtered, t)
+elif report_choice == "🛒 Orders Analytics":         show_orders()
+elif report_choice == "📦 Returns Analytics":        show_returns()
+elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
+elif report_choice == "🐢 Inventory Health (Aging)":show_aging(df_filtered, t)
+elif report_choice == "🧠 AI Forecast":              show_ai_forecast(df, t)
+elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filtered, t, selected_date)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v3.3")
+st.sidebar.caption("📦 Amazon FBA BI System v3.4")
