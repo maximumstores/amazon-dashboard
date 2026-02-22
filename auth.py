@@ -234,12 +234,18 @@ def show_login():
         border: 1.5px solid #ddd !important;
         color: #555 !important;
         font-weight: 500 !important;
-        font-size: 13px !important;
+        font-size: 11px !important;
+        padding: 2px 8px !important;
+        min-height: 28px !important;
+        height: 28px !important;
     }
     div[data-testid="stHorizontalBlock"] button[kind="primary"] {
         border-radius: 20px !important;
         font-weight: 700 !important;
-        font-size: 13px !important;
+        font-size: 11px !important;
+        padding: 2px 8px !important;
+        min-height: 28px !important;
+        height: 28px !important;
     }
     /* Кнопка Увійти */
     div[data-testid="stVerticalBlock"] button[kind="primary"] {
@@ -270,13 +276,13 @@ def show_login():
         st.markdown(f"""
         <div style="text-align:center;margin-bottom:8px;margin-top:12px">
             <img src="https://merino.tech/cdn/shop/files/MT_logo_1.png?v=1685099753&width=260"
-                 style="max-width:160px;margin-bottom:8px">
+                 style="max-width:220px;margin-bottom:8px">
             <div style="font-size:12px;color:#aaa;margin-bottom:12px">{lt["subtitle"]}</div>
         </div>
         """, unsafe_allow_html=True)
 
         # ── Перемикач мови — під логотипом ──
-        lc1, lc2, lc3, lc4, lc5 = st.columns([2, 1, 1, 1, 2])
+        lc1, lc2, lc3, lc4, lc5 = st.columns([3, 1, 1, 1, 3])
         with lc2:
             if st.button("🇺🇦 UA", width="stretch", type="primary" if st.session_state.login_lang == "UA" else "secondary", key="lang_ua"):
                 st.session_state.login_lang = "UA"; st.rerun()
