@@ -1270,6 +1270,12 @@ def show_reviews(t):
     asin_label    = selected_asin if selected_asin else t["all_asins"]
     country_label = ", ".join([DOMAIN_LABELS.get(d, d) for d in selected_domains]) if selected_domains else t["all_countries"]
 
+    # ── Кнопка назад — одразу перед заголовком ──
+    if selected_asin is not None:
+        if st.button(t["rev_back"], key="back_top", type="secondary"):
+            st.session_state.pop("rev_asin", None)
+            st.rerun()
+
     if selected_asin:
         first_domain = df['domain'].dropna().iloc[0] if has_domain and not df.empty else 'com'
         amazon_url = make_amazon_url(first_domain, selected_asin)
@@ -1305,9 +1311,6 @@ def show_reviews(t):
     st.markdown("---")
 
     if selected_asin is not None:
-        if st.button(t["rev_back"], key="back_top", type="secondary"):
-            st.session_state.pop("rev_asin", None)
-            st.rerun()
         show_single_asin_detail(df, selected_asin, has_domain)
         st.markdown("---")
         if st.button(t["rev_back"], key="back_bottom", type="secondary"):
