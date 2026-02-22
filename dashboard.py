@@ -200,7 +200,7 @@ def load_orders():
             df = pd.read_sql(text('SELECT * FROM orders ORDER BY "Order Date" DESC'), conn)
         if df.empty:
             return pd.DataFrame()
-        df['Order Date'] = pd.to_datetime(df['Order Date'], dayfirst=False, errors='coerce')
+        df['Order Date'] = pd.to_datetime(df['Order Date'], dayfirst=True, errors='coerce')
         column_mappings = {
             'Quantity':       ['Quantity', 'quantity', 'qty'],
             'Item Price':     ['Item Price', 'item-price', 'item_price', 'price'],
@@ -233,7 +233,7 @@ def load_settlements():
             return pd.DataFrame()
         df['Amount']      = pd.to_numeric(df['Amount'], errors='coerce').fillna(0.0)
         df['Quantity']    = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
-        df['Posted Date'] = pd.to_datetime(df['Posted Date'], dayfirst=False, errors='coerce')
+        df['Posted Date'] = pd.to_datetime(df['Posted Date'], dayfirst=True, errors='coerce')
         if 'Currency' not in df.columns:
             df['Currency'] = 'USD'
         df = df.dropna(subset=['Posted Date'])
@@ -838,7 +838,7 @@ def show_single_asin_detail(df_asin, asin, has_domain):
             yaxis=dict(categoryorder='array', categoryarray=['1★','2★','3★','4★','5★']),
             height=260, margin=dict(l=5,r=60,t=10,b=10)
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # ---- Rating by country (if domain available) ----
     with col2:
@@ -860,7 +860,7 @@ def show_single_asin_detail(df_asin, asin, has_domain):
             ))
             fig2.add_vline(x=4.0, line_dash="dash", line_color="orange")
             fig2.update_layout(height=260, xaxis_range=[1,5.8], margin=dict(l=5,r=80,t=10,b=10))
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width="stretch")
         else:
             st.markdown("#### 📊 Рейтинг по часу")
             if 'review_date' in df_asin.columns:
@@ -870,7 +870,7 @@ def show_single_asin_detail(df_asin, asin, has_domain):
                 fig_t = px.line(monthly, x='month', y='rating', markers=True)
                 fig_t.add_hline(y=4.0, line_dash='dash', line_color='orange')
                 fig_t.update_layout(height=260, yaxis_range=[1,5])
-                st.plotly_chart(fig_t, use_container_width=True)
+                st.plotly_chart(fig_t, width="stretch")
 
     # ---- Top negative reviews ----
     st.markdown("#### 🔴 Останні негативні відгуки (1-2★)")
@@ -934,8 +934,8 @@ def show_asin_links_table(df, has_domain):
 
     table_df['Rating'] = table_df['Rating'].round(2)
 
-    # Display with native Streamlit dataframe — row selection enabled
-    event = st.dataframe(
+    # Display table with clickable links
+    st.dataframe(
         table_df.drop(columns=['_domain']),
         column_config={
             "🔗 Amazon": st.column_config.LinkColumn(
@@ -952,19 +952,22 @@ def show_asin_links_table(df, has_domain):
             ),
             "Reviews": st.column_config.NumberColumn("📝 Відгуків"),
         },
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
         height=min(400, 45 + len(table_df) * 35),
     )
 
-    # Return selected ASIN + domain if row clicked
-    if event.selection and event.selection.rows:
-        idx = event.selection.rows[0]
-        clicked_asin   = table_df.iloc[idx]['ASIN']
-        clicked_domain = table_df.iloc[idx]['_domain']
-        return clicked_asin, clicked_domain
+    # ASIN selector below table
+    asin_list = table_df['ASIN'].unique().tolist()
+    st.caption("👇 Вибери ASIN для детального аналізу:")
+    sel_col, _ = st.columns([2, 3])
+    with sel_col:
+        chosen = st.selectbox("📦 Перейти до ASIN:", ["— не вибрано —"] + asin_list,
+                              key="asin_table_jump")
+    if chosen and chosen != "— не вибрано —":
+        # find domain for this asin
+        row = table_df[table_df['ASIN'] == chosen].iloc[0]
+        return chosen, row['_domain']
 
     return None, None
 
@@ -1024,7 +1027,7 @@ def show_reviews(t):
             label = DOMAIN_LABELS.get(dom, dom).split('(')[0].strip()
             st.sidebar.markdown(f"[{flag} {label}]({url})")
         st.sidebar.markdown("---")
-        if st.sidebar.button("← Назад до всіх ASINів", use_container_width=True):
+        if st.sidebar.button("← Назад до всіх ASINів", width="stretch"):
             st.session_state['rev_asin_jump'] = None
             st.rerun()
 
@@ -1122,7 +1125,7 @@ def show_reviews(t):
             fig.add_vline(x=4.0, line_dash="dash", line_color="orange", annotation_text="4.0")
             fig.update_layout(height=max(280, len(ds_sort) * 50), xaxis_range=[1, 5.5],
                               margin=dict(l=10, r=60, t=20, b=20))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         with col2:
             st.markdown("#### 🔴 % Негативних по країнах")
@@ -1134,14 +1137,14 @@ def show_reviews(t):
                 text=[f"{v:.1f}%" for v in ds_neg['Neg %']], textposition='outside'
             ))
             fig2.update_layout(height=max(280, len(ds_neg) * 50), margin=dict(l=10, r=60, t=20, b=20))
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width="stretch")
 
         with col3:
             st.markdown("#### 📊 Відгуків по країнах")
             fig3 = px.pie(domain_stats, values='Reviews', names='Country', hole=0.4,
                           color_discrete_sequence=px.colors.qualitative.Set3)
             fig3.update_layout(height=max(280, len(domain_stats) * 50))
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3, width="stretch")
 
         st.markdown("#### 📋 Зведена таблиця по країнах")
         disp = domain_stats[['Country', 'Reviews', 'Rating', 'Neg %', 'Pos %']].sort_values('Rating', ascending=False)
@@ -1150,7 +1153,7 @@ def show_reviews(t):
                 .format({'Rating': '{:.2f}', 'Neg %': '{:.1f}%', 'Pos %': '{:.1f}%'})
                 .background_gradient(subset=['Rating'], cmap='RdYlGn')
                 .background_gradient(subset=['Neg %'], cmap='RdYlGn_r'),
-            use_container_width=True
+            width="stretch"
         )
 
         # 🔥 Heatmap ASIN × Country
@@ -1178,7 +1181,7 @@ def show_reviews(t):
                 xaxis_title="Країна", yaxis_title="ASIN",
                 margin=dict(l=20, r=20, t=30, b=20)
             )
-            st.plotly_chart(fig_heat, use_container_width=True)
+            st.plotly_chart(fig_heat, width="stretch")
             st.caption("🟢 ≥4.4★ відмінно · 🟡 4.0–4.4★ норма · 🔴 <4.0★ проблема")
 
         st.markdown("---")
@@ -1221,7 +1224,7 @@ def show_reviews(t):
             ))
             fig.add_vline(x=4.0, line_dash="dash", line_color="orange", annotation_text="Поріг 4.0")
             fig.update_layout(height=max(300, len(asin_sort) * 38), xaxis_range=[1, 5.5])
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         with col2:
             st.markdown("#### 🔴 % Негативних по ASINах")
@@ -1233,7 +1236,7 @@ def show_reviews(t):
                 text=[f"{v:.1f}%" for v in asin_neg['Neg %']], textposition='outside'
             ))
             fig2.update_layout(height=max(300, len(asin_neg) * 38))
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width="stretch")
 
         st.markdown("#### 📋 Зведена таблиця по ASINах")
         st.dataframe(
@@ -1241,7 +1244,7 @@ def show_reviews(t):
                 .format({'Рейтинг': '{:.2f}', 'Neg %': '{:.1f}%'})
                 .background_gradient(subset=['Рейтинг'], cmap='RdYlGn')
                 .background_gradient(subset=['Neg %'], cmap='RdYlGn_r'),
-            use_container_width=True
+            width="stretch"
         )
 
         # Variant breakdown
@@ -1285,7 +1288,7 @@ def show_reviews(t):
                     ))
                     fig_s.add_vline(x=4.0, line_dash="dash", line_color="orange")
                     fig_s.update_layout(height=max(280, len(size_stats) * 40), xaxis_range=[1, 5.8])
-                    st.plotly_chart(fig_s, use_container_width=True)
+                    st.plotly_chart(fig_s, width="stretch")
                 else:
                     st.info("Недостатньо даних по розмірах")
 
@@ -1308,7 +1311,7 @@ def show_reviews(t):
                     ))
                     fig_c.add_vline(x=4.0, line_dash="dash", line_color="orange")
                     fig_c.update_layout(height=max(280, len(color_stats) * 40), xaxis_range=[1, 5.8])
-                    st.plotly_chart(fig_c, use_container_width=True)
+                    st.plotly_chart(fig_c, width="stretch")
                 else:
                     st.info("Недостатньо даних по кольорах")
 
@@ -1328,7 +1331,7 @@ def show_reviews(t):
                         .format({'Рейтинг': '{:.2f}', 'Neg %': '{:.1f}%'})
                         .background_gradient(subset=['Рейтинг'], cmap='RdYlGn')
                         .background_gradient(subset=['Neg %'], cmap='RdYlGn_r'),
-                    use_container_width=True
+                    width="stretch"
                 )
             else:
                 st.success("🎉 Всі варіанти мають рейтинг ≥ 4.0")
@@ -1353,7 +1356,7 @@ def show_reviews(t):
             yaxis=dict(categoryorder='array', categoryarray=['1★', '2★', '3★', '4★', '5★']),
             height=300, margin=dict(l=10, r=40, t=20, b=20)
         )
-        st.plotly_chart(fig_stars, use_container_width=True)
+        st.plotly_chart(fig_stars, width="stretch")
 
     with col2:
         st.markdown(f"#### {t['worst_asin']}")
@@ -1366,7 +1369,7 @@ def show_reviews(t):
             fig_bad = px.bar(bad_asins, x='ASIN', y='Негативних', text='Негативних',
                              color='Негативних', color_continuous_scale='Reds')
             fig_bad.update_layout(height=300, showlegend=False)
-            st.plotly_chart(fig_bad, use_container_width=True)
+            st.plotly_chart(fig_bad, width="stretch")
         else:
             st.success("🎉 Негативних відгуків не знайдено!")
 
@@ -1381,7 +1384,7 @@ def show_reviews(t):
     display_cols   = ['review_date', 'asin', 'domain', 'rating', 'title', 'content', 'product_attributes', 'author', 'is_verified']
     available_cols = [c for c in display_cols if c in df_table.columns]
 
-    st.dataframe(df_table[available_cols], use_container_width=True, height=450)
+    st.dataframe(df_table[available_cols], width="stretch", height=450)
 
     star_summary = df_table['rating'].value_counts().sort_index(ascending=False)
     summary_str  = " | ".join([f"{s}★: {c}" for s, c in star_summary.items()])
@@ -1417,7 +1420,7 @@ def show_overview(df_filtered, t, selected_date):
         with c:
             with st.container(border=True):
                 st.markdown(hdr); st.markdown(sub)
-                if st.button(btn_lbl, key=key, use_container_width=True, type="primary"):
+                if st.button(btn_lbl, key=key, width="stretch", type="primary"):
                     st.session_state.report_choice = dest; st.rerun()
     st.markdown("")
     col1,col2,col3,col4 = st.columns(4)
@@ -1431,7 +1434,7 @@ def show_overview(df_filtered, t, selected_date):
         with c:
             with st.container(border=True):
                 st.markdown(hdr); st.markdown(sub)
-                if st.button(btn_lbl, key=key, use_container_width=True, type="primary"):
+                if st.button(btn_lbl, key=key, width="stretch", type="primary"):
                     st.session_state.report_choice = dest; st.rerun()
     st.markdown("---")
     st.markdown("### 📊 Quick Overview: Top 15 SKU by Stock")
@@ -1440,7 +1443,7 @@ def show_overview(df_filtered, t, selected_date):
         fig = px.bar(df_top, x='Available', y='SKU', orientation='h',
                      text='Available', color='Available', color_continuous_scale='Blues')
         fig.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     show_overview_insights(df_filtered)
 
 
@@ -1481,18 +1484,18 @@ def show_sales_traffic(t):
         fig.add_trace(go.Bar(x=daily['Date'],y=daily['Sessions'],name='Sessions',marker_color='#4472C4'))
         fig.add_trace(go.Scatter(x=daily['Date'],y=daily['Page Views'],name='Page Views',mode='lines+markers',line=dict(color='#ED7D31',width=2),yaxis='y2'))
         fig.update_layout(yaxis=dict(title='Sessions'),yaxis2=dict(title='Page Views',overlaying='y',side='right'),height=380,legend=dict(orientation='h',y=1.12))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     with col2:
         st.markdown("#### 💰 Revenue & Units")
         fig = go.Figure()
         fig.add_trace(go.Bar(x=daily['Date'],y=daily['Revenue'],name='Revenue $',marker_color='#70AD47'))
         fig.add_trace(go.Scatter(x=daily['Date'],y=daily['Units'],name='Units',mode='lines+markers',line=dict(color='#FFC000',width=2),yaxis='y2'))
         fig.update_layout(yaxis=dict(title='Revenue $'),yaxis2=dict(title='Units',overlaying='y',side='right'),height=380,legend=dict(orientation='h',y=1.12))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     fig_conv = go.Figure(go.Scatter(x=daily['Date'],y=daily['Conversion %'],mode='lines+markers+text',
         text=[f"{v:.1f}%" for v in daily['Conversion %']],textposition='top center',line=dict(color='#5B9BD5',width=3),marker=dict(size=8)))
     fig_conv.update_layout(height=300,yaxis_title='Conversion %')
-    st.plotly_chart(fig_conv, use_container_width=True)
+    st.plotly_chart(fig_conv, width="stretch")
     st.markdown("---"); st.markdown("### 🏆 Top ASINs Performance")
     asin_col = 'child_asin' if 'child_asin' in df_filtered.columns else df_filtered.columns[0]
     as_ = df_filtered.groupby(asin_col).agg({'sessions':'sum','page_views':'sum','units_ordered':'sum','ordered_product_sales':'sum','buy_box_percentage':'mean'}).reset_index()
@@ -1503,14 +1506,14 @@ def show_sales_traffic(t):
         st.markdown("#### 💰 Top 15 by Revenue")
         fig = px.bar(as_.nlargest(15,'Revenue'),x='Revenue',y='ASIN',orientation='h',text='Revenue',color='Revenue',color_continuous_scale='Greens')
         fig.update_layout(yaxis={'categoryorder':'total ascending'},height=450); fig.update_traces(texttemplate='$%{text:,.0f}',textposition='outside')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     with col2:
         st.markdown("#### 👁 Top 15 by Sessions")
         fig = px.bar(as_.nlargest(15,'Sessions'),x='Sessions',y='ASIN',orientation='h',text='Sessions',color='Sessions',color_continuous_scale='Blues')
         fig.update_layout(yaxis={'categoryorder':'total ascending'},height=450)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     st.markdown("---"); st.markdown("### 📋 Full ASIN Data")
-    st.dataframe(as_.sort_values('Revenue',ascending=False).style.format({'Revenue':'${:,.2f}','Conv %':'{:.2f}%','Buy Box %':'{:.1f}%'}),use_container_width=True,height=500)
+    st.dataframe(as_.sort_values('Revenue',ascending=False).style.format({'Revenue':'${:,.2f}','Conv %':'{:.2f}%','Buy Box %':'{:.1f}%'}),width="stretch",height=500)
     csv = as_.to_csv(index=False).encode('utf-8')
     st.download_button("📥 Download CSV", csv, "sales_traffic.csv","text/csv")
     insights_sales_traffic(df_filtered, as_)
@@ -1549,7 +1552,7 @@ def show_settlements(t):
         dt_.columns=['Date','Net Amount']
         fig = go.Figure(go.Bar(x=dt_['Date'],y=dt_['Net Amount'],marker_color=dt_['Net Amount'].apply(lambda x:'green' if x>=0 else 'red')))
         fig.update_layout(height=400,yaxis_title=f"Net Amount ({sel_cur})")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     with col2:
         st.subheader(t['chart_fee_breakdown'])
         df_costs = df_f[df_f['Amount']<0]
@@ -1557,10 +1560,10 @@ def show_settlements(t):
             cb = df_costs.groupby('Transaction Type')['Amount'].sum().abs().reset_index()
             fig = px.pie(cb,values='Amount',names='Transaction Type',hole=0.4)
             fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else: st.info("No costs in selected period")
     disp = ['Posted Date','Transaction Type','Order ID','Amount','Currency','Description']
-    st.dataframe(df_f[[c for c in disp if c in df_f.columns]].sort_values('Posted Date',ascending=False).head(100),use_container_width=True)
+    st.dataframe(df_f[[c for c in disp if c in df_f.columns]].sort_values('Posted Date',ascending=False).head(100),width="stretch")
     insights_settlements(df_f)
 
 
@@ -1611,34 +1614,34 @@ def show_returns():
         tv = df_f.groupby('SKU')['Return Value'].sum().nlargest(10).reset_index()
         fig = px.bar(tv,x='Return Value',y='SKU',orientation='h',text='Return Value',color='Return Value',color_continuous_scale='Reds')
         fig.update_layout(yaxis={'categoryorder':'total ascending'},height=350); fig.update_traces(texttemplate='$%{text:,.0f}',textposition='outside')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     with col2:
         st.markdown("#### 📊 Daily Return Value")
         dv = df_f.groupby(df_f['Return Date'].dt.date)['Return Value'].sum().reset_index(); dv.columns=['Date','Value']
         fig = px.area(dv,x='Date',y='Value',line_shape='spline',color_discrete_sequence=['#FF6B6B'])
-        fig.update_layout(height=350); st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(height=350); st.plotly_chart(fig, width="stretch")
     with col3:
         if 'Reason' in df_f.columns:
             st.markdown("#### 💸 Return Value by Reason")
             rv = df_f.groupby('Reason')['Return Value'].sum().nlargest(8).reset_index()
             fig = px.pie(rv,values='Return Value',names='Reason',hole=0.4,color_discrete_sequence=px.colors.sequential.RdBu)
-            fig.update_layout(height=350); st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(height=350); st.plotly_chart(fig, width="stretch")
     st.markdown("---")
     col1,col2 = st.columns(2)
     with col1:
         st.markdown("#### 🏆 Top 15 Returned SKUs")
         ts = df_f['SKU'].value_counts().head(15).reset_index(); ts.columns=['SKU','Returns']
         fig = px.bar(ts,x='Returns',y='SKU',orientation='h',color='Returns',color_continuous_scale='Oranges',text='Returns')
-        fig.update_layout(yaxis={'categoryorder':'total ascending'},height=450); st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(yaxis={'categoryorder':'total ascending'},height=450); st.plotly_chart(fig, width="stretch")
     with col2:
         if 'Reason' in df_f.columns:
             st.markdown("#### 📊 Return Reasons")
             rs = df_f['Reason'].value_counts().head(10).reset_index(); rs.columns=['Reason','Count']
             fig = px.pie(rs,values='Count',names='Reason',hole=0.4,color_discrete_sequence=px.colors.sequential.RdBu)
-            fig.update_layout(height=450); st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(height=450); st.plotly_chart(fig, width="stretch")
     st.markdown("---")
     dc = ['Return Date','SKU','Product Name','Quantity','Price','Return Value','Reason','Status']
-    st.dataframe(df_f[[c for c in dc if c in df_f.columns]].sort_values('Return Date',ascending=False).head(100).style.format({'Price':'${:.2f}','Return Value':'${:.2f}'}),use_container_width=True)
+    st.dataframe(df_f[[c for c in dc if c in df_f.columns]].sort_values('Return Date',ascending=False).head(100).style.format({'Price':'${:.2f}','Return Value':'${:.2f}'}),width="stretch")
     st.download_button("📥 Download Returns CSV",df_f.to_csv(index=False).encode('utf-8'),"returns.csv","text/csv")
     insights_returns(df_f, rr)
 
@@ -1654,10 +1657,10 @@ def show_inventory_finance(df_filtered, t):
     dm = df_filtered[df_filtered['Stock Value']>0]
     if not dm.empty:
         fig = px.treemap(dm,path=['Store Name','SKU'],values='Stock Value',color='Stock Value',color_continuous_scale='RdYlGn_r')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     st.subheader(t["top_money_sku"])
     dt_ = df_filtered[['SKU','Product Name','Available','Price','Stock Value']].sort_values('Stock Value',ascending=False).head(10)
-    st.dataframe(dt_.style.format({'Price':"${:.2f}",'Stock Value':"${:,.2f}"}),use_container_width=True)
+    st.dataframe(dt_.style.format({'Price':"${:.2f}",'Stock Value':"${:,.2f}"}),width="stretch")
     insights_inventory(df_filtered)
 
 
@@ -1674,14 +1677,14 @@ def show_aging(df_filtered, t):
     with col1:
         st.subheader(t["chart_age"])
         fig = px.pie(as_,values='Units',names='Age Group',hole=0.4); fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     with col2:
         st.subheader(t["chart_velocity"])
         if all(c in df_filtered.columns for c in ['Available','Velocity','Stock Value']):
             ds = df_filtered[(df_filtered['Available']>0)&(df_filtered['Velocity']>=0)&(df_filtered['Stock Value']>0)].copy()
             if not ds.empty:
                 fig = px.scatter(ds,x='Available',y='Velocity',size='Stock Value',color='Store Name' if 'Store Name' in ds.columns else None,hover_name='SKU',log_x=True)
-                fig.update_layout(height=400); st.plotly_chart(fig, use_container_width=True)
+                fig.update_layout(height=400); st.plotly_chart(fig, width="stretch")
 
 
 def show_ai_forecast(df, t):
@@ -1706,14 +1709,14 @@ def show_ai_forecast(df, t):
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=sd['created_at'],y=sd['Available'],name='Historical'))
         fig.add_trace(go.Scatter(x=df_fc['date'],y=df_fc['Predicted'],name='Forecast',line=dict(dash='dash',color='red')))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else: st.warning(t["ai_error"])
 
 
 def show_data_table(df_filtered, t, selected_date):
     st.markdown("### 📊 FBA Inventory Dataset")
     st.download_button("📥 Download CSV",df_filtered.to_csv(index=False).encode('utf-8'),"fba_inventory.csv","text/csv")
-    st.dataframe(df_filtered, use_container_width=True, height=600)
+    st.dataframe(df_filtered, width="stretch", height=600)
 
 
 def show_orders():
@@ -1728,18 +1731,18 @@ def show_orders():
     st.markdown("#### 📈 Daily Revenue")
     daily = df_f.groupby(df_f['Order Date'].dt.date)['Total Price'].sum().reset_index()
     fig = px.bar(daily,x='Order Date',y='Total Price',title="Daily Revenue")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     col1,col2 = st.columns(2)
     with col1:
         st.markdown("#### 🏆 Top 10 SKU by Revenue")
         ts = df_f.groupby('SKU')['Total Price'].sum().nlargest(10).reset_index()
         fig2 = px.bar(ts,x='Total Price',y='SKU',orientation='h'); fig2.update_layout(yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
     with col2:
         if 'Order Status' in df_f.columns:
             st.markdown("#### 📊 Order Status")
             sc = df_f['Order Status'].value_counts().reset_index(); sc.columns=['Status','Count']
-            fig3 = px.pie(sc,values='Count',names='Status',hole=0.4); st.plotly_chart(fig3, use_container_width=True)
+            fig3 = px.pie(sc,values='Count',names='Status',hole=0.4); st.plotly_chart(fig3, width="stretch")
     insights_orders(df_f)
 
 
@@ -2058,11 +2061,11 @@ def show_url_manager():
     # Bulk actions
     c1, c2, _ = st.columns([1, 1, 3])
     with c1:
-        if st.button("✅ Увімкнути всі", use_container_width=True):
+        if st.button("✅ Увімкнути всі", width="stretch"):
             for row in rows: _scr_toggle_url(row[0], True)
             st.rerun()
     with c2:
-        if st.button("○ Вимкнути всі", use_container_width=True):
+        if st.button("○ Вимкнути всі", width="stretch"):
             for row in rows: _scr_toggle_url(row[0], False)
             st.rerun()
 
@@ -2092,7 +2095,7 @@ def show_scraper_manager():
                 st.info("💤 Готовий до запуску")
         with top_r:
             if st.session_state.scr_running:
-                if st.button("⛔ Зупинити", use_container_width=True, type="secondary"):
+                if st.button("⛔ Зупинити", width="stretch", type="secondary"):
                     if st.session_state.scr_stop_event:
                         st.session_state.scr_stop_event.set()
                     st.session_state.scr_running = False
@@ -2177,7 +2180,7 @@ def show_scraper_manager():
             start = st.button(
                 "🚀 Запустити" if not st.session_state.scr_running else "⏳ Іде...",
                 disabled=st.session_state.scr_running or not raw_lines,
-                use_container_width=True, type="primary"
+                width="stretch", type="primary"
             )
 
     # ── Запуск ──
@@ -2238,13 +2241,13 @@ def show_scraper_manager():
         if not st.session_state.scr_running:
             c1, c2, _ = st.columns([1, 1, 3])
             with c1:
-                if st.button("🗑 Очистити логи", use_container_width=True):
+                if st.button("🗑 Очистити логи", width="stretch"):
                     st.session_state.scr_logs = []
                     st.session_state.scr_done = False
                     st.rerun()
             with c2:
                 st.download_button("📥 Зберегти лог", "\n".join(logs).encode(),
-                                   "scraper_log.txt", "text/plain", use_container_width=True)
+                                   "scraper_log.txt", "text/plain", width="stretch")
     else:
         st.markdown("""
         <div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;
@@ -2269,7 +2272,7 @@ lang_option = st.sidebar.selectbox("🌍 Language", ["UA 🇺🇦","EN 🇺🇸"
 lang = "UA" if "UA" in lang_option else "EN" if "EN" in lang_option else "RU"
 t    = translations[lang]
 
-if st.sidebar.button(t["update_btn"], use_container_width=True):
+if st.sidebar.button(t["update_btn"], width="stretch"):
     st.cache_data.clear(); st.rerun()
 
 df = load_data()
@@ -2317,4 +2320,4 @@ elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filter
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v4.6 🌍")
+st.sidebar.caption("📦 Amazon FBA BI System v4.7 🌍")
