@@ -321,7 +321,6 @@ def load_reviews():
         df['rating']      = pd.to_numeric(df['rating'], errors='coerce').fillna(0).astype(int)
         if 'is_verified' in df.columns:
             df['is_verified'] = df['is_verified'].astype(bool)
-        # Normalize domain to lowercase
         if 'domain' in df.columns:
             df['domain'] = df['domain'].str.lower().str.strip()
         return df
@@ -611,18 +610,14 @@ def show_overview_insights(df_inventory):
 
 
 # ============================================
-# ⭐ REVIEWS MODULE — UPDATED WITH COUNTRY SUPPORT
+# ⭐ REVIEWS MODULE
 # ============================================
 
-
-
 def make_amazon_url(domain, asin):
-    """Build Amazon product URL from domain code and ASIN."""
     return f"https://www.amazon.{domain}/dp/{asin}"
 
 
 def show_global_insights(df, has_domain):
-    """Big visual insight block: worst/best ASIN and country with mini progress bars."""
     st.markdown("### 🧠 Автоінсайти")
 
     asin_stats, dom_stats = None, None
@@ -647,12 +642,10 @@ def show_global_insights(df, has_domain):
 
     col1, col2, col3, col4 = st.columns(4)
 
-    # ---- Worst ASIN ----
     if asin_stats is not None and not asin_stats.empty:
         worst_a = asin_stats.loc[asin_stats['Neg %'].idxmax()]
         best_a  = asin_stats.loc[asin_stats['Rating'].idxmax()]
 
-        # Find which country worst ASIN belongs to
         worst_asin_country = ""
         if has_domain and 'domain' in df.columns:
             asin_dom = df[df['asin'] == worst_a['asin']].groupby('domain')['rating'].count()
@@ -660,7 +653,6 @@ def show_global_insights(df, has_domain):
                 top_dom = asin_dom.idxmax()
                 worst_asin_country = DOMAIN_LABELS.get(top_dom, top_dom)
 
-        # Find which country best ASIN belongs to
         best_asin_country = ""
         if has_domain and 'domain' in df.columns:
             asin_dom2 = df[df['asin'] == best_a['asin']].groupby('domain')['rating'].count()
@@ -706,14 +698,12 @@ def show_global_insights(df, has_domain):
               </div>
             </div>""", unsafe_allow_html=True)
 
-    # ---- Worst / Best country ----
     if dom_stats is not None and not dom_stats.empty:
         worst_d = dom_stats.loc[dom_stats['Neg %'].idxmax()]
         best_d  = dom_stats.loc[dom_stats['Rating'].idxmax()]
         worst_label = DOMAIN_LABELS.get(worst_d['domain'], worst_d['domain'])
         best_label  = DOMAIN_LABELS.get(best_d['domain'], best_d['domain'])
 
-        # Find which ASIN pulls worst country down
         worst_country_asin = ""
         if 'asin' in df.columns:
             df_wdom = df[df['domain'] == worst_d['domain']]
@@ -727,7 +717,6 @@ def show_global_insights(df, has_domain):
                 if not per_asin.empty:
                     worst_country_asin = per_asin.loc[per_asin['Neg %'].idxmax(), 'asin']
 
-        # Find which ASIN lifts best country up
         best_country_asin = ""
         if 'asin' in df.columns:
             df_bdom = df[df['domain'] == best_d['domain']]
@@ -779,7 +768,6 @@ def show_global_insights(df, has_domain):
 
 
 def show_single_asin_detail(df_asin, asin, has_domain):
-    """Detailed block for ONE selected ASIN: rating by country, star dist, top neg reviews."""
     total = len(df_asin)
     if total == 0:
         st.info("Немає відгуків по цьому ASIN.")
@@ -790,7 +778,6 @@ def show_single_asin_detail(df_asin, asin, has_domain):
     pos_cnt = int((df_asin['rating'] >= 4).sum())
     neg_pct = neg_cnt / total * 100
 
-    # ---- Mini KPI row ----
     r_color = "#4CAF50" if avg_r >= 4.4 else "#FFC107" if avg_r >= 4.0 else "#F44336"
     n_color = "#4CAF50" if neg_pct <= 10 else "#FFC107" if neg_pct <= 20 else "#F44336"
 
@@ -820,7 +807,6 @@ def show_single_asin_detail(df_asin, asin, has_domain):
 
     col1, col2 = st.columns(2)
 
-    # ---- Star distribution ----
     with col1:
         st.markdown("#### ⭐ Розподіл зірок")
         star_counts = df_asin['rating'].value_counts().reindex([5,4,3,2,1]).fillna(0).reset_index()
@@ -840,7 +826,6 @@ def show_single_asin_detail(df_asin, asin, has_domain):
         )
         st.plotly_chart(fig, width="stretch")
 
-    # ---- Rating by country (if domain available) ----
     with col2:
         if has_domain and 'domain' in df_asin.columns and df_asin['domain'].nunique() > 1:
             st.markdown("#### 🌍 Рейтинг по країнах для цього ASIN")
@@ -872,7 +857,6 @@ def show_single_asin_detail(df_asin, asin, has_domain):
                 fig_t.update_layout(height=260, yaxis_range=[1,5])
                 st.plotly_chart(fig_t, width="stretch")
 
-    # ---- Top negative reviews ----
     st.markdown("#### 🔴 Останні негативні відгуки (1-2★)")
     neg_df = df_asin[df_asin['rating'] <= 2].sort_values('review_date', ascending=False).head(5)
     if not neg_df.empty:
@@ -896,7 +880,6 @@ def show_single_asin_detail(df_asin, asin, has_domain):
 
 
 def show_asin_links_table(df, has_domain):
-    """Show dataframe of all ASINs with clickable Amazon links + row selection → triggers ASIN detail view."""
     st.markdown("### 🔗 Всі ASINи — огляд по країнах")
     st.caption("👆 Клікни на рядок — побачиш детальний аналіз цього ASIN · Посилання відкриють Amazon у новій вкладці")
 
@@ -934,22 +917,12 @@ def show_asin_links_table(df, has_domain):
 
     table_df['Rating'] = table_df['Rating'].round(2)
 
-    # Display table with clickable links
     st.dataframe(
         table_df.drop(columns=['_domain']),
         column_config={
-            "🔗 Amazon": st.column_config.LinkColumn(
-                "🔗 Amazon",
-                display_text="Відкрити →",
-            ),
-            "Rating": st.column_config.NumberColumn(
-                "⭐ Rating",
-                format="%.2f ★",
-            ),
-            "Neg %": st.column_config.NumberColumn(
-                "🔴 Neg %",
-                format="%.1f%%",
-            ),
+            "🔗 Amazon": st.column_config.LinkColumn("🔗 Amazon", display_text="Відкрити →"),
+            "Rating": st.column_config.NumberColumn("⭐ Rating", format="%.2f ★"),
+            "Neg %": st.column_config.NumberColumn("🔴 Neg %", format="%.1f%%"),
             "Reviews": st.column_config.NumberColumn("📝 Відгуків"),
         },
         width="stretch",
@@ -957,7 +930,6 @@ def show_asin_links_table(df, has_domain):
         height=min(400, 45 + len(table_df) * 35),
     )
 
-    # ASIN selector below table
     asin_list = table_df['ASIN'].unique().tolist()
     st.caption("👇 Вибери ASIN для детального аналізу:")
     sel_col, _ = st.columns([2, 3])
@@ -965,7 +937,6 @@ def show_asin_links_table(df, has_domain):
         chosen = st.selectbox("📦 Перейти до ASIN:", ["— не вибрано —"] + asin_list,
                               key="asin_table_jump")
     if chosen and chosen != "— не вибрано —":
-        # find domain for this asin
         row = table_df[table_df['ASIN'] == chosen].iloc[0]
         return chosen, row['_domain']
 
@@ -980,11 +951,9 @@ def show_reviews(t):
 
     has_domain = 'domain' in df_all.columns
 
-    # ---- SIDEBAR FILTERS ----
     st.sidebar.markdown("---")
     st.sidebar.subheader("⭐ Фільтри відгуків")
 
-    # 1. Country filter
     selected_domains = []
     if has_domain:
         all_domains = sorted(df_all['domain'].dropna().unique().tolist())
@@ -995,8 +964,6 @@ def show_reviews(t):
         )
         selected_domains = [display_to_code[d] for d in sel_domain_display if d in display_to_code]
 
-    # 2. ASIN filter — filtered by selected countries
-    # Check if user clicked a row in the table (jump override)
     jumped_asin = st.session_state.pop('rev_asin_jump', None)
 
     df_for_asin = df_all.copy()
@@ -1005,7 +972,6 @@ def show_reviews(t):
     asins = sorted(df_for_asin['asin'].dropna().unique().tolist()) if 'asin' in df_for_asin.columns else []
     asin_options = ['🌐 Всі ASINи'] + asins
 
-    # If jumped from table click → preselect that ASIN
     default_asin_idx = 0
     if jumped_asin and jumped_asin in asins:
         default_asin_idx = asin_options.index(jumped_asin)
@@ -1013,10 +979,8 @@ def show_reviews(t):
     sel_raw = st.sidebar.selectbox("📦 ASIN:", asin_options, index=default_asin_idx, key="rev_asin")
     selected_asin = None if sel_raw == '🌐 Всі ASINи' else sel_raw
 
-    # 3. Star filter
     star_filter = st.sidebar.multiselect("⭐ Рейтинг:", [5, 4, 3, 2, 1], default=[], key="rev_stars")
 
-    # Sidebar: quick Amazon links when ASIN selected
     if selected_asin and has_domain:
         st.sidebar.markdown("---")
         st.sidebar.markdown("**🔗 Відкрити на Amazon:**")
@@ -1031,7 +995,6 @@ def show_reviews(t):
             st.session_state['rev_asin_jump'] = None
             st.rerun()
 
-    # ---- APPLY FILTERS ----
     df = df_all.copy()
     if selected_domains:
         df = df[df['domain'].isin(selected_domains)]
@@ -1044,11 +1007,9 @@ def show_reviews(t):
         st.warning("Немає відгуків за цими фільтрами.")
         return
 
-    # ---- HEADER + KPI ----
     asin_label    = selected_asin if selected_asin else "Всі ASINи"
     country_label = ", ".join([DOMAIN_LABELS.get(d, d) for d in selected_domains]) if selected_domains else "Всі країни"
 
-    # Title with link if specific ASIN selected
     if selected_asin:
         first_domain = df['domain'].dropna().iloc[0] if has_domain and not df.empty else 'com'
         amazon_url = make_amazon_url(first_domain, selected_asin)
@@ -1066,7 +1027,6 @@ def show_reviews(t):
     verified_pct = df['is_verified'].mean() * 100 if 'is_verified' in df.columns and total_revs > 0 else 0
     neg_count    = int((df['rating'] <= 2).sum())
     pos_count    = int((df['rating'] >= 4).sum())
-
     total_asins = df['asin'].nunique() if 'asin' in df.columns else 0
     total_asins_db = df_all['asin'].nunique() if 'asin' in df_all.columns else 0
 
@@ -1081,24 +1041,13 @@ def show_reviews(t):
     c6.metric("🟢 Позитивних (4-5★)", f"{pos_count:,}")
 
     st.markdown("---")
-
-    # ============================================
-    # 🧠 AUTO INSIGHTS — big visual cards
-    # ============================================
     show_global_insights(df_all if selected_asin is None else df, has_domain)
-
     st.markdown("---")
 
-    # ============================================
-    # 📦 SINGLE ASIN DETAIL (when ASIN selected)
-    # ============================================
     if selected_asin is not None:
         show_single_asin_detail(df, selected_asin, has_domain)
         st.markdown("---")
 
-    # ============================================
-    # 🌍 COUNTRY BREAKDOWN
-    # ============================================
     if has_domain and selected_asin is None:
         st.markdown("### 🌍 Аналіз по країнах")
 
@@ -1156,7 +1105,6 @@ def show_reviews(t):
             width="stretch"
         )
 
-        # 🔥 Heatmap ASIN × Country
         if 'asin' in df.columns and df['domain'].nunique() > 1:
             st.markdown("---")
             st.markdown("### 🔥 Теплова карта: ASIN × Країна")
@@ -1186,20 +1134,13 @@ def show_reviews(t):
 
         st.markdown("---")
 
-    # ============================================
-    # 🔗 CLICKABLE AMAZON LINKS TABLE
-    # ============================================
     if selected_asin is None:
         clicked_asin, clicked_domain = show_asin_links_table(df, has_domain)
-        # If user clicked a row → jump to that ASIN's detail view
         if clicked_asin:
             st.session_state['rev_asin_jump'] = clicked_asin
             st.rerun()
         st.markdown("---")
 
-    # ============================================
-    # ASIN COMPARISON
-    # ============================================
     if selected_asin is None and 'asin' in df.columns:
         st.markdown("### 📊 Порівняння ASINів")
 
@@ -1247,7 +1188,6 @@ def show_reviews(t):
             width="stretch"
         )
 
-        # Variant breakdown
         if 'product_attributes' in df.columns:
             st.markdown("---")
             st.markdown("### 🎨 Які варіанти (Size / Color) збирають негатив?")
@@ -1339,7 +1279,6 @@ def show_reviews(t):
         st.markdown("---")
         st.markdown("### 📊 Загальний розподіл зірок")
 
-    # ---- Star distribution + worst ASINs ----
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(f"#### {t['star_dist']}")
@@ -1375,7 +1314,6 @@ def show_reviews(t):
 
     insights_reviews(df, asin=selected_asin)
 
-    # ---- Review table ----
     st.markdown("---")
     st.markdown("### 📋 Тексти відгуків (до 100 на кожну зірку, max 500)")
     st.caption("Сортування: спочатку 1★ — щоб проблеми були першими")
@@ -1399,6 +1337,11 @@ def show_reviews(t):
         st.download_button("📥 Всі відфільтровані (CSV)",
             df[available_cols].to_csv(index=False).encode('utf-8'),
             f"reviews_full_{asin_label}.csv", "text/csv")
+
+
+# ============================================
+# OTHER REPORT FUNCTIONS
+# ============================================
 
 def show_overview(df_filtered, t, selected_date):
     st.markdown("### 📊 Business Dashboard Overview")
@@ -1747,7 +1690,7 @@ def show_orders():
 
 
 # ============================================
-# 🕷 SCRAPER MANAGER (вбудований)
+# 🕷 SCRAPER MANAGER — SIMPLIFIED
 # ============================================
 
 APIFY_TOKEN_DEFAULT = os.getenv("APIFY_TOKEN", "")
@@ -1758,6 +1701,7 @@ DOMAIN_FLAGS = {
     "com.au": "🇦🇺", "com.mx": "🇲🇽", "nl": "🇳🇱", "pl": "🇵🇱", "se": "🇸🇪",
 }
 
+
 def _scr_get_conn():
     from urllib.parse import urlparse
     r = urlparse(DATABASE_URL)
@@ -1765,6 +1709,7 @@ def _scr_get_conn():
         database=r.path[1:], user=r.username, password=r.password,
         host=r.hostname, port=r.port
     )
+
 
 def _scr_ensure_table():
     conn = _scr_get_conn(); cur = conn.cursor()
@@ -1778,6 +1723,7 @@ def _scr_ensure_table():
         );
     """)
     conn.commit(); cur.close(); conn.close()
+
 
 def _scr_save(reviews, asin, domain):
     conn = _scr_get_conn(); cur = conn.cursor(); inserted = 0
@@ -1798,12 +1744,14 @@ def _scr_save(reviews, asin, domain):
     conn.commit(); cur.close(); conn.close()
     return inserted
 
+
 def _scr_count(asin, domain):
     try:
         conn = _scr_get_conn(); cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM amazon_reviews WHERE asin=%s AND domain=%s", (asin, domain))
         n = cur.fetchone()[0]; cur.close(); conn.close(); return n
     except: return 0
+
 
 def _scr_parse_url(url):
     from urllib.parse import urlparse
@@ -1812,8 +1760,8 @@ def _scr_parse_url(url):
     m = re.search(r"([A-Z0-9]{10})", p.path)
     return domain, (m.group(1) if m else "UNKNOWN")
 
+
 def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, apify_token):
-    """Background thread — single pass or infinite loop."""
     try:
         _scr_ensure_table()
     except Exception as e:
@@ -1882,12 +1830,11 @@ def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, ap
             log_q.put(f"\n🏁 Цикл #{cycle} завершено! +{cycle_total} нових.")
             log_q.put(f"⏸  Пауза {pause_min} хв перед наступним циклом...")
             progress_q.put({"pct": 100, "label": f"Цикл #{cycle} готово, пауза {pause_min} хв..."})
-            # Pause in small chunks so stop_event is checked
-            for _ in range(pause_min * 12):  # every 5 sec
+            for _ in range(pause_min * 12):
                 if stop_event.is_set(): break
                 time.sleep(5)
         else:
-            break  # single pass done
+            break
 
     log_q.put(f"\n🏁 ЗБІР ЗУПИНЕНО після {cycle} цикл(ів)")
     progress_q.put({"pct": 100, "label": "Зупинено", "done": True, "total": cycle})
@@ -1902,6 +1849,7 @@ def _scr_init():
     }
     for k, v in defaults.items():
         if k not in st.session_state: st.session_state[k] = v
+
 
 def _scr_flush():
     lq = st.session_state.scr_log_q
@@ -1922,296 +1870,90 @@ def _scr_flush():
                     st.session_state.scr_cycles  = msg.get("total", 0)
             except: break
 
-def _scr_load_urls_db():
-    """Load all URLs from scraper_urls table."""
-    try:
-        conn = _scr_get_conn(); cur = conn.cursor()
-        cur.execute("""
-            SELECT id, url, is_active, added_at, last_scraped
-            FROM scraper_urls ORDER BY id
-        """)
-        rows = cur.fetchall(); cur.close(); conn.close()
-        return rows
-    except: return []
-
-def _scr_ensure_urls_table():
-    try:
-        conn = _scr_get_conn(); cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS scraper_urls (
-                id           SERIAL PRIMARY KEY,
-                url          TEXT UNIQUE NOT NULL,
-                is_active    BOOLEAN DEFAULT TRUE,
-                added_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_scraped TIMESTAMP
-            );
-        """)
-        conn.commit(); cur.close(); conn.close()
-    except: pass
-
-def _scr_add_url(url):
-    try:
-        conn = _scr_get_conn(); cur = conn.cursor()
-        cur.execute("INSERT INTO scraper_urls (url) VALUES (%s) ON CONFLICT (url) DO NOTHING", (url,))
-        inserted = cur.rowcount; conn.commit(); cur.close(); conn.close()
-        return inserted > 0
-    except: return False
-
-def _scr_delete_url(uid):
-    try:
-        conn = _scr_get_conn(); cur = conn.cursor()
-        cur.execute("DELETE FROM scraper_urls WHERE id=%s", (uid,))
-        conn.commit(); cur.close(); conn.close()
-    except: pass
-
-def _scr_toggle_url(uid, active):
-    try:
-        conn = _scr_get_conn(); cur = conn.cursor()
-        cur.execute("UPDATE scraper_urls SET is_active=%s WHERE id=%s", (active, uid))
-        conn.commit(); cur.close(); conn.close()
-    except: pass
-
-
-def show_url_manager():
-    """Tab: manage scraper_urls table."""
-    _scr_ensure_urls_table()
-    st.markdown("### 🔗 Керування URL-ами для scraper.py")
-    st.caption("scraper.py автоматично підхоплює зміни з цієї таблиці — не потрібно перезапускати скрапер!")
-
-    # ── Додати нові URL-и ──
-    with st.expander("➕ Додати нові URL-и", expanded=True):
-        new_urls_input = st.text_area(
-            "Посилання Amazon (по одному на рядок):",
-            height=130,
-            placeholder="https://www.amazon.com/dp/B08HR2131Z\nhttps://www.amazon.de/dp/B08HWCL2RY",
-            key="scr_new_urls"
-        )
-        if st.button("💾 Додати в БД", type="primary"):
-            lines = [u.strip() for u in new_urls_input.strip().splitlines() if u.strip()]
-            added, skipped = 0, 0
-            for url in lines:
-                if _scr_add_url(url): added += 1
-                else: skipped += 1
-            if added:   st.success(f"✅ Додано: {added} URL-ів")
-            if skipped: st.warning(f"⚠️ Вже існують (пропущено): {skipped}")
-            st.rerun()
-
-    st.markdown("---")
-
-    # ── Список поточних URL-ів ──
-    rows = _scr_load_urls_db()
-    if not rows:
-        st.info("📭 Таблиця порожня. Додай URL-и вище — scraper.py підхопить їх у наступному циклі.")
-        return
-
-    st.markdown(f"**Всього URL-ів: {len(rows)}** · активних: {sum(1 for r in rows if r[2])}")
-    st.markdown("")
-
-    for row in rows:
-        uid, url, is_active, added_at, last_scraped = row
-        try:
-            domain, asin = _scr_parse_url(url)
-            flag = DOMAIN_FLAGS.get(domain, "🌍")
-            in_db = _scr_count(asin, domain)
-        except:
-            flag, asin, domain, in_db = "🌍", "?", "?", 0
-
-        last_str = last_scraped.strftime("%d.%m %H:%M") if last_scraped else "ніколи"
-        added_str = added_at.strftime("%d.%m.%Y") if added_at else ""
-        status_color = "#4CAF50" if is_active else "#555"
-        status_text  = "● Активний" if is_active else "○ Вимкнений"
-
-        col_card, col_toggle, col_del = st.columns([6, 1.5, 1])
-        with col_card:
-            st.markdown(f"""
-            <div style="background:#1e1e2e;border-left:4px solid {status_color};
-                        border-radius:8px;padding:10px 16px;margin-bottom:6px">
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <div>
-                  <span style="font-size:16px;font-weight:800;color:#fff">{flag} {asin}</span>
-                  <span style="color:#888;font-size:12px;margin-left:10px">amazon.{domain}</span>
-                </div>
-                <span style="color:{status_color};font-size:12px;font-weight:600">{status_text}</span>
-              </div>
-              <div style="margin-top:6px;font-size:12px;color:#666;display:flex;gap:20px">
-                <span>📊 В БД: <b style="color:#5B9BD5">{in_db}</b></span>
-                <span>🕐 Останній скрап: <b>{last_str}</b></span>
-                <span>📅 Додано: {added_str}</span>
-              </div>
-              <div style="margin-top:4px;font-size:11px;color:#444">{url}</div>
-            </div>""", unsafe_allow_html=True)
-
-        with col_toggle:
-            new_state = st.toggle(
-                "Активний" if is_active else "Вимкн.",
-                value=is_active,
-                key=f"toggle_{uid}"
-            )
-            if new_state != is_active:
-                _scr_toggle_url(uid, new_state)
-                st.rerun()
-
-        with col_del:
-            st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
-            if st.button("🗑", key=f"del_{uid}", help=f"Видалити {url}"):
-                _scr_delete_url(uid)
-                st.rerun()
-
-    st.markdown("---")
-    # Bulk actions
-    c1, c2, _ = st.columns([1, 1, 3])
-    with c1:
-        if st.button("✅ Увімкнути всі", width="stretch"):
-            for row in rows: _scr_toggle_url(row[0], True)
-            st.rerun()
-    with c2:
-        if st.button("○ Вимкнути всі", width="stretch"):
-            for row in rows: _scr_toggle_url(row[0], False)
-            st.rerun()
-
 
 def show_scraper_manager():
     _scr_init()
     _scr_flush()
 
-    st.markdown("## 🕷 Scraper Manager")
-    st.caption("Керуй URL-ами і запускай збір прямо з дашборду. scraper.py підхоплює зміни автоматично.")
+    st.markdown("## 🕷 Scraper Reviews")
 
-    # ── Tabs ──
-    tab_status, tab_urls = st.tabs(["📊 Статус & Логи", "🔗 URL Manager"])
+    # ── Статус ──
+    if st.session_state.scr_running:
+        st.info(f"🔄 {st.session_state.scr_label or 'Збір в процесі...'}")
+    elif st.session_state.scr_done:
+        st.success(f"✅ Готово! Циклів: **{st.session_state.scr_cycles}**")
 
-    with tab_urls:
-        show_url_manager()
-
-    with tab_status:
-        # ── Статус ──
-        top_l, top_r = st.columns([3, 1])
-        with top_l:
-            if st.session_state.scr_running:
-                st.info(f"🔄 {st.session_state.scr_label or 'Збір в процесі...'}")
-            elif st.session_state.scr_done:
-                st.success(f"✅ Завершено! Відпрацьовано циклів: **{st.session_state.scr_cycles}**")
-            else:
-                st.info("💤 Готовий до запуску")
-        with top_r:
-            if st.session_state.scr_running:
-                if st.button("⛔ Зупинити", width="stretch", type="secondary"):
-                    if st.session_state.scr_stop_event:
-                        st.session_state.scr_stop_event.set()
-                    st.session_state.scr_running = False
-                    st.session_state.scr_done    = True
-                    st.rerun()
-
-        st.progress(st.session_state.scr_pct, text=st.session_state.scr_label or " ")
-        st.markdown("---")
+    st.progress(st.session_state.scr_pct, text=st.session_state.scr_label or " ")
+    st.markdown("---")
 
     # ── Форма ──
-    with st.expander("⚙️ Налаштування", expanded=not st.session_state.scr_running):
-        st.markdown("#### 🔗 Посилання Amazon (по одному на рядок)")
-        default_urls = "\n".join([
-            "https://www.amazon.com/dp/B08HR2131Z",
-            "https://www.amazon.ca/dp/B0G3B2JRVB",
-            "https://www.amazon.de/dp/B08HWCL2RY",
-            "https://www.amazon.co.uk/dp/B07XCDPRGZ",
-            "https://www.amazon.it/dp/B0DP7SQLGC",
-            "https://www.amazon.es/dp/B0DD5PJ27Q",
-        ])
-        urls_input = st.text_area("URLs:", value=default_urls, height=160,
-                                   disabled=st.session_state.scr_running)
+    urls_input = st.text_area(
+        "🔗 Посилання Amazon (по одному на рядок):",
+        height=180,
+        placeholder=(
+            "https://www.amazon.com/dp/B08HR2131Z\n"
+            "https://www.amazon.de/dp/B08HWCL2RY\n"
+            "https://www.amazon.co.uk/dp/B07XCDPRGZ"
+        ),
+        disabled=st.session_state.scr_running,
+        key="scr_urls_input"
+    )
 
-        c1, c2 = st.columns(2)
-        with c1:
-            max_per_star = st.slider("Max відгуків на ⭐:", 10, 200, 100, 10,
-                                     disabled=st.session_state.scr_running)
-        with c2:
-            loop_mode = st.toggle("🔄 Нескінченний цикл", value=False,
-                                  disabled=st.session_state.scr_running,
-                                  help="Після кожного проходу чекає 30 хв і запускається знову")
-            pause_label = "♾ Нескінченно" if loop_mode else "1 прохід"
-            st.caption(f"Режим: **{pause_label}**")
+    c1, c2, c3 = st.columns([2, 2, 1])
+    with c1:
+        max_per_star = st.slider(
+            "Max відгуків на ⭐:", 10, 200, 100, 10,
+            disabled=st.session_state.scr_running
+        )
+    with c2:
+        loop_mode = st.toggle(
+            "🔄 Нескінченний цикл (пауза 30 хв між проходами)",
+            value=False,
+            disabled=st.session_state.scr_running
+        )
+    with c3:
+        st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
+        if st.session_state.scr_running:
+            if st.button("⛔ Зупинити", width="stretch", type="secondary"):
+                if st.session_state.scr_stop_event:
+                    st.session_state.scr_stop_event.set()
+                st.session_state.scr_running = False
+                st.session_state.scr_done    = True
+                st.rerun()
+        else:
+            raw_lines = [u.strip() for u in (urls_input or "").splitlines() if u.strip()]
+            if st.button("🚀 Запустити", width="stretch", type="primary",
+                         disabled=not raw_lines):
+                lq      = queue.Queue()
+                pq      = queue.Queue()
+                stop_ev = threading.Event()
 
-        apify_token = APIFY_TOKEN_DEFAULT  # береться з .env / Streamlit Secrets
+                st.session_state.scr_logs       = []
+                st.session_state.scr_pct        = 0
+                st.session_state.scr_label      = "Старт..."
+                st.session_state.scr_done       = False
+                st.session_state.scr_running    = True
+                st.session_state.scr_cycles     = 0
+                st.session_state.scr_log_q      = lq
+                st.session_state.scr_prog_q     = pq
+                st.session_state.scr_stop_event = stop_ev
 
-        raw_lines = [u.strip() for u in urls_input.strip().splitlines() if u.strip()]
+                threading.Thread(
+                    target=_scr_worker,
+                    args=(raw_lines, max_per_star, lq, pq,
+                          loop_mode, stop_ev, APIFY_TOKEN_DEFAULT),
+                    daemon=True
+                ).start()
+                st.rerun()
 
-        # Превью товарів + статус в БД
-        if raw_lines:
-            st.markdown("**📋 Товари для збору:**")
-            cols = st.columns(min(len(raw_lines), 3))
-            total_in_db = 0
-            for i, url in enumerate(raw_lines):
-                try:
-                    domain, asin = _scr_parse_url(url)
-                    flag = DOMAIN_FLAGS.get(domain, "🌍")
-                    in_db = _scr_count(asin, domain)
-                    total_in_db += in_db
-                    # Color and label based on existing reviews
-                    if in_db == 0:
-                        border_color = "#4472C4"
-                        db_label = '<span style="color:#888">📭 Нових немає — збираємо вперше</span>'
-                    elif in_db < 50:
-                        border_color = "#FFC107"
-                        db_label = f'<span style="color:#FFC107">🔄 Є {in_db} — оновлюємо</span>'
-                    else:
-                        border_color = "#4CAF50"
-                        db_label = f'<span style="color:#4CAF50">✅ Є {in_db} — доповнюємо</span>'
-                    with cols[i % 3]:
-                        st.markdown(f"""
-                        <div style="background:#1e1e2e;border-left:4px solid {border_color};
-                                    border-radius:8px;padding:10px 14px;margin-bottom:8px">
-                          <div style="font-size:11px;color:#888">{flag} amazon.{domain}</div>
-                          <div style="font-size:16px;font-weight:800;color:#fff">{asin}</div>
-                          <div style="font-size:12px;margin-top:5px">{db_label}</div>
-                        </div>""", unsafe_allow_html=True)
-                except:
-                    with cols[i % 3]: st.warning(f"⚠️ {url[:40]}")
-
-            # Summary banner
-            if total_in_db > 0:
-                st.info(f"ℹ️ В БД вже є **{total_in_db}** відгуків по цих товарах. Скрапер додасть тільки **нові** — дублів не буде (`ON CONFLICT DO NOTHING`).")
-
-        n = len(raw_lines)
-        est = round(n * 5 * 1.5 / 60, 1)
-        loop_note = " × ∞ циклів" if loop_mode else ""
-        st.caption(f"⏱ ~{est} хв на 1 прохід ({n} товарів × 5 зірок){loop_note}")
-
-        c_btn_col, _ = st.columns([1, 3])
-        with c_btn_col:
-            start = st.button(
-                "🚀 Запустити" if not st.session_state.scr_running else "⏳ Іде...",
-                disabled=st.session_state.scr_running or not raw_lines,
-                width="stretch", type="primary"
-            )
-
-    # ── Запуск ──
-    if start and raw_lines and not st.session_state.scr_running:
-        lq = queue.Queue()
-        pq = queue.Queue()
-        stop_ev = threading.Event()
-
-        st.session_state.scr_logs      = []
-        st.session_state.scr_pct       = 0
-        st.session_state.scr_label     = "Старт..."
-        st.session_state.scr_done      = False
-        st.session_state.scr_running   = True
-        st.session_state.scr_cycles    = 0
-        st.session_state.scr_log_q     = lq
-        st.session_state.scr_prog_q    = pq
-        st.session_state.scr_stop_event = stop_ev
-
-        threading.Thread(
-            target=_scr_worker,
-            args=(raw_lines, max_per_star, lq, pq, loop_mode, stop_ev, apify_token),
-            daemon=True
-        ).start()
-        st.rerun()
+    st.markdown("---")
 
     # ── Логи ──
     st.markdown("### 📜 Логи")
     logs = st.session_state.scr_logs
     if logs:
         colored = []
-        for line in logs[-80:]:
+        for line in logs[-100:]:
             if "===" in line:
                 colored.append(f'<span style="color:#5B9BD5;font-weight:700">{line}</span>')
             elif "🔄" in line and "ЦИКЛ" in line:
@@ -2222,7 +1964,7 @@ def show_scraper_manager():
                 colored.append(f'<span style="color:#F44336">{line}</span>')
             elif "⚠️" in line:
                 colored.append(f'<span style="color:#FFC107">{line}</span>')
-            elif "🏁" in line or "ГОТОВО" in line or "ЗУПИНЕНО" in line:
+            elif "🏁" in line or "ЗУПИНЕНО" in line:
                 colored.append(f'<span style="color:#FFD700;font-weight:800">{line}</span>')
             elif "🎯" in line:
                 colored.append(f'<span style="color:#AB47BC">{line}</span>')
@@ -2234,20 +1976,22 @@ def show_scraper_manager():
         st.markdown(f"""
         <div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;
                     padding:16px 20px;font-family:'Courier New',monospace;font-size:13px;
-                    line-height:1.7;max-height:500px;overflow-y:auto">
+                    line-height:1.7;max-height:520px;overflow-y:auto">
           {"<br>".join(colored)}
         </div>""", unsafe_allow_html=True)
 
-        if not st.session_state.scr_running:
-            c1, c2, _ = st.columns([1, 1, 3])
-            with c1:
-                if st.button("🗑 Очистити логи", width="stretch"):
-                    st.session_state.scr_logs = []
-                    st.session_state.scr_done = False
-                    st.rerun()
-            with c2:
-                st.download_button("📥 Зберегти лог", "\n".join(logs).encode(),
-                                   "scraper_log.txt", "text/plain", width="stretch")
+        c1, c2, _ = st.columns([1, 1, 3])
+        with c1:
+            if st.button("🗑 Очистити логи", width="stretch"):
+                st.session_state.scr_logs = []
+                st.session_state.scr_done = False
+                st.rerun()
+        with c2:
+            st.download_button(
+                "📥 Зберегти лог",
+                "\n".join(logs).encode(),
+                "scraper_log.txt", "text/plain", width="stretch"
+            )
     else:
         st.markdown("""
         <div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;
@@ -2320,4 +2064,4 @@ elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filter
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v4.7 🌍")
+st.sidebar.caption("📦 Amazon FBA BI System v4.8 🌍")
