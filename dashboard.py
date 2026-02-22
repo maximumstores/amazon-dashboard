@@ -14,7 +14,6 @@ import numpy as np
 import datetime as dt
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
-import bcrypt
 
 load_dotenv()
 
@@ -32,419 +31,6 @@ def get_engine():
         pool_pre_ping=True,
     )
 
-# ============================================
-# AUTH SYSTEM
-# ============================================
-
-ROLE_ACCESS = {
-    "admin":   ["🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
-                "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
-                "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast",
-                "📋 FBA Inventory Table","🕷 Scraper Reviews","👤 User Management"],
-    "manager": ["🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
-                "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
-                "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast",
-                "📋 FBA Inventory Table"],
-    "viewer":  ["🏠 Overview","⭐ Amazon Reviews"],
-}
-
-def auth_get_conn():
-    from urllib.parse import urlparse
-    r = urlparse(DATABASE_URL)
-    return psycopg2.connect(
-        database=r.path[1:], user=r.username, password=r.password,
-        host=r.hostname, port=r.port, connect_timeout=10
-    )
-
-def auth_ensure_table():
-    try:
-        conn = auth_get_conn(); cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id            SERIAL PRIMARY KEY,
-                email         TEXT UNIQUE NOT NULL,
-                name          TEXT NOT NULL,
-                password_hash TEXT NOT NULL,
-                role          TEXT NOT NULL DEFAULT 'viewer',
-                is_active     BOOLEAN DEFAULT TRUE,
-                created_at    TIMESTAMP DEFAULT NOW(),
-                last_login    TIMESTAMP
-            );
-        """)
-        conn.commit(); cur.close(); conn.close()
-    except Exception as e:
-        st.error(f"DB auth error: {e}")
-
-def auth_count_users():
-    try:
-        conn = auth_get_conn(); cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users")
-        n = cur.fetchone()[0]; cur.close(); conn.close(); return n
-    except: return 0
-
-def auth_get_user(email):
-    try:
-        conn = auth_get_conn(); cur = conn.cursor()
-        cur.execute("SELECT id,email,name,password_hash,role,is_active FROM users WHERE email=%s", (email.lower().strip(),))
-        row = cur.fetchone(); cur.close(); conn.close()
-        if row:
-            return {"id":row[0],"email":row[1],"name":row[2],"password_hash":row[3],"role":row[4],"is_active":row[5]}
-        return None
-    except: return None
-
-def auth_create_user(email, name, password, role="viewer"):
-    try:
-        pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        conn = auth_get_conn(); cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO users (email,name,password_hash,role) VALUES (%s,%s,%s,%s)",
-            (email.lower().strip(), name.strip(), pw_hash, role)
-        )
-        conn.commit(); cur.close(); conn.close(); return True
-    except: return False
-
-def auth_verify_password(password, pw_hash):
-    try: return bcrypt.checkpw(password.encode(), pw_hash.encode())
-    except: return False
-
-def auth_update_last_login(user_id):
-    try:
-        conn = auth_get_conn(); cur = conn.cursor()
-        cur.execute("UPDATE users SET last_login=NOW() WHERE id=%s", (user_id,))
-        conn.commit(); cur.close(); conn.close()
-    except: pass
-
-def auth_get_all_users():
-    try:
-        conn = auth_get_conn(); cur = conn.cursor()
-        cur.execute("SELECT id,email,name,role,is_active,created_at,last_login FROM users ORDER BY created_at DESC")
-        rows = cur.fetchall(); cur.close(); conn.close()
-        return [{"id":r[0],"email":r[1],"name":r[2],"role":r[3],"is_active":r[4],
-                 "created_at":r[5],"last_login":r[6]} for r in rows]
-    except: return []
-
-def auth_update_user(user_id, role, is_active):
-    try:
-        conn = auth_get_conn(); cur = conn.cursor()
-        cur.execute("UPDATE users SET role=%s, is_active=%s WHERE id=%s", (role, is_active, user_id))
-        conn.commit(); cur.close(); conn.close(); return True
-    except: return False
-
-def auth_delete_user(user_id):
-    try:
-        conn = auth_get_conn(); cur = conn.cursor()
-        cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
-        conn.commit(); cur.close(); conn.close(); return True
-    except: return False
-
-def auth_reset_password(user_id, new_password):
-    try:
-        pw_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
-        conn = auth_get_conn(); cur = conn.cursor()
-        cur.execute("UPDATE users SET password_hash=%s WHERE id=%s", (pw_hash, user_id))
-        conn.commit(); cur.close(); conn.close(); return True
-    except: return False
-
-# ── Login / Register page ──────────────────
-
-def show_auth_page():
-    auth_ensure_table()
-
-    st.markdown("""
-    <div style="max-width:420px;margin:60px auto 0">
-    <h2 style="text-align:center;color:#fff">📦 Amazon FBA BI</h2>
-    </div>""", unsafe_allow_html=True)
-
-    is_first = auth_count_users() == 0
-    if is_first:
-        st.info("👋 Перший запуск — створіть акаунт адміністратора")
-
-    col, _ = st.columns([1.2, 1])
-    with col:
-        tab_login, tab_reg = (st.tabs(["🔐 Вхід", "📝 Реєстрація"])
-                              if is_first else (st.tabs(["🔐 Вхід"]) + [None]))
-
-        with tab_login:
-            st.markdown("#### Вхід")
-            email_in = st.text_input("Email", key="login_email")
-            pass_in  = st.text_input("Пароль", type="password", key="login_pass")
-            if st.button("Увійти", type="primary", width="stretch"):
-                if not email_in or not pass_in:
-                    st.error("Заповніть email і пароль")
-                else:
-                    user = auth_get_user(email_in)
-                    if not user:
-                        st.error("Користувача не знайдено")
-                    elif not user["is_active"]:
-                        st.error("Акаунт деактивовано. Зверніться до адміна.")
-                    elif not auth_verify_password(pass_in, user["password_hash"]):
-                        st.error("Невірний пароль")
-                    else:
-                        auth_update_last_login(user["id"])
-                        st.session_state.auth_user = user
-                        st.rerun()
-
-        if tab_reg and is_first:
-            with tab_reg:
-                st.markdown("#### Реєстрація адміна")
-                r_name  = st.text_input("Ім'я", key="reg_name")
-                r_email = st.text_input("Email", key="reg_email")
-                r_pass  = st.text_input("Пароль (мін. 6 символів)", type="password", key="reg_pass")
-                r_pass2 = st.text_input("Повторіть пароль", type="password", key="reg_pass2")
-                if st.button("Створити акаунт", type="primary", width="stretch"):
-                    if not r_name or not r_email or not r_pass:
-                        st.error("Заповніть всі поля")
-                    elif len(r_pass) < 6:
-                        st.error("Пароль мінімум 6 символів")
-                    elif r_pass != r_pass2:
-                        st.error("Паролі не співпадають")
-                    elif "@" not in r_email:
-                        st.error("Невірний email")
-                    else:
-                        role = "admin"  # first user = admin
-                        if auth_create_user(r_email, r_name, r_pass, role):
-                            st.success("✅ Акаунт створено! Тепер увійдіть.")
-                        else:
-                            st.error("Помилка створення акаунту (email вже існує?)")
-
-# ── User Management (admin only) ───────────
-
-def show_user_management():
-    st.markdown("## 👤 User Management")
-    user = st.session_state.auth_user
-
-    # ── Створити нового юзера ──
-    with st.expander("➕ Створити нового користувача", expanded=False):
-        c1, c2 = st.columns(2)
-        with c1:
-            new_name  = st.text_input("Ім'я", key="um_name")
-            new_email = st.text_input("Email", key="um_email")
-        with c2:
-            new_role  = st.selectbox("Роль", ["viewer","manager","admin"], key="um_role")
-            new_pass  = st.text_input("Пароль", type="password", key="um_pass")
-        if st.button("💾 Створити", type="primary"):
-            if not new_name or not new_email or not new_pass:
-                st.error("Заповніть всі поля")
-            elif len(new_pass) < 6:
-                st.error("Пароль мінімум 6 символів")
-            elif auth_create_user(new_email, new_name, new_pass, new_role):
-                st.success(f"✅ Користувача {new_name} ({new_role}) створено!")
-                st.rerun()
-            else:
-                st.error("Помилка (email вже існує?)")
-
-    st.markdown("---")
-    st.markdown("### 📋 Всі користувачі")
-
-    users = auth_get_all_users()
-    if not users:
-        st.info("Немає користувачів"); return
-
-    role_colors = {"admin":"#AB47BC","manager":"#4472C4","viewer":"#4CAF50"}
-    for u in users:
-        is_me = u["id"] == user["id"]
-        r_color = role_colors.get(u["role"],"#888")
-        last_login_str = u["last_login"].strftime("%d.%m.%Y %H:%M") if u["last_login"] else "ніколи"
-        created_str    = u["created_at"].strftime("%d.%m.%Y") if u["created_at"] else ""
-        status_color   = "#4CAF50" if u["is_active"] else "#555"
-        status_txt     = "● Активний" if u["is_active"] else "○ Деактивовано"
-
-        with st.container():
-            card_col, edit_col = st.columns([4, 2])
-            with card_col:
-                st.markdown(f"""
-                <div style="background:#1e1e2e;border-left:4px solid {r_color};
-                            border-radius:8px;padding:12px 16px;margin-bottom:6px">
-                  <div style="display:flex;justify-content:space-between;align-items:center">
-                    <div>
-                      <span style="font-size:16px;font-weight:700;color:#fff">{u['name']}</span>
-                      {"<span style='color:#888;font-size:12px;margin-left:8px'>(ви)</span>" if is_me else ""}
-                    </div>
-                    <span style="color:{status_color};font-size:12px">{status_txt}</span>
-                  </div>
-                  <div style="color:#888;font-size:13px;margin-top:4px">{u['email']}</div>
-                  <div style="display:flex;gap:16px;margin-top:6px;font-size:12px">
-                    <span style="background:{r_color}22;color:{r_color};padding:2px 8px;border-radius:4px;font-weight:700">{u['role'].upper()}</span>
-                    <span style="color:#666">🕐 {last_login_str}</span>
-                    <span style="color:#444">📅 {created_str}</span>
-                  </div>
-                </div>""", unsafe_allow_html=True)
-
-            with edit_col:
-                if not is_me:
-                    st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
-                    new_r = st.selectbox("Роль", ["viewer","manager","admin"],
-                                         index=["viewer","manager","admin"].index(u["role"]),
-                                         key=f"role_{u['id']}")
-                    new_a = st.toggle("Активний", value=u["is_active"], key=f"active_{u['id']}")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button("💾", key=f"save_{u['id']}", help="Зберегти"):
-                            auth_update_user(u["id"], new_r, new_a)
-                            st.rerun()
-                    with c2:
-                        if st.button("🗑", key=f"del_{u['id']}", help="Видалити"):
-                            auth_delete_user(u["id"])
-                            st.rerun()
-
-                    # Reset password
-                    with st.expander("🔑 Скинути пароль"):
-                        np_ = st.text_input("Новий пароль", type="password", key=f"np_{u['id']}")
-                        if st.button("Змінити", key=f"chpw_{u['id']}"):
-                            if len(np_) >= 6:
-                                auth_reset_password(u["id"], np_)
-                                st.success("✅ Пароль змінено")
-                            else:
-                                st.error("Мін. 6 символів")
-
-translations = {
-    "UA": {
-        "title": "📦 Amazon FBA: Business Intelligence Hub",
-        "update_btn": "🔄 Оновити дані",
-        "sidebar_title": "🔍 Фільтри",
-        "date_label": "📅 Дата:",
-        "store_label": "🏪 Магазин:",
-        "all_stores": "Всі",
-        "total_sku": "Всього SKU",
-        "total_avail": "Штук на складі",
-        "total_value": "💰 Вартість складу",
-        "velocity_30": "Продажі (30 днів)",
-        "chart_value_treemap": "💰 Де заморожені гроші?",
-        "chart_velocity": "🚀 Швидкість vs Залишки",
-        "chart_age": "⏳ Вік інвентарю",
-        "top_money_sku": "🏆 Топ SKU за вартістю",
-        "top_qty_sku": "🏆 Топ SKU за кількістю",
-        "avg_price": "Середня ціна",
-        "ai_header": "🧠 AI Прогноз залишків",
-        "ai_select": "Оберіть SKU:",
-        "ai_days": "Горизонт прогнозу:",
-        "ai_result_date": "📅 Дата Sold-out:",
-        "ai_result_days": "Днів залишилось:",
-        "ai_ok": "✅ Запасів вистачить",
-        "ai_error": "Недостатньо даних для прогнозу",
-        "footer_date": "📅 Дані оновлено:",
-        "download_excel": "📥 Завантажити Excel",
-        "settlements_title": "🏦 Фінансові виплати (Settlements)",
-        "net_payout": "Чиста виплата",
-        "gross_sales": "Валові продажі",
-        "total_fees": "Всього комісій",
-        "total_refunds": "Повернення коштів",
-        "chart_payout_trend": "📉 Динаміка виплат",
-        "chart_fee_breakdown": "💸 Структура витрат",
-        "currency_select": "💱 Валюта:",
-        "sales_traffic_title": "📈 Sales & Traffic",
-        "st_sessions": "Сесії",
-        "st_page_views": "Перегляди",
-        "st_units": "Замовлено штук",
-        "st_conversion": "Конверсія",
-        "st_revenue": "Дохід",
-        "st_buy_box": "Buy Box %",
-        "reviews_title": "⭐ Відгуки покупців",
-        "total_reviews": "Всього відгуків",
-        "avg_review_rating": "Середній рейтинг",
-        "verified_pct": "Верифіковані (%)",
-        "star_dist": "Розподіл по зірках",
-        "worst_asin": "Проблемні ASIN (1-2★)",
-    },
-    "EN": {
-        "title": "📦 Amazon FBA: Business Intelligence Hub",
-        "update_btn": "🔄 Refresh Data",
-        "sidebar_title": "🔍 Filters",
-        "date_label": "📅 Date:",
-        "store_label": "🏪 Store:",
-        "all_stores": "All",
-        "total_sku": "Total SKU",
-        "total_avail": "Total Units",
-        "total_value": "💰 Inventory Value",
-        "velocity_30": "Sales (30 days)",
-        "chart_value_treemap": "💰 Where is the money?",
-        "chart_velocity": "🚀 Velocity vs Stock",
-        "chart_age": "⏳ Inventory Age",
-        "top_money_sku": "🏆 Top SKU by Value",
-        "top_qty_sku": "🏆 Top SKU by Quantity",
-        "avg_price": "Avg Price",
-        "ai_header": "🧠 AI Inventory Forecast",
-        "ai_select": "Select SKU:",
-        "ai_days": "Forecast Days:",
-        "ai_result_date": "📅 Sold-out Date:",
-        "ai_result_days": "Days left:",
-        "ai_ok": "✅ Stock sufficient",
-        "ai_error": "Not enough data",
-        "footer_date": "📅 Last update:",
-        "download_excel": "📥 Download Excel",
-        "settlements_title": "🏦 Financial Settlements (Payouts)",
-        "net_payout": "Net Payout",
-        "gross_sales": "Gross Sales",
-        "total_fees": "Total Fees",
-        "total_refunds": "Total Refunds",
-        "chart_payout_trend": "📉 Payout Trend",
-        "chart_fee_breakdown": "💸 Fee Breakdown",
-        "currency_select": "💱 Currency:",
-        "sales_traffic_title": "📈 Sales & Traffic",
-        "st_sessions": "Sessions",
-        "st_page_views": "Page Views",
-        "st_units": "Units Ordered",
-        "st_conversion": "Conversion",
-        "st_revenue": "Revenue",
-        "st_buy_box": "Buy Box %",
-        "reviews_title": "⭐ Customer Reviews",
-        "total_reviews": "Total Reviews",
-        "avg_review_rating": "Average Rating",
-        "verified_pct": "Verified (%)",
-        "star_dist": "Star Distribution",
-        "worst_asin": "Problematic ASINs (1-2★)",
-    },
-    "RU": {
-        "title": "📦 Amazon FBA: Business Intelligence Hub",
-        "update_btn": "🔄 Обновить",
-        "sidebar_title": "🔍 Фильтры",
-        "date_label": "📅 Дата:",
-        "store_label": "🏪 Магазин:",
-        "all_stores": "Все",
-        "total_sku": "Всего SKU",
-        "total_avail": "Штук на складе",
-        "total_value": "💰 Стоимость склада",
-        "velocity_30": "Продажи (30 дней)",
-        "chart_value_treemap": "💰 Где деньги?",
-        "chart_velocity": "🚀 Скорость vs Остатки",
-        "chart_age": "⏳ Возраст инвентаря",
-        "top_money_sku": "🏆 Топ SKU по стоимости",
-        "top_qty_sku": "🏆 Топ SKU по количеству",
-        "avg_price": "Средняя цена",
-        "ai_header": "🧠 AI Прогноз остатков",
-        "ai_select": "Выберите SKU:",
-        "ai_days": "Горизонт прогноза:",
-        "ai_result_date": "📅 Дата Sold-out:",
-        "ai_result_days": "Дней осталось:",
-        "ai_ok": "✅ Запасов хватит",
-        "ai_error": "Недостаточно данных",
-        "footer_date": "📅 Данные обновлены:",
-        "download_excel": "📥 Скачать Excel",
-        "settlements_title": "🏦 Финансовые выплаты (Settlements)",
-        "net_payout": "Чистая выплата",
-        "gross_sales": "Валовые продажи",
-        "total_fees": "Всего комиссий",
-        "total_refunds": "Возвраты средств",
-        "chart_payout_trend": "📉 Динамика выплат",
-        "chart_fee_breakdown": "💸 Структура расходов",
-        "currency_select": "💱 Валюта:",
-        "sales_traffic_title": "📈 Sales & Traffic",
-        "st_sessions": "Сессии",
-        "st_page_views": "Просмотры",
-        "st_units": "Заказано штук",
-        "st_conversion": "Конверсия",
-        "st_revenue": "Доход",
-        "st_buy_box": "Buy Box %",
-        "reviews_title": "⭐ Отзывы покупателей",
-        "total_reviews": "Всего отзывов",
-        "avg_review_rating": "Средний рейтинг",
-        "verified_pct": "Верифицированные (%)",
-        "star_dist": "Распределение по звездам",
-        "worst_asin": "Проблемные ASIN (1-2★)",
-    }
-}
-
-# ============================================
 # DATA LOADERS
 # ============================================
 
@@ -2273,31 +1859,37 @@ def show_scraper_manager():
 # MAIN
 # ============================================
 
-# ── Auth init ──
-auth_ensure_table()
-if "auth_user" not in st.session_state:
-    st.session_state.auth_user = None
+from auth import (
+    ensure_tables, create_admin_if_not_exists,
+    show_login, logout, can_view,
+    show_admin_panel, ALL_REPORTS
+)
 
-# ── Not logged in → show auth page ──
-if not st.session_state.auth_user:
-    show_auth_page()
+# ── Init DB tables on first run ──
+try:
+    ensure_tables()
+    create_admin_if_not_exists()
+except Exception as e:
+    st.error(f"DB init error: {e}")
+    st.stop()
+
+# ── Not logged in → show login form ──
+if "user" not in st.session_state or not st.session_state.user:
+    show_login()
     st.stop()
 
 # ── Logged in ──
-current_user = st.session_state.auth_user
-user_role    = current_user["role"]
-allowed      = ROLE_ACCESS.get(user_role, [])
+user = st.session_state.user
 
 # Sidebar: user info + logout
 st.sidebar.markdown(f"""
 <div style="background:#1e1e2e;border-radius:8px;padding:10px 14px;margin-bottom:8px">
-  <div style="font-size:14px;font-weight:700;color:#fff">{current_user['name']}</div>
-  <div style="font-size:12px;color:#888">{current_user['email']}</div>
-  <div style="font-size:11px;color:#AB47BC;margin-top:4px;font-weight:600">{user_role.upper()}</div>
+  <div style="font-size:14px;font-weight:700;color:#fff">{user['name'] or user['email']}</div>
+  <div style="font-size:12px;color:#888">{user['email']}</div>
+  <div style="font-size:11px;color:#AB47BC;margin-top:4px;font-weight:600">{user['role'].upper()}</div>
 </div>""", unsafe_allow_html=True)
 if st.sidebar.button("🚪 Вийти", width="stretch"):
-    st.session_state.auth_user = None
-    st.rerun()
+    logout()
 
 if 'report_choice' not in st.session_state:
     st.session_state.report_choice = "🏠 Overview"
@@ -2332,13 +1924,22 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.header("📊 Reports")
 
-# Only show reports allowed for this role
-report_options = [r for r in [
+# Формуємо список доступних звітів для цього юзера
+all_nav = [
     "🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
     "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
     "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast",
-    "📋 FBA Inventory Table","🕷 Scraper Reviews","👤 User Management"
-] if r in allowed]
+    "📋 FBA Inventory Table","🕷 Scraper Reviews",
+]
+# Адмін бачить все + адмінку
+if user["role"] == "admin":
+    report_options = all_nav + ["👑 User Management"]
+else:
+    report_options = [r for r in all_nav if can_view(r)]
+
+if not report_options:
+    st.warning("У вас немає доступу до жодного розділу. Зверніться до адміністратора.")
+    st.stop()
 
 if st.session_state.report_choice not in report_options:
     st.session_state.report_choice = report_options[0]
@@ -2358,7 +1959,7 @@ elif report_choice == "🐢 Inventory Health (Aging)":show_aging(df_filtered, t)
 elif report_choice == "🧠 AI Forecast":              show_ai_forecast(df, t)
 elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filtered, t, selected_date)
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
-elif report_choice == "👤 User Management":          show_user_management()
+elif report_choice == "👑 User Management":          show_admin_panel()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v4.9 🌍")
+st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
