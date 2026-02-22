@@ -1305,8 +1305,14 @@ def show_reviews(t):
     st.markdown("---")
 
     if selected_asin is not None:
+        if st.button(t["rev_back"], key="back_top", type="secondary"):
+            st.session_state.pop("rev_asin", None)
+            st.rerun()
         show_single_asin_detail(df, selected_asin, has_domain)
         st.markdown("---")
+        if st.button(t["rev_back"], key="back_bottom", type="secondary"):
+            st.session_state.pop("rev_asin", None)
+            st.rerun()
 
     if has_domain and selected_asin is None:
         st.markdown(f"### {t['rev_country_analysis']}")
