@@ -2113,54 +2113,64 @@ def show_scraper_manager():
         urls_input = st.text_area("URLs:", value=default_urls, height=160,
                                    disabled=st.session_state.scr_running)
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         with c1:
             max_per_star = st.slider("Max відгуків на ⭐:", 10, 200, 100, 10,
                                      disabled=st.session_state.scr_running)
         with c2:
-            apify_token = st.text_input("Apify Token:", value=APIFY_TOKEN_DEFAULT,
-                                        type="password", disabled=st.session_state.scr_running)
-        with c3:
             loop_mode = st.toggle("🔄 Нескінченний цикл", value=False,
                                   disabled=st.session_state.scr_running,
                                   help="Після кожного проходу чекає 30 хв і запускається знову")
             pause_label = "♾ Нескінченно" if loop_mode else "1 прохід"
             st.caption(f"Режим: **{pause_label}**")
 
+        apify_token = APIFY_TOKEN_DEFAULT  # береться з .env / Streamlit Secrets
+
         raw_lines = [u.strip() for u in urls_input.strip().splitlines() if u.strip()]
 
-        # Превью товарів
+        # Превью товарів + статус в БД
         if raw_lines:
-            st.markdown("**📋 Товари:**")
+            st.markdown("**📋 Товари для збору:**")
             cols = st.columns(min(len(raw_lines), 3))
+            total_in_db = 0
             for i, url in enumerate(raw_lines):
                 try:
                     domain, asin = _scr_parse_url(url)
                     flag = DOMAIN_FLAGS.get(domain, "🌍")
                     in_db = _scr_count(asin, domain)
+                    total_in_db += in_db
+                    # Color and label based on existing reviews
+                    if in_db == 0:
+                        border_color = "#4472C4"
+                        db_label = '<span style="color:#888">📭 Нових немає — збираємо вперше</span>'
+                    elif in_db < 50:
+                        border_color = "#FFC107"
+                        db_label = f'<span style="color:#FFC107">🔄 Є {in_db} — оновлюємо</span>'
+                    else:
+                        border_color = "#4CAF50"
+                        db_label = f'<span style="color:#4CAF50">✅ Є {in_db} — доповнюємо</span>'
                     with cols[i % 3]:
                         st.markdown(f"""
-                        <div style="background:#1e1e2e;border-left:4px solid #4472C4;
+                        <div style="background:#1e1e2e;border-left:4px solid {border_color};
                                     border-radius:8px;padding:10px 14px;margin-bottom:8px">
                           <div style="font-size:11px;color:#888">{flag} amazon.{domain}</div>
                           <div style="font-size:16px;font-weight:800;color:#fff">{asin}</div>
-                          <div style="font-size:12px;color:#aaa;margin-top:4px">
-                            📊 В БД: <b style="color:#5B9BD5">{in_db}</b> відгуків
-                          </div>
+                          <div style="font-size:12px;margin-top:5px">{db_label}</div>
                         </div>""", unsafe_allow_html=True)
                 except:
                     with cols[i % 3]: st.warning(f"⚠️ {url[:40]}")
+
+            # Summary banner
+            if total_in_db > 0:
+                st.info(f"ℹ️ В БД вже є **{total_in_db}** відгуків по цих товарах. Скрапер додасть тільки **нові** — дублів не буде (`ON CONFLICT DO NOTHING`).")
 
         n = len(raw_lines)
         est = round(n * 5 * 1.5 / 60, 1)
         loop_note = " × ∞ циклів" if loop_mode else ""
         st.caption(f"⏱ ~{est} хв на 1 прохід ({n} товарів × 5 зірок){loop_note}")
 
-        c_drop, c_btn, _ = st.columns([1, 1, 2])
-        with c_drop:
-            drop_first = st.checkbox("🗑 Скинути таблицю", value=False,
-                                     disabled=st.session_state.scr_running)
-        with c_btn:
+        c_btn_col, _ = st.columns([1, 3])
+        with c_btn_col:
             start = st.button(
                 "🚀 Запустити" if not st.session_state.scr_running else "⏳ Іде...",
                 disabled=st.session_state.scr_running or not raw_lines,
@@ -2169,15 +2179,6 @@ def show_scraper_manager():
 
     # ── Запуск ──
     if start and raw_lines and not st.session_state.scr_running:
-        if drop_first:
-            try:
-                conn = _scr_get_conn(); cur = conn.cursor()
-                cur.execute("DROP TABLE IF EXISTS amazon_reviews;")
-                conn.commit(); cur.close(); conn.close()
-                st.toast("🗑 Таблицю скинуто")
-            except Exception as e:
-                st.error(f"❌ {e}")
-
         lq = queue.Queue()
         pq = queue.Queue()
         stop_ev = threading.Event()
@@ -2313,4 +2314,4 @@ elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filter
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v4.2 🌍")
+st.sidebar.caption("📦 Amazon FBA BI System v4.5 🌍")
