@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import os
@@ -110,6 +111,11 @@ translations = {
         "rev_star_dist": "### 📊 Загальний розподіл зірок",
         "rev_texts": "### 📋 Тексти відгуків (до 100 на кожну зірку, max 500)",
         "rev_sort_hint": "Сортування: спочатку 1★ — щоб проблеми були першими",
+        "rev_dl_balanced": "📥 Вибірка balanced (CSV)",
+        "rev_dl_all": "📥 Всі відфільтровані (CSV)",
+        "rev_dl_balanced_hint": "100 відгуків на кожну зірку (1-5★). Ідеально для AI-аналізу та порівняння",
+        "rev_dl_all_hint": "Всі відгуки що пройшли фільтр. Може бути великий файл",
+        "rev_shown": "Показано {n} з {total} відгуків",
         "rev_click_hint": "👆 Клікни на рядок — побачиш детальний аналіз цього ASIN · Посилання відкриють Amazon у новій вкладці",
         "rev_select_hint": "👇 Вибери ASIN для детального аналізу:",
         "rev_goto_asin": "📦 Перейти до ASIN:",
@@ -225,6 +231,11 @@ translations = {
         "rev_star_dist": "### 📊 Overall Star Distribution",
         "rev_texts": "### 📋 Review Texts (up to 100 per star, max 500)",
         "rev_sort_hint": "Sorted: 1★ first — problems first",
+        "rev_dl_balanced": "📥 Balanced sample (CSV)",
+        "rev_dl_all": "📥 All filtered (CSV)",
+        "rev_dl_balanced_hint": "100 reviews per star (1-5★). Perfect for AI analysis and comparison",
+        "rev_dl_all_hint": "All reviews matching current filter. File may be large",
+        "rev_shown": "Showing {n} of {total} reviews",
         "rev_click_hint": "👆 Click row to see detailed ASIN analysis · Links open Amazon in new tab",
         "rev_select_hint": "👇 Select ASIN for detailed analysis:",
         "rev_goto_asin": "📦 Go to ASIN:",
@@ -340,6 +351,11 @@ translations = {
         "rev_star_dist": "### 📊 Общее распределение звёзд",
         "rev_texts": "### 📋 Тексты отзывов (до 100 на звезду, макс 500)",
         "rev_sort_hint": "Сортировка: сначала 1★ — проблемы первыми",
+        "rev_dl_balanced": "📥 Выборка balanced (CSV)",
+        "rev_dl_all": "📥 Все отфильтрованные (CSV)",
+        "rev_dl_balanced_hint": "100 отзывов на каждую звезду (1-5★). Идеально для AI-анализа",
+        "rev_dl_all_hint": "Все отзывы из текущего фильтра. Файл может быть большим",
+        "rev_shown": "Показано {n} из {total} отзывов",
         "rev_click_hint": "👆 Нажми на строку — увидишь детальный анализ · Ссылки откроют Amazon в новой вкладке",
         "rev_select_hint": "👇 Выбери ASIN для детального анализа:",
         "rev_goto_asin": "📦 Перейти к ASIN:",
@@ -1131,15 +1147,54 @@ def show_asin_links_table(df, has_domain):
         height=min(400, 45 + len(table_df) * 35),
     )
 
-    asin_list = table_df['ASIN'].unique().tolist()
     st.caption(t["rev_select_hint"])
-    sel_col, _ = st.columns([2, 3])
+
+    # ── Фільтр по країнах + вибір ASIN ──
+    sel_col, country_col = st.columns([2, 2])
+
+    with country_col:
+        if '_domain' in table_df.columns:
+            all_domains = sorted(table_df['_domain'].dropna().unique().tolist())
+            domain_options = ["🌍 " + t.get("all_countries", "All")] + [
+                DOMAIN_LABELS.get(d, d) for d in all_domains
+            ]
+            sel_domain = st.selectbox("🌍 Країна:", domain_options, key="asin_jump_domain")
+            # Filter table by selected domain
+            if sel_domain != domain_options[0]:
+                chosen_domain = all_domains[domain_options.index(sel_domain) - 1]
+                filtered_for_select = table_df[table_df['_domain'] == chosen_domain]
+            else:
+                chosen_domain = None
+                filtered_for_select = table_df
+        else:
+            filtered_for_select = table_df
+            chosen_domain = None
+
+    asin_list = filtered_for_select['ASIN'].unique().tolist()
+
     with sel_col:
-        chosen = st.selectbox(t["rev_goto_asin"], [t["rev_not_selected"]] + asin_list,
-                              key="asin_table_jump")
+        # Add country flag to each ASIN option
+        def asin_label(asin):
+            rows = filtered_for_select[filtered_for_select['ASIN'] == asin]
+            if not rows.empty and '_domain' in rows.columns:
+                dom = rows.iloc[0]['_domain']
+                flag = DOMAIN_LABELS.get(dom, dom).split()[0] if dom else ""
+                return f"{flag} {asin}" if flag else asin
+            return asin
+
+        asin_labels = [t["rev_not_selected"]] + [asin_label(a) for a in asin_list]
+        asin_map    = {asin_label(a): a for a in asin_list}
+
+        chosen_label = st.selectbox(t["rev_goto_asin"], asin_labels, key="asin_table_jump")
+
     not_selected_values = {"— не вибрано —", "— not selected —", "— не выбрано —"}
-    if chosen and chosen not in not_selected_values:
+    if chosen_label and chosen_label not in not_selected_values:
+        chosen = asin_map.get(chosen_label, chosen_label)
         matched = table_df[table_df['ASIN'] == chosen]
+        if chosen_domain:
+            matched = matched[matched['_domain'] == chosen_domain]
+        if matched.empty:
+            matched = table_df[table_df['ASIN'] == chosen]
         if not matched.empty:
             row = matched.iloc[0]
             return chosen, row['_domain']
@@ -1530,17 +1585,54 @@ def show_reviews(t):
 
     star_summary = df_table['rating'].value_counts().sort_index(ascending=False)
     summary_str  = " | ".join([f"{s}★: {c}" for s, c in star_summary.items()])
-    st.caption(f"Показано {len(df_table)} з {len(df)} відгуків · {summary_str}")
+    st.caption(t["rev_shown"].format(n=len(df_table), total=len(df)) + f" · {summary_str}")
+
+    # ── Фільтри під таблицею + кнопки скачування ──
+    st.markdown("---")
+    fa, fb, fc = st.columns([2, 2, 1])
+
+    # Фільтр ASIN
+    with fa:
+        dl_asins = ["✅ " + t.get("all_asins", "All")] + sorted(df['asin'].dropna().unique().tolist()) if 'asin' in df.columns else []
+        dl_asin = st.selectbox("📦 ASIN:", dl_asins, key="dl_asin_filter") if dl_asins else None
+
+    # Фільтр країни
+    with fb:
+        if has_domain:
+            dl_domains_raw = sorted(df['domain'].dropna().unique().tolist())
+            dl_domain_opts = ["🌍 " + t.get("all_countries", "All")] + [DOMAIN_LABELS.get(d, d) for d in dl_domains_raw]
+            dl_domain_label = st.selectbox("🌍 Країна:", dl_domain_opts, key="dl_domain_filter")
+            dl_domain_idx = dl_domain_opts.index(dl_domain_label) - 1
+            dl_domain = dl_domains_raw[dl_domain_idx] if dl_domain_idx >= 0 else None
+        else:
+            dl_domain = None
+
+    # Застосовуємо фільтри до df для скачування
+    df_dl = df.copy()
+    if dl_asin and not dl_asin.startswith("✅"):
+        df_dl = df_dl[df_dl['asin'] == dl_asin]
+    if dl_domain:
+        df_dl = df_dl[df_dl['domain'] == dl_domain]
+
+    df_dl_balanced = balanced_reviews(df_dl, max_per_star=100).sort_values('rating', ascending=True)
+    dl_cols = [c for c in display_cols if c in df_dl.columns]
+
+    # Кнопки
+    with fc:
+        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+        st.caption(f"📊 {len(df_dl)} відгуків")
 
     col1, col2 = st.columns(2)
     with col1:
-        st.download_button("📥 Вибірка balanced (CSV)",
-            df_table[available_cols].to_csv(index=False).encode('utf-8'),
+        st.download_button(t["rev_dl_balanced"],
+            df_dl_balanced[dl_cols].to_csv(index=False).encode('utf-8'),
             f"reviews_balanced_{asin_label}.csv", "text/csv")
+        st.caption(t["rev_dl_balanced_hint"])
     with col2:
-        st.download_button("📥 Всі відфільтровані (CSV)",
-            df[available_cols].to_csv(index=False).encode('utf-8'),
+        st.download_button(t["rev_dl_all"],
+            df_dl[dl_cols].to_csv(index=False).encode('utf-8'),
             f"reviews_full_{asin_label}.csv", "text/csv")
+        st.caption(t["rev_dl_all_hint"])
 
 
 # ============================================
