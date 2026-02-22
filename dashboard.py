@@ -1233,8 +1233,8 @@ def show_reviews(t):
     default_asin_idx = 0
     if jumped_asin and jumped_asin in asins:
         default_asin_idx = asin_options.index(jumped_asin)
-    elif 'rev_asin_idx' in st.session_state:
-        default_asin_idx = st.session_state.pop('rev_asin_idx', 0)
+        # Видаляємо старий ключ щоб index спрацював
+        st.session_state.pop('rev_asin', None)
 
     sel_raw = st.sidebar.selectbox("📦 ASIN:", asin_options, index=default_asin_idx, key="rev_asin")
     selected_asin = None if sel_raw == '🌐 Всі ASINи' else sel_raw
