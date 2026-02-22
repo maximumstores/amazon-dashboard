@@ -1,6 +1,12 @@
 import streamlit as st
 import pandas as pd
 import os
+import re
+import psycopg2
+import requests
+import threading
+import queue
+import time
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
@@ -1741,9 +1747,6 @@ def show_orders():
 # 🕷 SCRAPER MANAGER (вбудований)
 # ============================================
 
-import threading
-import queue
-
 APIFY_TOKEN_DEFAULT = os.getenv("APIFY_TOKEN", "")
 STARS_MAP = {5: "fiveStar", 4: "fourStar", 3: "threeStar", 2: "twoStar", 1: "oneStar"}
 DOMAIN_FLAGS = {
@@ -2314,4 +2317,4 @@ elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filter
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v4.5 🌍")
+st.sidebar.caption("📦 Amazon FBA BI System v4.6 🌍")
