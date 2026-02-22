@@ -67,6 +67,61 @@ translations = {
         "verified_pct": "Верифіковані (%)",
         "star_dist": "Розподіл по зірках",
         "worst_asin": "Проблемні ASIN (1-2★)",
+        "ov_title": "📊 Огляд бізнесу",
+        "ov_top_sku": "### 📊 Топ 15 SKU за залишками",
+        "st_daily_trends": "### 📈 Щоденна динаміка",
+        "st_sessions_views": "#### 👁 Сесії та перегляди",
+        "st_revenue_units": "#### 💰 Дохід та замовлення",
+        "st_top_asins": "### 🏆 Топ ASINи",
+        "st_top_revenue": "#### 💰 Топ 15 за доходом",
+        "st_top_sessions": "#### 👁 Топ 15 за сесіями",
+        "st_full_data": "### 📋 Всі дані по ASINах",
+        "st_download": "📥 Завантажити CSV",
+        "st_filters": "📈 Фільтри Sales & Traffic",
+        "st_date_range": "📅 Діапазон дат:",
+        "ret_title": "### 📦 Огляд повернень",
+        "ret_total": "📦 Всього повернень",
+        "ret_unique_sku": "📦 Унікальних SKU",
+        "ret_rate": "📊 Рівень повернень",
+        "ret_value": "💰 Вартість повернень",
+        "ret_avg": "💵 Сер. вартість",
+        "ret_by_sku": "#### 💵 Вартість по SKU (Топ 10)",
+        "ret_daily": "#### 📊 Щоденна вартість",
+        "ret_by_reason": "#### 💸 По причинах",
+        "ret_top_sku": "#### 🏆 Топ 15 SKU повернень",
+        "ret_reasons": "#### 📊 Причини повернень",
+        "ret_filters": "📦 Фільтри повернень",
+        "ret_date": "📅 Дата повернення:",
+        "ret_download": "📥 Завантажити CSV повернень",
+        "ord_title": "### 🛒 Аналітика замовлень",
+        "ins_neg_trend": "Тренд негативу",
+        "ins_verified": "Верифікація",
+        "ins_pos_rate": "Рівень позитиву",
+        "rev_auto_insights": "🧠 Автоінсайти",
+        "rev_worst_asin": t["rev_worst_asin"],
+        "rev_best_asin": t["rev_best_asin"],
+        "rev_worst_country": t["rev_worst_country"],
+        "rev_best_country": t["rev_best_country"],
+        "rev_reviews_count": "відг.",
+        "rev_main_asin": "{t['rev_main_asin']}",
+        "rev_heatmap": "### 🔥 Теплова карта: ASIN × Країна",
+        "rev_heatmap_hint": "Клікни на ASIN у таблиці нижче — відкриється його сторінка на Amazon",
+        "rev_asin_compare": "### 📊 Порівняння ASINів",
+        "rev_star_dist": "### 📊 Загальний розподіл зірок",
+        "rev_texts": "### 📋 Тексти відгуків (до 100 на кожну зірку, max 500)",
+        "rev_sort_hint": "Сортування: спочатку 1★ — щоб проблеми були першими",
+        "rev_click_hint": "👆 Клікни на рядок — побачиш детальний аналіз цього ASIN · Посилання відкриють Amazon у новій вкладці",
+        "rev_select_hint": "👇 Вибери ASIN для детального аналізу:",
+        "rev_goto_asin": "📦 Перейти до ASIN:",
+        "rev_not_selected": "— не вибрано —",
+        "rev_back": "← Назад до всіх ASINів",
+        "rev_asins_in_filter": "📦 ASINів у фільтрі",
+        "insights_title": "🧠 Інсайти",
+        "insight_rating_health": "Здоров'я рейтингу",
+        "insight_loyalty": "Лояльність",
+        "insight_toxic": "Токсичний ASIN",
+        "insight_neg_level": "Рівень негативу",
+        "insight_verified": "Верифікація",
         "rev_table_by_country": "📋 Зведена таблиця по країнах",
         "rev_count_by_country": "📊 Відгуків по країнах",
         "rev_neg_by_country": "🔴 % Негативних по країнах",
@@ -125,6 +180,31 @@ translations = {
         "verified_pct": "Verified (%)",
         "star_dist": "Star Distribution",
         "worst_asin": "Problematic ASINs (1-2★)",
+        "rev_auto_insights": "🧠 Auto Insights",
+        "rev_worst_asin": "🔴 WORST ASIN",
+        "rev_best_asin": "🟢 BEST ASIN",
+        "rev_worst_country": "🔴 WORST COUNTRY",
+        "rev_best_country": "🟢 BEST COUNTRY",
+        "rev_reviews_count": "rev.",
+        "rev_main_asin": "📦 Main:",
+        "rev_heatmap": "### 🔥 Heatmap: ASIN × Country",
+        "rev_heatmap_hint": "Click ASIN in table below — opens Amazon page",
+        "rev_asin_compare": "### 📊 ASIN Comparison",
+        "rev_star_dist": "### 📊 Overall Star Distribution",
+        "rev_texts": "### 📋 Review Texts (up to 100 per star, max 500)",
+        "rev_sort_hint": "Sorted: 1★ first — problems first",
+        "rev_click_hint": "👆 Click row to see detailed ASIN analysis · Links open Amazon in new tab",
+        "rev_select_hint": "👇 Select ASIN for detailed analysis:",
+        "rev_goto_asin": "📦 Go to ASIN:",
+        "rev_not_selected": "— not selected —",
+        "rev_back": "← Back to all ASINs",
+        "rev_asins_in_filter": "📦 ASINs in filter",
+        "insights_title": "🧠 Insights",
+        "insight_rating_health": "Rating Health",
+        "insight_loyalty": "Loyalty",
+        "insight_toxic": "Toxic ASIN",
+        "insight_neg_level": "Negative Level",
+        "insight_verified": "Verification",
         "rev_table_by_country": "📋 Summary Table by Country",
         "rev_count_by_country": "📊 Reviews by Country",
         "rev_neg_by_country": "🔴 % Negative by Country",
@@ -183,6 +263,31 @@ translations = {
         "verified_pct": "Верифицированные (%)",
         "star_dist": "Распределение по звездам",
         "worst_asin": "Проблемные ASIN (1-2★)",
+        "rev_auto_insights": "🧠 Автоинсайты",
+        "rev_worst_asin": "🔴 ХУДШИЙ ASIN",
+        "rev_best_asin": "🟢 ЛУЧШИЙ ASIN",
+        "rev_worst_country": "🔴 ХУДШАЯ СТРАНА",
+        "rev_best_country": "🟢 ЛУЧШАЯ СТРАНА",
+        "rev_reviews_count": "отзыв.",
+        "rev_main_asin": "📦 Главный:",
+        "rev_heatmap": "### 🔥 Тепловая карта: ASIN × Страна",
+        "rev_heatmap_hint": "Нажми на ASIN в таблице — откроется страница Amazon",
+        "rev_asin_compare": "### 📊 Сравнение ASINов",
+        "rev_star_dist": "### 📊 Общее распределение звёзд",
+        "rev_texts": "### 📋 Тексты отзывов (до 100 на звезду, макс 500)",
+        "rev_sort_hint": "Сортировка: сначала 1★ — проблемы первыми",
+        "rev_click_hint": "👆 Нажми на строку — увидишь детальный анализ · Ссылки откроют Amazon в новой вкладке",
+        "rev_select_hint": "👇 Выбери ASIN для детального анализа:",
+        "rev_goto_asin": "📦 Перейти к ASIN:",
+        "rev_not_selected": "— не выбрано —",
+        "rev_back": "← Назад ко всем ASINам",
+        "rev_asins_in_filter": "📦 ASINов в фильтре",
+        "insights_title": "🧠 Инсайты",
+        "insight_rating_health": t["insight_rating_health"],
+        "insight_loyalty": t["insight_loyalty"],
+        "insight_toxic": t["insight_toxic"],
+        "insight_neg_level": "Уровень негатива",
+        "insight_verified": "Верификация",
         "rev_table_by_country": "📋 Сводная таблица по странам",
         "rev_count_by_country": "📊 Отзывов по странам",
         "rev_neg_by_country": "🔴 % Негативных по странам",
@@ -528,7 +633,7 @@ def insights_orders(df_filtered):
 def insights_reviews(df, asin=None):
     st.markdown("---")
     label = f"ASIN {asin}" if asin else "всем ASINам"
-    st.markdown(f"### 🧠 Інсайти по {label}")
+    st.markdown(f"### {t['insights_title']} по {label}")
     total = len(df)
     if total == 0:
         st.info("Нет данных для инсайтов.")
@@ -542,19 +647,19 @@ def insights_reviews(df, asin=None):
     if avg_rating >= 4.4:   txt, em, col = f"Средний балл <b>{avg_rating:.1f}★</b> — отлично! Сильное социальное доверие.", "🟢", "#0d2b1e"
     elif avg_rating >= 4.0: txt, em, col = f"Средний балл <b>{avg_rating:.1f}★</b> — норма, риск упасть ниже 4.0.", "🟡", "#2b2400"
     else:                   txt, em, col = f"Средний балл <b>{avg_rating:.1f}★</b> — критично! Режет конверсию и удорожает PPC.", "🔴", "#2b0d0d"
-    with cols[i%2]: insight_card(em,"Здоровье рейтинга",txt,col); i+=1
+    with cols[i%2]: insight_card(em,t["insight_rating_health"],txt,col); i+=1
     if neg_pct <= 10:  txt, em, col = f"Всего <b>{neg_pct:.1f}%</b> негативных (1-2★). Продукт оправдывает ожидания.", "🟢", "#0d2b1e"
     elif neg_pct <= 20: txt, em, col = f"<b>{neg_pct:.1f}%</b> негативных — системная проблема. Читай тексты 1★.", "🟡", "#2b2400"
     else:               txt, em, col = f"<b>{neg_pct:.1f}%</b> негативных — критично! Срочно фикси продукт или листинг.", "🔴", "#2b0d0d"
     with cols[i%2]: insight_card(em,"Уровень негатива",txt,col); i+=1
-    with cols[i%2]: insight_card("💚","Лояльность",f"<b>{pos_pct:.1f}%</b> позитивных (4-5★). База лояльных покупателей.","#0d2b1e" if pos_pct>=70 else "#2b2400"); i+=1
+    with cols[i%2]: insight_card("💚",t["insight_loyalty"],f"<b>{pos_pct:.1f}%</b> позитивних (4-5★)","#0d2b1e" if pos_pct>=70 else "#2b2400"); i+=1
     if 'is_verified' in df.columns:
         ver_pct = df['is_verified'].mean()*100
         with cols[i%2]: insight_card("✅","Верификация",f"<b>{ver_pct:.1f}%</b> верифицированы {'— высокое доверие у Amazon.' if ver_pct>=80 else '— следи за политикой.'}","#1a1a2e"); i+=1
     if asin is None and not neg_df.empty and 'asin' in neg_df.columns:
         worst = neg_df['asin'].value_counts()
         if not worst.empty:
-            with cols[i%2]: insight_card("⚠️","Токсичный ASIN",f"<b>{worst.index[0]}</b> — {worst.iloc[0]} негативных. Начни анализ с него.","#2b0d0d")
+            with cols[i%2]: insight_card("⚠️",t["insight_toxic"],f"<b>{worst.index[0]}</b> — {worst.iloc[0]} негативных. Начни анализ с него.","#2b0d0d")
 
 
 # ============================================
@@ -650,7 +755,7 @@ def make_amazon_url(domain, asin):
 
 
 def show_global_insights(df, has_domain):
-    st.markdown("### 🧠 Автоінсайти")
+    st.markdown(f"### {t['rev_auto_insights']}")
 
     asin_stats, dom_stats = None, None
 
@@ -705,7 +810,7 @@ def show_global_insights(df, has_domain):
               <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
                 <span style="color:#aaa;font-size:12px">⭐ {worst_a['Rating']:.2f}★</span>
                 <span style="color:{bar_color};font-size:12px;font-weight:700">🔴 {neg_pct:.1f}% neg</span>
-                <span style="color:#666;font-size:12px">{int(worst_a['Reviews'])} відг.</span>
+                <span style="color:#666;font-size:12px">{int(worst_a['Reviews'])} {t['rev_reviews_count']}</span>
               </div>
               <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
                 <div style="width:{min(neg_pct,100):.0f}%;background:{bar_color};border-radius:4px;height:5px"></div>
@@ -723,7 +828,7 @@ def show_global_insights(df, has_domain):
               <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
                 <span style="color:{rating_color};font-size:12px;font-weight:700">⭐ {best_a['Rating']:.2f}★</span>
                 <span style="color:#aaa;font-size:12px">🔴 {best_a['Neg %']:.1f}% neg</span>
-                <span style="color:#666;font-size:12px">{int(best_a['Reviews'])} відг.</span>
+                <span style="color:#666;font-size:12px">{int(best_a['Reviews'])} {t['rev_reviews_count']}</span>
               </div>
               <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
                 <div style="width:{((best_a['Rating']-1)/4*100):.0f}%;background:{rating_color};border-radius:4px;height:5px"></div>
@@ -762,8 +867,8 @@ def show_global_insights(df, has_domain):
 
         neg_pct = worst_d['Neg %']
         bar_color = "#F44336" if neg_pct > 20 else "#FFC107"
-        asin_line_w = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>📦 Головний: {worst_country_asin}</div>" if worst_country_asin else ""
-        asin_line_b = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>📦 Головний: {best_country_asin}</div>" if best_country_asin else ""
+        asin_line_w = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>{t['rev_main_asin']} {worst_country_asin}</div>" if worst_country_asin else ""
+        asin_line_b = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>{t['rev_main_asin']} {best_country_asin}</div>" if best_country_asin else ""
 
         with col3:
             st.markdown(f"""
@@ -774,7 +879,7 @@ def show_global_insights(df, has_domain):
               <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
                 <span style="color:#aaa;font-size:12px">⭐ {worst_d['Rating']:.2f}★</span>
                 <span style="color:{bar_color};font-size:12px;font-weight:700">🔴 {neg_pct:.1f}% neg</span>
-                <span style="color:#666;font-size:12px">{int(worst_d['Reviews'])} відг.</span>
+                <span style="color:#666;font-size:12px">{int(worst_d['Reviews'])} {t['rev_reviews_count']}</span>
               </div>
               <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
                 <div style="width:{min(neg_pct,100):.0f}%;background:{bar_color};border-radius:4px;height:5px"></div>
@@ -791,7 +896,7 @@ def show_global_insights(df, has_domain):
               <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
                 <span style="color:{rating_color};font-size:12px;font-weight:700">⭐ {best_d['Rating']:.2f}★</span>
                 <span style="color:#aaa;font-size:12px">🔴 {best_d['Neg %']:.1f}% neg</span>
-                <span style="color:#666;font-size:12px">{int(best_d['Reviews'])} відг.</span>
+                <span style="color:#666;font-size:12px">{int(best_d['Reviews'])} {t['rev_reviews_count']}</span>
               </div>
               <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
                 <div style="width:{((best_d['Rating']-1)/4*100):.0f}%;background:{rating_color};border-radius:4px;height:5px"></div>
@@ -913,7 +1018,7 @@ def show_single_asin_detail(df_asin, asin, has_domain):
 
 def show_asin_links_table(df, has_domain):
     st.markdown("### 🔗 Всі ASINи — огляд по країнах")
-    st.caption("👆 Клікни на рядок — побачиш детальний аналіз цього ASIN · Посилання відкриють Amazon у новій вкладці")
+    st.caption(t["rev_click_hint"])
 
     if 'asin' not in df.columns:
         st.info("Немає даних про ASINи.")
@@ -963,10 +1068,10 @@ def show_asin_links_table(df, has_domain):
     )
 
     asin_list = table_df['ASIN'].unique().tolist()
-    st.caption("👇 Вибери ASIN для детального аналізу:")
+    st.caption(t["rev_select_hint"])
     sel_col, _ = st.columns([2, 3])
     with sel_col:
-        chosen = st.selectbox("📦 Перейти до ASIN:", ["— не вибрано —"] + asin_list,
+        chosen = st.selectbox(t["rev_goto_asin"], [t["rev_not_selected"]] + asin_list,
                               key="asin_table_jump")
     if chosen and chosen != "— не вибрано —":
         row = table_df[table_df['ASIN'] == chosen].iloc[0]
@@ -1023,7 +1128,7 @@ def show_reviews(t):
             label = DOMAIN_LABELS.get(dom, dom).split('(')[0].strip()
             st.sidebar.markdown(f"[{flag} {label}]({url})")
         st.sidebar.markdown("---")
-        if st.sidebar.button("← Назад до всіх ASINів", width="stretch"):
+        if st.sidebar.button(t["rev_back"], width="stretch"):
             st.session_state['rev_asin_jump'] = None
             st.rerun()
 
@@ -1064,7 +1169,7 @@ def show_reviews(t):
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric(t["total_reviews"],     f"{total_revs:,}")
-    c2.metric("📦 ASINів у фільтрі",  f"{total_asins:,}",
+    c2.metric(t["rev_asins_in_filter"],  f"{total_asins:,}",
               delta=f"з {total_asins_db} в базі" if total_asins != total_asins_db else None,
               delta_color="off")
     c3.metric(t["avg_review_rating"], f"{avg_rating:.2f} ⭐")
@@ -1139,8 +1244,8 @@ def show_reviews(t):
 
         if 'asin' in df.columns and df['domain'].nunique() > 1:
             st.markdown("---")
-            st.markdown("### 🔥 Теплова карта: ASIN × Країна")
-            st.caption("Клікни на ASIN у таблиці нижче — відкриється його сторінка на Amazon")
+            st.markdown(t["rev_heatmap"])
+            st.caption(t["rev_heatmap_hint"])
 
             pivot = df.groupby(['asin', 'domain'])['rating'].mean().reset_index()
             pivot_table = pivot.pivot(index='asin', columns='domain', values='rating')
@@ -1174,7 +1279,7 @@ def show_reviews(t):
         st.markdown("---")
 
     if selected_asin is None and 'asin' in df.columns:
-        st.markdown("### 📊 Порівняння ASINів")
+        st.markdown(t["rev_asin_compare"])
 
         asin_stats = df.groupby('asin').agg(
             Reviews=('rating', 'count'),
@@ -1309,7 +1414,7 @@ def show_reviews(t):
                 st.success("🎉 Всі варіанти мають рейтинг ≥ 4.0")
 
         st.markdown("---")
-        st.markdown("### 📊 Загальний розподіл зірок")
+        st.markdown(t["rev_star_dist"])
 
     col1, col2 = st.columns(2)
     with col1:
@@ -1347,8 +1452,8 @@ def show_reviews(t):
     insights_reviews(df, asin=selected_asin)
 
     st.markdown("---")
-    st.markdown("### 📋 Тексти відгуків (до 100 на кожну зірку, max 500)")
-    st.caption("Сортування: спочатку 1★ — щоб проблеми були першими")
+    st.markdown(t["rev_texts"])
+    st.caption(t["rev_sort_hint"])
 
     df_table = balanced_reviews(df, max_per_star=100).sort_values('rating', ascending=True)
     display_cols   = ['review_date', 'asin', 'domain', 'rating', 'title', 'content', 'product_attributes', 'author', 'is_verified']
@@ -1376,7 +1481,7 @@ def show_reviews(t):
 # ============================================
 
 def show_overview(df_filtered, t, selected_date):
-    st.markdown("### 📊 Business Dashboard Overview")
+    st.markdown(f"### {t['ov_title']}")
     st.caption(f"Data snapshot: {selected_date}")
     col1,col2,col3,col4 = st.columns(4)
     with col1: st.metric(t["total_sku"], len(df_filtered))
@@ -1412,7 +1517,7 @@ def show_overview(df_filtered, t, selected_date):
                 if st.button(btn_lbl, key=key, width="stretch", type="primary"):
                     st.session_state.report_choice = dest; st.rerun()
     st.markdown("---")
-    st.markdown("### 📊 Quick Overview: Top 15 SKU by Stock")
+    st.markdown(t["ov_top_sku"])
     if not df_filtered.empty:
         df_top = df_filtered.nlargest(15,'Available')
         fig = px.bar(df_top, x='Available', y='SKU', orientation='h',
@@ -1426,10 +1531,10 @@ def show_sales_traffic(t):
     df_st = load_sales_traffic()
     if df_st.empty:
         st.warning("⚠️ No Sales & Traffic data found."); return
-    st.sidebar.markdown("---"); st.sidebar.subheader("📈 Sales & Traffic Filters")
+    st.sidebar.markdown("---"); st.sidebar.subheader(t["st_filters"])
     min_date = df_st['report_date'].min().date()
     max_date = df_st['report_date'].max().date()
-    date_range = st.sidebar.date_input("📅 Date Range:",
+    date_range = st.sidebar.date_input(t["st_date_range"],
         value=(max(min_date, max_date-dt.timedelta(days=14)), max_date),
         min_value=min_date, max_value=max_date, key="st_date_range")
     if len(date_range)==2:
@@ -1447,21 +1552,21 @@ def show_sales_traffic(t):
     c1.metric(t["st_sessions"],f"{ts:,}"); c2.metric(t["st_page_views"],f"{tpv:,}")
     c3.metric(t["st_units"],f"{tu:,}"); c4.metric(t["st_revenue"],f"${tr:,.2f}")
     c5.metric(t["st_conversion"],f"{ac:.2f}%"); c6.metric(t["st_buy_box"],f"{ab:.1f}%")
-    st.markdown("---"); st.markdown("### 📈 Daily Trends")
+    st.markdown("---"); st.markdown(t["st_daily_trends"])
     daily = df_filtered.groupby(df_filtered['report_date'].dt.date).agg(
         {'sessions':'sum','page_views':'sum','units_ordered':'sum','ordered_product_sales':'sum'}).reset_index()
     daily.columns = ['Date','Sessions','Page Views','Units','Revenue']
     daily['Conversion %'] = (daily['Units']/daily['Sessions']*100).fillna(0)
     col1,col2 = st.columns(2)
     with col1:
-        st.markdown("#### 👁 Sessions & Page Views")
+        st.markdown(t["st_sessions_views"])
         fig = go.Figure()
         fig.add_trace(go.Bar(x=daily['Date'],y=daily['Sessions'],name='Sessions',marker_color='#4472C4'))
         fig.add_trace(go.Scatter(x=daily['Date'],y=daily['Page Views'],name='Page Views',mode='lines+markers',line=dict(color='#ED7D31',width=2),yaxis='y2'))
         fig.update_layout(yaxis=dict(title='Sessions'),yaxis2=dict(title='Page Views',overlaying='y',side='right'),height=380,legend=dict(orientation='h',y=1.12))
         st.plotly_chart(fig, width="stretch")
     with col2:
-        st.markdown("#### 💰 Revenue & Units")
+        st.markdown(t["st_revenue_units"])
         fig = go.Figure()
         fig.add_trace(go.Bar(x=daily['Date'],y=daily['Revenue'],name='Revenue $',marker_color='#70AD47'))
         fig.add_trace(go.Scatter(x=daily['Date'],y=daily['Units'],name='Units',mode='lines+markers',line=dict(color='#FFC000',width=2),yaxis='y2'))
@@ -1471,26 +1576,26 @@ def show_sales_traffic(t):
         text=[f"{v:.1f}%" for v in daily['Conversion %']],textposition='top center',line=dict(color='#5B9BD5',width=3),marker=dict(size=8)))
     fig_conv.update_layout(height=300,yaxis_title='Conversion %')
     st.plotly_chart(fig_conv, width="stretch")
-    st.markdown("---"); st.markdown("### 🏆 Top ASINs Performance")
+    st.markdown("---"); st.markdown(t["st_top_asins"])
     asin_col = 'child_asin' if 'child_asin' in df_filtered.columns else df_filtered.columns[0]
     as_ = df_filtered.groupby(asin_col).agg({'sessions':'sum','page_views':'sum','units_ordered':'sum','ordered_product_sales':'sum','buy_box_percentage':'mean'}).reset_index()
     as_.columns=['ASIN','Sessions','Page Views','Units','Revenue','Buy Box %']
     as_['Conv %'] = (as_['Units']/as_['Sessions']*100).fillna(0)
     col1,col2 = st.columns(2)
     with col1:
-        st.markdown("#### 💰 Top 15 by Revenue")
+        st.markdown(t["st_top_revenue"])
         fig = px.bar(as_.nlargest(15,'Revenue'),x='Revenue',y='ASIN',orientation='h',text='Revenue',color='Revenue',color_continuous_scale='Greens')
         fig.update_layout(yaxis={'categoryorder':'total ascending'},height=450); fig.update_traces(texttemplate='$%{text:,.0f}',textposition='outside')
         st.plotly_chart(fig, width="stretch")
     with col2:
-        st.markdown("#### 👁 Top 15 by Sessions")
+        st.markdown(t["st_top_sessions"])
         fig = px.bar(as_.nlargest(15,'Sessions'),x='Sessions',y='ASIN',orientation='h',text='Sessions',color='Sessions',color_continuous_scale='Blues')
         fig.update_layout(yaxis={'categoryorder':'total ascending'},height=450)
         st.plotly_chart(fig, width="stretch")
-    st.markdown("---"); st.markdown("### 📋 Full ASIN Data")
+    st.markdown("---"); st.markdown(t["st_full_data"])
     st.dataframe(as_.sort_values('Revenue',ascending=False).style.format({'Revenue':'${:,.2f}','Conv %':'{:.2f}%','Buy Box %':'{:.1f}%'}),width="stretch",height=500)
     csv = as_.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download CSV", csv, "sales_traffic.csv","text/csv")
+    st.download_button(t["st_download"], csv, "sales_traffic.csv","text/csv")
     insights_sales_traffic(df_filtered, as_)
 
 
@@ -1542,7 +1647,8 @@ def show_settlements(t):
     insights_settlements(df_f)
 
 
-def show_returns():
+def show_returns(t=None):
+    if t is None: t = translations.get("UA", {})
     df_ret_raw, df_orders = load_returns()
     if df_ret_raw.empty:
         st.warning("⚠️ No returns data."); return
@@ -1560,16 +1666,16 @@ def show_returns():
     df_r['Price']        = pd.to_numeric(df_r['Price'],errors='coerce').fillna(0)
     df_r['Quantity']     = pd.to_numeric(df_r['Quantity'],errors='coerce').fillna(1)
     df_r['Return Value'] = df_r['Price'] * df_r['Quantity']
-    st.sidebar.markdown("---"); st.sidebar.subheader("📦 Returns Filters")
+    st.sidebar.markdown("---"); st.sidebar.subheader(t["ret_filters"])
     min_date = df_r['Return Date'].min().date(); max_date = df_r['Return Date'].max().date()
-    date_range = st.sidebar.date_input("📅 Return Date:",value=(max_date-dt.timedelta(days=30),max_date),min_value=min_date,max_value=max_date)
+    date_range = st.sidebar.date_input(t["ret_date"],value=(max_date-dt.timedelta(days=30),max_date),min_value=min_date,max_value=max_date)
     sel_store = 'All'
     if 'Store Name' in df_r.columns:
         stores = ['All'] + sorted(df_r['Store Name'].dropna().unique().tolist())
         sel_store = st.sidebar.selectbox("🏪 Store:", stores)
     df_f = df_r[(df_r['Return Date'].dt.date>=date_range[0])&(df_r['Return Date'].dt.date<=date_range[1])] if len(date_range)==2 else df_r
     if sel_store != 'All': df_f = df_f[df_f['Store Name']==sel_store]
-    st.markdown("### 📦 Returns Overview")
+    st.markdown(t["ret_title"])
     rr = 0
     try:
         if not df_orders.empty:
@@ -1579,45 +1685,45 @@ def show_returns():
                     break
     except: pass
     c1,c2,c3,c4,c5 = st.columns(5)
-    c1.metric("📦 Total Returns",f"{len(df_f):,}"); c2.metric("📦 Unique SKUs",df_f['SKU'].nunique())
-    c3.metric("📊 Return Rate",f"{rr:.1f}%"); c4.metric("💰 Return Value",f"${df_f['Return Value'].sum():,.2f}")
-    c5.metric("💵 Avg Return",f"${df_f['Return Value'].mean():.2f}")
+    c1.metric(t["ret_total"],f"{len(df_f):,}"); c2.metric(t["ret_unique_sku"],df_f['SKU'].nunique())
+    c3.metric(t["ret_rate"],f"{rr:.1f}%"); c4.metric(t["ret_value"],f"${df_f['Return Value'].sum():,.2f}")
+    c5.metric(t["ret_avg"],f"${df_f['Return Value'].mean():.2f}")
     st.markdown("---")
     col1,col2,col3 = st.columns(3)
     with col1:
-        st.markdown("#### 💵 Return Value by SKU (Top 10)")
+        st.markdown(t["ret_by_sku"])
         tv = df_f.groupby('SKU')['Return Value'].sum().nlargest(10).reset_index()
         fig = px.bar(tv,x='Return Value',y='SKU',orientation='h',text='Return Value',color='Return Value',color_continuous_scale='Reds')
         fig.update_layout(yaxis={'categoryorder':'total ascending'},height=350); fig.update_traces(texttemplate='$%{text:,.0f}',textposition='outside')
         st.plotly_chart(fig, width="stretch")
     with col2:
-        st.markdown("#### 📊 Daily Return Value")
+        st.markdown(t["ret_daily"])
         dv = df_f.groupby(df_f['Return Date'].dt.date)['Return Value'].sum().reset_index(); dv.columns=['Date','Value']
         fig = px.area(dv,x='Date',y='Value',line_shape='spline',color_discrete_sequence=['#FF6B6B'])
         fig.update_layout(height=350); st.plotly_chart(fig, width="stretch")
     with col3:
         if 'Reason' in df_f.columns:
-            st.markdown("#### 💸 Return Value by Reason")
+            st.markdown(t["ret_by_reason"])
             rv = df_f.groupby('Reason')['Return Value'].sum().nlargest(8).reset_index()
             fig = px.pie(rv,values='Return Value',names='Reason',hole=0.4,color_discrete_sequence=px.colors.sequential.RdBu)
             fig.update_layout(height=350); st.plotly_chart(fig, width="stretch")
     st.markdown("---")
     col1,col2 = st.columns(2)
     with col1:
-        st.markdown("#### 🏆 Top 15 Returned SKUs")
+        st.markdown(t["ret_top_sku"])
         ts = df_f['SKU'].value_counts().head(15).reset_index(); ts.columns=['SKU','Returns']
         fig = px.bar(ts,x='Returns',y='SKU',orientation='h',color='Returns',color_continuous_scale='Oranges',text='Returns')
         fig.update_layout(yaxis={'categoryorder':'total ascending'},height=450); st.plotly_chart(fig, width="stretch")
     with col2:
         if 'Reason' in df_f.columns:
-            st.markdown("#### 📊 Return Reasons")
+            st.markdown(t["ret_reasons"])
             rs = df_f['Reason'].value_counts().head(10).reset_index(); rs.columns=['Reason','Count']
             fig = px.pie(rs,values='Count',names='Reason',hole=0.4,color_discrete_sequence=px.colors.sequential.RdBu)
             fig.update_layout(height=450); st.plotly_chart(fig, width="stretch")
     st.markdown("---")
     dc = ['Return Date','SKU','Product Name','Quantity','Price','Return Value','Reason','Status']
     st.dataframe(df_f[[c for c in dc if c in df_f.columns]].sort_values('Return Date',ascending=False).head(100).style.format({'Price':'${:.2f}','Return Value':'${:.2f}'}),width="stretch")
-    st.download_button("📥 Download Returns CSV",df_f.to_csv(index=False).encode('utf-8'),"returns.csv","text/csv")
+    st.download_button(t["ret_download"],df_f.to_csv(index=False).encode('utf-8'),"returns.csv","text/csv")
     insights_returns(df_f, rr)
 
 
@@ -1694,12 +1800,13 @@ def show_data_table(df_filtered, t, selected_date):
     st.dataframe(df_filtered, width="stretch", height=600)
 
 
-def show_orders():
+def show_orders(t=None):
+    if t is None: t = translations.get("UA", {})
     df_orders = load_orders()
     if df_orders.empty: st.warning("⚠️ No orders data."); return
     st.sidebar.markdown("---"); st.sidebar.subheader("🛒 Orders Filters")
     min_date = df_orders['Order Date'].min().date(); max_date = df_orders['Order Date'].max().date()
-    date_range = st.sidebar.date_input("📅 Date Range:",value=(max_date-dt.timedelta(days=7),max_date),min_value=min_date,max_value=max_date)
+    date_range = st.sidebar.date_input(t["st_date_range"],value=(max_date-dt.timedelta(days=7),max_date),min_value=min_date,max_value=max_date)
     df_f = df_orders[(df_orders['Order Date'].dt.date>=date_range[0])&(df_orders['Order Date'].dt.date<=date_range[1])] if len(date_range)==2 else df_orders
     c1,c2,c3 = st.columns(3)
     c1.metric("📦 Orders",df_f['Order ID'].nunique()); c2.metric("💰 Revenue",f"${df_f['Total Price'].sum():,.2f}"); c3.metric("📦 Items",int(df_f['Quantity'].sum()))
@@ -2130,8 +2237,8 @@ if   report_choice == "🏠 Overview":                show_overview(df_filtered,
 elif report_choice == "📈 Sales & Traffic":          show_sales_traffic(t)
 elif report_choice == "🏦 Settlements (Payouts)":   show_settlements(t)
 elif report_choice == "💰 Inventory Value (CFO)":   show_inventory_finance(df_filtered, t)
-elif report_choice == "🛒 Orders Analytics":         show_orders()
-elif report_choice == "📦 Returns Analytics":        show_returns()
+elif report_choice == "🛒 Orders Analytics":         show_orders(t)
+elif report_choice == "📦 Returns Analytics":        show_returns(t)
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "🐢 Inventory Health (Aging)":show_aging(df_filtered, t)
 elif report_choice == "🧠 AI Forecast":              show_ai_forecast(df, t)
