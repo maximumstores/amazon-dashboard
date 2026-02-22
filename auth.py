@@ -413,14 +413,25 @@ def show_admin_panel():
                             st.markdown("**📊 Доступ до звітів:**")
                             current_perms = load_user_perms(uid)
                             available = [r for r in ALL_REPORTS if r != "🕷 Scraper Reviews"]
-                            selected = st.multiselect(
-                                "Оберіть звіти:",
-                                available,
-                                default=list(current_perms & set(available)),
-                                key=f"perms_{uid}"
-                            )
+                            all_key = f"all_{uid}"
+                            if f"sel_{uid}" not in st.session_state:
+                                st.session_state[f"sel_{uid}"] = list(current_perms & set(available))
+                            ca, cb = st.columns([1, 4])
+                            with ca:
+                                if st.button("✅ Всі", key=f"btn_all_{uid}", width="stretch"):
+                                    st.session_state[f"sel_{uid}"] = list(available)
+                                if st.button("❌ Жодного", key=f"btn_none_{uid}", width="stretch"):
+                                    st.session_state[f"sel_{uid}"] = []
+                            with cb:
+                                cols = st.columns(2)
+                                selected = []
+                                for i, rep in enumerate(available):
+                                    checked = rep in st.session_state[f"sel_{uid}"]
+                                    if cols[i % 2].checkbox(rep, value=checked, key=f"chk_{uid}_{i}"):
+                                        selected.append(rep)
                             if st.button("💾 Зберегти доступи", key=f"save_perms_{uid}", type="primary", width="stretch"):
                                 save_user_perms(uid, selected)
+                                st.session_state[f"sel_{uid}"] = selected
                                 st.success("Доступи оновлено!")
 
     # ── Створити юзера ──
@@ -440,12 +451,21 @@ def show_admin_panel():
             if new_role == "viewer":
                 st.markdown("**📊 Доступ до звітів:**")
                 available = [r for r in ALL_REPORTS if r != "🕷 Scraper Reviews"]
-                selected_reports = st.multiselect(
-                    "Оберіть звіти:",
-                    available,
-                    default=available,
-                    key="new_perms"
-                )
+                if "new_sel" not in st.session_state:
+                    st.session_state["new_sel"] = list(available)
+                ca, cb = st.columns([1, 4])
+                with ca:
+                    if st.button("✅ Всі", key="btn_all_new", width="stretch"):
+                        st.session_state["new_sel"] = list(available)
+                    if st.button("❌ Жодного", key="btn_none_new", width="stretch"):
+                        st.session_state["new_sel"] = []
+                with cb:
+                    cols = st.columns(2)
+                    selected_reports = []
+                    for i, rep in enumerate(available):
+                        checked = rep in st.session_state["new_sel"]
+                        if cols[i % 2].checkbox(rep, value=checked, key=f"new_chk_{i}"):
+                            selected_reports.append(rep)
 
             if st.button("✅ Створити", type="primary", width="stretch"):
                 if not new_email or not new_pass:
