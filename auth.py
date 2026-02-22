@@ -322,7 +322,7 @@ def show_login():
         tab_login, tab_reg = st.tabs([lt["tab_login"], lt["tab_reg"]])
 
         # ── Вхід ──
-        with tab_login:
+        if st.session_state.get("login_tab","login") == "login":
             email    = st.text_input(lt["email"], placeholder="your@email.com", key="login_email")
             password = st.text_input(lt["password"], type="password", key="login_password")
 
@@ -342,7 +342,7 @@ def show_login():
                         st.error(lt["err_wrong"])
 
         # ── Реєстрація ──
-        with tab_reg:
+        if st.session_state.get("login_tab","login") == "reg":
             st.caption(lt["reg_hint"])
             reg_name  = st.text_input(lt["name"], placeholder=lt["name_ph"], key="reg_name")
             reg_email = st.text_input(lt["email"], placeholder="your@email.com", key="reg_email")
