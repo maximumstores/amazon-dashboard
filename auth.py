@@ -281,42 +281,44 @@ def show_login():
         </div>
         """, unsafe_allow_html=True)
 
-        # ── Перемикач мови — мініатюрні кнопки ──
-        lang_now = st.session_state.login_lang
-        def _lang_btn(code, flag):
-            active = lang_now == code
-            bg = "#FF4B4B" if active else "transparent"
-            color = "#fff" if active else "#888"
-            border = "#FF4B4B" if active else "#ddd"
-            return f"""<a href="?_lang={code}" style="text-decoration:none">
-              <span style="background:{bg};color:{color};border:1px solid {border};
-                border-radius:12px;padding:2px 9px;font-size:11px;font-weight:600;
-                cursor:pointer;white-space:nowrap">{flag} {code}</span></a>"""
-
-        st.markdown(f"""
-        <div style="text-align:center;margin-bottom:14px;display:flex;justify-content:center;gap:6px">
-            {_lang_btn("UA","🇺🇦")}
-            {_lang_btn("RU","🇷🇺")}
-            {_lang_btn("EN","🇬🇧")}
-        </div>""", unsafe_allow_html=True)
-
-        # Fallback — реальні кнопки приховані але функціональні
-        hc1,hc2,hc3,hc4,hc5 = st.columns([4,1,1,1,4])
-        with hc2:
-            if st.button("UA", key="lang_ua", help="Українська"):
+        # ── Мова через приховані кнопки + CSS позиція в рядку з табами ──
+        tc1, tc2, tc3, tc4 = st.columns([6, 1, 1, 1])
+        with tc2:
+            if st.button("🇺🇦", key="lang_ua", help="Українська", type="primary" if st.session_state.login_lang=="UA" else "secondary"):
                 st.session_state.login_lang="UA"; st.rerun()
-        with hc3:
-            if st.button("RU", key="lang_ru", help="Русский"):
+        with tc3:
+            if st.button("🇷🇺", key="lang_ru", help="Русский", type="primary" if st.session_state.login_lang=="RU" else "secondary"):
                 st.session_state.login_lang="RU"; st.rerun()
-        with hc4:
-            if st.button("EN", key="lang_en", help="English"):
+        with tc4:
+            if st.button("🇬🇧", key="lang_en", help="English", type="primary" if st.session_state.login_lang=="EN" else "secondary"):
                 st.session_state.login_lang="EN"; st.rerun()
-        st.markdown("""<style>
-        button[data-testid="baseButton-secondary"]:has(div:contains("UA")),
-        button[data-testid="baseButton-secondary"]:has(div:contains("RU")),
-        button[data-testid="baseButton-secondary"]:has(div:contains("EN")) {
-            visibility:hidden; height:0; padding:0; margin:0; border:none;
-        }</style>""", unsafe_allow_html=True)
+        # CSS — підтягуємо кнопки вгору до рівня табів
+        st.markdown("""
+        <style>
+        /* Піднімаємо рядок з кнопками мов вгору щоб він зливався з табами */
+        div[data-testid="stHorizontalBlock"]:has(button[kind="primary"]) {
+            margin-top: -58px !important;
+            margin-bottom: 0 !important;
+        }
+        div[data-testid="stHorizontalBlock"] button {
+            border-radius: 50% !important;
+            width: 28px !important; height: 28px !important;
+            min-height: 28px !important;
+            padding: 0 !important;
+            font-size: 16px !important;
+            line-height: 28px !important;
+        }
+        div[data-testid="stHorizontalBlock"] button[kind="secondary"] {
+            border: none !important;
+            background: transparent !important;
+            opacity: 0.5 !important;
+        }
+        div[data-testid="stHorizontalBlock"] button[kind="primary"] {
+            background: transparent !important;
+            box-shadow: none !important;
+            opacity: 1 !important;
+        }
+        </style>""", unsafe_allow_html=True)
         tab_login, tab_reg = st.tabs([lt["tab_login"], lt["tab_reg"]])
 
         # ── Вхід ──
