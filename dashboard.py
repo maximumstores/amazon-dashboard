@@ -14,6 +14,7 @@ import numpy as np
 import datetime as dt
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+import bcrypt
 
 load_dotenv()
 
@@ -30,6 +31,271 @@ def get_engine():
         pool_timeout=10,
         pool_pre_ping=True,
     )
+
+# ============================================
+# AUTH SYSTEM
+# ============================================
+
+ROLE_ACCESS = {
+    "admin":   ["🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
+                "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
+                "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast",
+                "📋 FBA Inventory Table","🕷 Scraper Reviews","👤 User Management"],
+    "manager": ["🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
+                "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
+                "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast",
+                "📋 FBA Inventory Table"],
+    "viewer":  ["🏠 Overview","⭐ Amazon Reviews"],
+}
+
+def auth_get_conn():
+    from urllib.parse import urlparse
+    r = urlparse(DATABASE_URL)
+    return psycopg2.connect(
+        database=r.path[1:], user=r.username, password=r.password,
+        host=r.hostname, port=r.port, connect_timeout=10
+    )
+
+def auth_ensure_table():
+    try:
+        conn = auth_get_conn(); cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id            SERIAL PRIMARY KEY,
+                email         TEXT UNIQUE NOT NULL,
+                name          TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'viewer',
+                is_active     BOOLEAN DEFAULT TRUE,
+                created_at    TIMESTAMP DEFAULT NOW(),
+                last_login    TIMESTAMP
+            );
+        """)
+        conn.commit(); cur.close(); conn.close()
+    except Exception as e:
+        st.error(f"DB auth error: {e}")
+
+def auth_count_users():
+    try:
+        conn = auth_get_conn(); cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        n = cur.fetchone()[0]; cur.close(); conn.close(); return n
+    except: return 0
+
+def auth_get_user(email):
+    try:
+        conn = auth_get_conn(); cur = conn.cursor()
+        cur.execute("SELECT id,email,name,password_hash,role,is_active FROM users WHERE email=%s", (email.lower().strip(),))
+        row = cur.fetchone(); cur.close(); conn.close()
+        if row:
+            return {"id":row[0],"email":row[1],"name":row[2],"password_hash":row[3],"role":row[4],"is_active":row[5]}
+        return None
+    except: return None
+
+def auth_create_user(email, name, password, role="viewer"):
+    try:
+        pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        conn = auth_get_conn(); cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO users (email,name,password_hash,role) VALUES (%s,%s,%s,%s)",
+            (email.lower().strip(), name.strip(), pw_hash, role)
+        )
+        conn.commit(); cur.close(); conn.close(); return True
+    except: return False
+
+def auth_verify_password(password, pw_hash):
+    try: return bcrypt.checkpw(password.encode(), pw_hash.encode())
+    except: return False
+
+def auth_update_last_login(user_id):
+    try:
+        conn = auth_get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE users SET last_login=NOW() WHERE id=%s", (user_id,))
+        conn.commit(); cur.close(); conn.close()
+    except: pass
+
+def auth_get_all_users():
+    try:
+        conn = auth_get_conn(); cur = conn.cursor()
+        cur.execute("SELECT id,email,name,role,is_active,created_at,last_login FROM users ORDER BY created_at DESC")
+        rows = cur.fetchall(); cur.close(); conn.close()
+        return [{"id":r[0],"email":r[1],"name":r[2],"role":r[3],"is_active":r[4],
+                 "created_at":r[5],"last_login":r[6]} for r in rows]
+    except: return []
+
+def auth_update_user(user_id, role, is_active):
+    try:
+        conn = auth_get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE users SET role=%s, is_active=%s WHERE id=%s", (role, is_active, user_id))
+        conn.commit(); cur.close(); conn.close(); return True
+    except: return False
+
+def auth_delete_user(user_id):
+    try:
+        conn = auth_get_conn(); cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
+        conn.commit(); cur.close(); conn.close(); return True
+    except: return False
+
+def auth_reset_password(user_id, new_password):
+    try:
+        pw_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+        conn = auth_get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE users SET password_hash=%s WHERE id=%s", (pw_hash, user_id))
+        conn.commit(); cur.close(); conn.close(); return True
+    except: return False
+
+# ── Login / Register page ──────────────────
+
+def show_auth_page():
+    auth_ensure_table()
+
+    st.markdown("""
+    <div style="max-width:420px;margin:60px auto 0">
+    <h2 style="text-align:center;color:#fff">📦 Amazon FBA BI</h2>
+    </div>""", unsafe_allow_html=True)
+
+    is_first = auth_count_users() == 0
+    if is_first:
+        st.info("👋 Перший запуск — створіть акаунт адміністратора")
+
+    col, _ = st.columns([1.2, 1])
+    with col:
+        tab_login, tab_reg = (st.tabs(["🔐 Вхід", "📝 Реєстрація"])
+                              if is_first else (st.tabs(["🔐 Вхід"]) + [None]))
+
+        with tab_login:
+            st.markdown("#### Вхід")
+            email_in = st.text_input("Email", key="login_email")
+            pass_in  = st.text_input("Пароль", type="password", key="login_pass")
+            if st.button("Увійти", type="primary", width="stretch"):
+                if not email_in or not pass_in:
+                    st.error("Заповніть email і пароль")
+                else:
+                    user = auth_get_user(email_in)
+                    if not user:
+                        st.error("Користувача не знайдено")
+                    elif not user["is_active"]:
+                        st.error("Акаунт деактивовано. Зверніться до адміна.")
+                    elif not auth_verify_password(pass_in, user["password_hash"]):
+                        st.error("Невірний пароль")
+                    else:
+                        auth_update_last_login(user["id"])
+                        st.session_state.auth_user = user
+                        st.rerun()
+
+        if tab_reg and is_first:
+            with tab_reg:
+                st.markdown("#### Реєстрація адміна")
+                r_name  = st.text_input("Ім'я", key="reg_name")
+                r_email = st.text_input("Email", key="reg_email")
+                r_pass  = st.text_input("Пароль (мін. 6 символів)", type="password", key="reg_pass")
+                r_pass2 = st.text_input("Повторіть пароль", type="password", key="reg_pass2")
+                if st.button("Створити акаунт", type="primary", width="stretch"):
+                    if not r_name or not r_email or not r_pass:
+                        st.error("Заповніть всі поля")
+                    elif len(r_pass) < 6:
+                        st.error("Пароль мінімум 6 символів")
+                    elif r_pass != r_pass2:
+                        st.error("Паролі не співпадають")
+                    elif "@" not in r_email:
+                        st.error("Невірний email")
+                    else:
+                        role = "admin"  # first user = admin
+                        if auth_create_user(r_email, r_name, r_pass, role):
+                            st.success("✅ Акаунт створено! Тепер увійдіть.")
+                        else:
+                            st.error("Помилка створення акаунту (email вже існує?)")
+
+# ── User Management (admin only) ───────────
+
+def show_user_management():
+    st.markdown("## 👤 User Management")
+    user = st.session_state.auth_user
+
+    # ── Створити нового юзера ──
+    with st.expander("➕ Створити нового користувача", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            new_name  = st.text_input("Ім'я", key="um_name")
+            new_email = st.text_input("Email", key="um_email")
+        with c2:
+            new_role  = st.selectbox("Роль", ["viewer","manager","admin"], key="um_role")
+            new_pass  = st.text_input("Пароль", type="password", key="um_pass")
+        if st.button("💾 Створити", type="primary"):
+            if not new_name or not new_email or not new_pass:
+                st.error("Заповніть всі поля")
+            elif len(new_pass) < 6:
+                st.error("Пароль мінімум 6 символів")
+            elif auth_create_user(new_email, new_name, new_pass, new_role):
+                st.success(f"✅ Користувача {new_name} ({new_role}) створено!")
+                st.rerun()
+            else:
+                st.error("Помилка (email вже існує?)")
+
+    st.markdown("---")
+    st.markdown("### 📋 Всі користувачі")
+
+    users = auth_get_all_users()
+    if not users:
+        st.info("Немає користувачів"); return
+
+    role_colors = {"admin":"#AB47BC","manager":"#4472C4","viewer":"#4CAF50"}
+    for u in users:
+        is_me = u["id"] == user["id"]
+        r_color = role_colors.get(u["role"],"#888")
+        last_login_str = u["last_login"].strftime("%d.%m.%Y %H:%M") if u["last_login"] else "ніколи"
+        created_str    = u["created_at"].strftime("%d.%m.%Y") if u["created_at"] else ""
+        status_color   = "#4CAF50" if u["is_active"] else "#555"
+        status_txt     = "● Активний" if u["is_active"] else "○ Деактивовано"
+
+        with st.container():
+            card_col, edit_col = st.columns([4, 2])
+            with card_col:
+                st.markdown(f"""
+                <div style="background:#1e1e2e;border-left:4px solid {r_color};
+                            border-radius:8px;padding:12px 16px;margin-bottom:6px">
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <div>
+                      <span style="font-size:16px;font-weight:700;color:#fff">{u['name']}</span>
+                      {"<span style='color:#888;font-size:12px;margin-left:8px'>(ви)</span>" if is_me else ""}
+                    </div>
+                    <span style="color:{status_color};font-size:12px">{status_txt}</span>
+                  </div>
+                  <div style="color:#888;font-size:13px;margin-top:4px">{u['email']}</div>
+                  <div style="display:flex;gap:16px;margin-top:6px;font-size:12px">
+                    <span style="background:{r_color}22;color:{r_color};padding:2px 8px;border-radius:4px;font-weight:700">{u['role'].upper()}</span>
+                    <span style="color:#666">🕐 {last_login_str}</span>
+                    <span style="color:#444">📅 {created_str}</span>
+                  </div>
+                </div>""", unsafe_allow_html=True)
+
+            with edit_col:
+                if not is_me:
+                    st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
+                    new_r = st.selectbox("Роль", ["viewer","manager","admin"],
+                                         index=["viewer","manager","admin"].index(u["role"]),
+                                         key=f"role_{u['id']}")
+                    new_a = st.toggle("Активний", value=u["is_active"], key=f"active_{u['id']}")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("💾", key=f"save_{u['id']}", help="Зберегти"):
+                            auth_update_user(u["id"], new_r, new_a)
+                            st.rerun()
+                    with c2:
+                        if st.button("🗑", key=f"del_{u['id']}", help="Видалити"):
+                            auth_delete_user(u["id"])
+                            st.rerun()
+
+                    # Reset password
+                    with st.expander("🔑 Скинути пароль"):
+                        np_ = st.text_input("Новий пароль", type="password", key=f"np_{u['id']}")
+                        if st.button("Змінити", key=f"chpw_{u['id']}"):
+                            if len(np_) >= 6:
+                                auth_reset_password(u["id"], np_)
+                                st.success("✅ Пароль змінено")
+                            else:
+                                st.error("Мін. 6 символів")
 
 translations = {
     "UA": {
@@ -2007,6 +2273,32 @@ def show_scraper_manager():
 # MAIN
 # ============================================
 
+# ── Auth init ──
+auth_ensure_table()
+if "auth_user" not in st.session_state:
+    st.session_state.auth_user = None
+
+# ── Not logged in → show auth page ──
+if not st.session_state.auth_user:
+    show_auth_page()
+    st.stop()
+
+# ── Logged in ──
+current_user = st.session_state.auth_user
+user_role    = current_user["role"]
+allowed      = ROLE_ACCESS.get(user_role, [])
+
+# Sidebar: user info + logout
+st.sidebar.markdown(f"""
+<div style="background:#1e1e2e;border-radius:8px;padding:10px 14px;margin-bottom:8px">
+  <div style="font-size:14px;font-weight:700;color:#fff">{current_user['name']}</div>
+  <div style="font-size:12px;color:#888">{current_user['email']}</div>
+  <div style="font-size:11px;color:#AB47BC;margin-top:4px;font-weight:600">{user_role.upper()}</div>
+</div>""", unsafe_allow_html=True)
+if st.sidebar.button("🚪 Вийти", width="stretch"):
+    st.session_state.auth_user = None
+    st.rerun()
+
 if 'report_choice' not in st.session_state:
     st.session_state.report_choice = "🏠 Overview"
 
@@ -2039,13 +2331,19 @@ else:
 
 st.sidebar.markdown("---")
 st.sidebar.header("📊 Reports")
-report_options = [
+
+# Only show reports allowed for this role
+report_options = [r for r in [
     "🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
     "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
     "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast",
-    "📋 FBA Inventory Table","🕷 Scraper Reviews"
-]
-current_index = report_options.index(st.session_state.report_choice) if st.session_state.report_choice in report_options else 0
+    "📋 FBA Inventory Table","🕷 Scraper Reviews","👤 User Management"
+] if r in allowed]
+
+if st.session_state.report_choice not in report_options:
+    st.session_state.report_choice = report_options[0]
+
+current_index = report_options.index(st.session_state.report_choice)
 report_choice = st.sidebar.radio("Select Report:", report_options, index=current_index)
 st.session_state.report_choice = report_choice
 
@@ -2060,6 +2358,7 @@ elif report_choice == "🐢 Inventory Health (Aging)":show_aging(df_filtered, t)
 elif report_choice == "🧠 AI Forecast":              show_ai_forecast(df, t)
 elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filtered, t, selected_date)
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
+elif report_choice == "👤 User Management":          show_user_management()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v4.8 🌍")
+st.sidebar.caption("📦 Amazon FBA BI System v4.9 🌍")
