@@ -279,18 +279,7 @@ def show_login():
         </div>
         """, unsafe_allow_html=True)
 
-        # ── Мова через приховані кнопки + CSS позиція в рядку з табами ──
-        tc1, tc2, tc3, tc4 = st.columns([6, 1, 1, 1])
-        with tc2:
-            if st.button("🇺🇦", key="lang_ua", help="Українська", type="primary" if st.session_state.login_lang=="UA" else "secondary"):
-                st.session_state.login_lang="UA"; st.rerun()
-        with tc3:
-            if st.button("🇷🇺", key="lang_ru", help="Русский", type="primary" if st.session_state.login_lang=="RU" else "secondary"):
-                st.session_state.login_lang="RU"; st.rerun()
-        with tc4:
-            if st.button("🇬🇧", key="lang_en", help="English", type="primary" if st.session_state.login_lang=="EN" else "secondary"):
-                st.session_state.login_lang="EN"; st.rerun()
-        # CSS — підтягуємо кнопки вгору до рівня табів
+        # ── CSS ──
         st.markdown("""
         <style>
         /* Піднімаємо рядок з кнопками мов вгору щоб він зливався з табами */
