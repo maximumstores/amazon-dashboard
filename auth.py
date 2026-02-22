@@ -345,25 +345,21 @@ def show_admin_panel():
             last_str     = last_login.strftime("%d.%m.%Y %H:%M") if last_login else "ніколи"
             created_str  = created_at.strftime("%d.%m.%Y") if created_at else ""
 
-            with st.container():
-                st.markdown(f"""
-                <div style="background:#1e1e2e;border-left:4px solid {status_color};
-                            border-radius:8px;padding:12px 16px;margin-bottom:4px">
-                  <div style="display:flex;justify-content:space-between;align-items:center">
-                    <div>
-                      <span style="font-size:16px;font-weight:800;color:#fff">{name or email}</span>
-                      <span style="color:#888;font-size:12px;margin-left:10px">{email}</span>
-                      {" <span style='color:#aaa;font-size:11px'>(це ви)</span>" if is_self else ""}
-                    </div>
-                    <div style="display:flex;gap:16px;align-items:center">
-                      <span style="color:{role_color};font-size:13px;font-weight:700">{role.upper()}</span>
-                      <span style="color:{status_color};font-size:12px">{status_text}</span>
-                    </div>
-                  </div>
-                  <div style="font-size:11px;color:#555;margin-top:6px">
-                    📅 Зареєстрований: {created_str} · 🕐 Останній вхід: {last_str}
-                  </div>
-                </div>""", unsafe_allow_html=True)
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
+                with c1:
+                    self_label = " *(це ви)*" if is_self else ""
+                    display_name = name or "—"
+                    st.markdown(f"**{display_name}**{self_label}")
+                    st.caption(email)
+                with c2:
+                    st.markdown(f"**Роль:** `{role.upper()}`")
+                with c3:
+                    status_icon = "🟢 Активний" if is_active else "🔴 Вимкнений"
+                    st.markdown(f"**Статус:** {status_icon}")
+                with c4:
+                    st.caption(f"📅 {created_str}")
+                    st.caption(f"🕐 {last_str}")
 
                 # Управління (не для себе)
                 if not is_self:
@@ -447,7 +443,7 @@ def show_admin_panel():
                 selected_reports = st.multiselect(
                     "Оберіть звіти:",
                     available,
-                    default=["🏠 Overview", "⭐ Amazon Reviews"],
+                    default=available,
                     key="new_perms"
                 )
 
