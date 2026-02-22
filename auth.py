@@ -264,40 +264,30 @@ def show_login():
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        # ── Перемикач мови ──
-        lang = st.session_state.login_lang
-        st.markdown(f"""
-        <div style="display:flex;justify-content:center;gap:8px;margin-bottom:8px">
-          <a href="?lang=UA" onclick="return false;"
-             style="text-decoration:none">
-          </a>
-        </div>
-        """, unsafe_allow_html=True)
-        lc1, lc2, lc3, lc4 = st.columns([2, 1, 1, 1])
-        with lc2:
-            active = st.session_state.login_lang == "UA"
-            if st.button("🇺🇦  UA", width="stretch", type="primary" if active else "secondary", key="lang_ua"):
-                st.session_state.login_lang = "UA"; st.rerun()
-        with lc3:
-            active = st.session_state.login_lang == "RU"
-            if st.button("🇷🇺  RU", width="stretch", type="primary" if active else "secondary", key="lang_ru"):
-                st.session_state.login_lang = "RU"; st.rerun()
-        with lc4:
-            active = st.session_state.login_lang == "EN"
-            if st.button("🇬🇧  EN", width="stretch", type="primary" if active else "secondary", key="lang_en"):
-                st.session_state.login_lang = "EN"; st.rerun()
-
         lt = LOGIN_T[st.session_state.login_lang]
 
         # ── Логотип ──
         st.markdown(f"""
-        <div style="text-align:center;margin-bottom:24px;margin-top:12px">
+        <div style="text-align:center;margin-bottom:8px;margin-top:12px">
             <img src="https://merino.tech/cdn/shop/files/MT_logo_1.png?v=1685099753&width=260"
-                 style="max-width:180px;margin-bottom:12px">
-            <div style="font-size:13px;color:#888">{lt["subtitle"]}</div>
+                 style="max-width:160px;margin-bottom:8px">
+            <div style="font-size:12px;color:#aaa;margin-bottom:12px">{lt["subtitle"]}</div>
         </div>
         """, unsafe_allow_html=True)
 
+        # ── Перемикач мови — під логотипом ──
+        lc1, lc2, lc3, lc4, lc5 = st.columns([2, 1, 1, 1, 2])
+        with lc2:
+            if st.button("🇺🇦 UA", width="stretch", type="primary" if st.session_state.login_lang == "UA" else "secondary", key="lang_ua"):
+                st.session_state.login_lang = "UA"; st.rerun()
+        with lc3:
+            if st.button("🇷🇺 RU", width="stretch", type="primary" if st.session_state.login_lang == "RU" else "secondary", key="lang_ru"):
+                st.session_state.login_lang = "RU"; st.rerun()
+        with lc4:
+            if st.button("🇬🇧 EN", width="stretch", type="primary" if st.session_state.login_lang == "EN" else "secondary", key="lang_en"):
+                st.session_state.login_lang = "EN"; st.rerun()
+
+        st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
         tab_login, tab_reg = st.tabs([lt["tab_login"], lt["tab_reg"]])
 
         # ── Вхід ──
