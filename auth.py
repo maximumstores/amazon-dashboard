@@ -228,18 +228,26 @@ def show_login():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         # ── Перемикач мови ──
-        lc1, lc2, lc3, lc4 = st.columns([3, 1, 1, 1])
+        lang = st.session_state.login_lang
+        st.markdown(f"""
+        <div style="display:flex;justify-content:center;gap:8px;margin-bottom:8px">
+          <a href="?lang=UA" onclick="return false;"
+             style="text-decoration:none">
+          </a>
+        </div>
+        """, unsafe_allow_html=True)
+        lc1, lc2, lc3, lc4 = st.columns([2, 1, 1, 1])
         with lc2:
-            if st.button("🇺🇦 UA", width="stretch",
-                         type="primary" if st.session_state.login_lang == "UA" else "secondary"):
+            active = st.session_state.login_lang == "UA"
+            if st.button("🇺🇦  UA", width="stretch", type="primary" if active else "secondary", key="lang_ua"):
                 st.session_state.login_lang = "UA"; st.rerun()
         with lc3:
-            if st.button("🇷🇺 RU", width="stretch",
-                         type="primary" if st.session_state.login_lang == "RU" else "secondary"):
+            active = st.session_state.login_lang == "RU"
+            if st.button("🇷🇺  RU", width="stretch", type="primary" if active else "secondary", key="lang_ru"):
                 st.session_state.login_lang = "RU"; st.rerun()
         with lc4:
-            if st.button("🇬🇧 EN", width="stretch",
-                         type="primary" if st.session_state.login_lang == "EN" else "secondary"):
+            active = st.session_state.login_lang == "EN"
+            if st.button("🇬🇧  EN", width="stretch", type="primary" if active else "secondary", key="lang_en"):
                 st.session_state.login_lang = "EN"; st.rerun()
 
         lt = LOGIN_T[st.session_state.login_lang]
