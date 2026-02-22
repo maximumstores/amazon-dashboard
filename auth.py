@@ -317,10 +317,22 @@ def show_login():
             opacity: 1 !important;
         }
         </style>""", unsafe_allow_html=True)
-        tab_login, tab_reg = st.tabs([lt["tab_login"], lt["tab_reg"]])
+        # ── Таби ──
+        if "login_tab" not in st.session_state:
+            st.session_state["login_tab"] = "login"
+        c1, c2, _ = st.columns([2, 2, 3])
+        with c1:
+            if st.button(lt["tab_login"], key="tab_login_btn", width="stretch",
+                         type="primary" if st.session_state["login_tab"]=="login" else "secondary"):
+                st.session_state["login_tab"] = "login"; st.rerun()
+        with c2:
+            if st.button(lt["tab_reg"], key="tab_reg_btn", width="stretch",
+                         type="primary" if st.session_state["login_tab"]=="reg" else "secondary"):
+                st.session_state["login_tab"] = "reg"; st.rerun()
+        st.markdown("---")
 
         # ── Вхід ──
-        if st.session_state.login_tab == "login":
+        if st.session_state["login_tab"] == "login":
             email    = st.text_input(lt["email"], placeholder="your@email.com", key="login_email")
             password = st.text_input(lt["password"], type="password", key="login_password")
 
@@ -340,7 +352,7 @@ def show_login():
                         st.error(lt["err_wrong"])
 
         # ── Реєстрація ──
-        if st.session_state.login_tab == "reg":
+        if st.session_state["login_tab"] == "reg":
             st.caption(lt["reg_hint"])
             reg_name  = st.text_input(lt["name"], placeholder=lt["name_ph"], key="reg_name")
             reg_email = st.text_input(lt["email"], placeholder="your@email.com", key="reg_email")
