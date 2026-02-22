@@ -1137,9 +1137,12 @@ def show_asin_links_table(df, has_domain):
     with sel_col:
         chosen = st.selectbox(t["rev_goto_asin"], [t["rev_not_selected"]] + asin_list,
                               key="asin_table_jump")
-    if chosen and chosen != "— не вибрано —":
-        row = table_df[table_df['ASIN'] == chosen].iloc[0]
-        return chosen, row['_domain']
+    not_selected_values = {"— не вибрано —", "— not selected —", "— не выбрано —"}
+    if chosen and chosen not in not_selected_values:
+        matched = table_df[table_df['ASIN'] == chosen]
+        if not matched.empty:
+            row = matched.iloc[0]
+            return chosen, row['_domain']
 
     return None, None
 
