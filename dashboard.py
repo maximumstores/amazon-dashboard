@@ -26,7 +26,9 @@ if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
 def get_engine():
     return create_engine(
         DATABASE_URL,
-        connect_args={"options": "-csearch_path=spapi,public"}
+        connect_args={"options": "-csearch_path=spapi,public", "connect_timeout": 10},
+        pool_timeout=10,
+        pool_pre_ping=True,
     )
 
 translations = {
@@ -254,7 +256,7 @@ def load_sales_traffic():
         db_url = db_url.replace("postgres://", "postgresql://", 1)
     conn = None
     try:
-        conn = psycopg2.connect(db_url)
+        conn = psycopg2.connect(db_url, connect_timeout=10)
         cur  = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         cur.execute("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC")
         rows    = cur.fetchall()
@@ -1707,7 +1709,7 @@ def _scr_get_conn():
     r = urlparse(DATABASE_URL)
     return psycopg2.connect(
         database=r.path[1:], user=r.username, password=r.password,
-        host=r.hostname, port=r.port
+        host=r.hostname, port=r.port, connect_timeout=10
     )
 
 
@@ -1899,12 +1901,8 @@ def show_scraper_manager():
         key="scr_urls_input"
     )
 
-    c1, c2, c3 = st.columns([2, 2, 1])
-    with c1:
-        max_per_star = st.slider(
-            "Max відгуків на ⭐:", 10, 200, 100, 10,
-            disabled=st.session_state.scr_running
-        )
+    max_per_star = 100  # Amazon limit
+    c2, c3 = st.columns([3, 1])
     with c2:
         loop_mode = st.toggle(
             "🔄 Нескінченний цикл (пауза 30 хв між проходами)",
