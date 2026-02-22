@@ -139,20 +139,47 @@ def can_view(report: str) -> bool:
 
 # ─── LOGIN FORM ───────────────────────────────────────────────────────────────
 
+def _register_user(email: str, name: str, password: str) -> tuple:
+    """Реєстрація нового юзера (role=viewer, is_active=False — чекає підтвердження адміна)."""
+    if not email or "@" not in email:
+        return False, "Невірний email"
+    if not name or len(name.strip()) < 2:
+        return False, "Введіть ім'я (мін. 2 символи)"
+    if not password or len(password) < 6:
+        return False, "Пароль мінімум 6 символів"
+    try:
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO users (email, password, name, role, is_active)
+            VALUES (%s, %s, %s, 'viewer', FALSE)
+        """, (email.strip().lower(), hashed, name.strip()))
+        conn.commit(); cur.close(); conn.close()
+        return True, "OK"
+    except Exception as e:
+        err = str(e)
+        if "unique" in err.lower() or "duplicate" in err.lower():
+            return False, "Цей email вже зареєстрований"
+        return False, f"Помилка: {err}"
+
+
 def show_login():
-    """Відображає форму входу."""
+    """Відображає форму входу + реєстрації."""
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        # ── Логотип ──
         st.markdown("""
-        <div style="text-align:center;margin-bottom:32px">
-            <div style="font-size:48px">📦</div>
-            <div style="font-size:24px;font-weight:800;color:#fff">Amazon FBA Dashboard</div>
-            <div style="font-size:14px;color:#888;margin-top:4px">Business Intelligence Hub</div>
+        <div style="text-align:center;margin-bottom:24px;margin-top:20px">
+            <img src="https://merino.tech/cdn/shop/files/MT_logo_1.png?v=1685099753&width=260"
+                 style="max-width:180px;margin-bottom:12px">
+            <div style="font-size:13px;color:#888">Business Intelligence Hub</div>
         </div>
         """, unsafe_allow_html=True)
 
-        with st.container(border=True):
-            st.markdown("### 🔐 Вхід")
+        tab_login, tab_reg = st.tabs(["🔐 Вхід", "📝 Реєстрація"])
+
+        # ── Вхід ──
+        with tab_login:
             email    = st.text_input("📧 Email", placeholder="your@email.com", key="login_email")
             password = st.text_input("🔑 Пароль", type="password", key="login_password")
 
@@ -167,10 +194,27 @@ def show_login():
                             st.session_state.permissions = get_user_permissions(user["id"])
                         else:
                             st.session_state.permissions = set(ALL_REPORTS)
-                        st.success(f"Ласкаво просимо, {user['name'] or user['email']}!")
                         st.rerun()
                     else:
                         st.error("❌ Невірний email або пароль")
+
+        # ── Реєстрація ──
+        with tab_reg:
+            st.caption("Після реєстрації адмін активує ваш акаунт")
+            reg_name  = st.text_input("👤 Ім'я", placeholder="Ваше ім'я", key="reg_name")
+            reg_email = st.text_input("📧 Email", placeholder="your@email.com", key="reg_email")
+            reg_pass  = st.text_input("🔑 Пароль", type="password", key="reg_pass")
+            reg_pass2 = st.text_input("🔑 Повторіть пароль", type="password", key="reg_pass2")
+
+            if st.button("Зареєструватись", type="primary", width="stretch"):
+                if reg_pass != reg_pass2:
+                    st.error("Паролі не співпадають")
+                else:
+                    ok, msg = _register_user(reg_email, reg_name, reg_pass)
+                    if ok:
+                        st.success("✅ Заявку надіслано! Очікуйте активації адміністратором.")
+                    else:
+                        st.error(f"❌ {msg}")
 
 
 def logout():
