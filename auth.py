@@ -220,144 +220,53 @@ LOGIN_T = {
 
 
 def show_login():
-    """Відображає форму входу + реєстрації."""
-    # ── Мова ──
-
-    # ── Глобальний CSS для сторінки логіну ──
-    st.markdown("""
-    <style>
-    /* Кнопки мов — pill стиль */
-    div[data-testid="stHorizontalBlock"] button[kind="secondary"] {
-        border-radius: 20px !important;
-        border: 1.5px solid #ddd !important;
-        color: #555 !important;
-        font-weight: 500 !important;
-        font-size: 11px !important;
-        padding: 2px 8px !important;
-        min-height: 28px !important;
-        height: 28px !important;
-    }
-    div[data-testid="stHorizontalBlock"] button[kind="primary"] {
-        border-radius: 20px !important;
-        font-weight: 700 !important;
-        font-size: 11px !important;
-        padding: 2px 8px !important;
-        min-height: 28px !important;
-        height: 28px !important;
-    }
-    /* Кнопка Увійти */
-    div[data-testid="stVerticalBlock"] button[kind="primary"] {
-        border-radius: 10px !important;
-        font-size: 16px !important;
-        font-weight: 700 !important;
-        letter-spacing: 0.5px !important;
-    }
-    /* Таби */
-    div[data-testid="stTabs"] button {
-        font-size: 15px !important;
-        font-weight: 600 !important;
-        padding: 8px 20px !important;
-    }
-    /* Поля вводу */
-    div[data-testid="stTextInput"] input {
-        border-radius: 8px !important;
-        font-size: 15px !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        lt = LOGIN_T["UA"]
-
-        # ── Логотип ──
-        st.markdown(f"""
-        <div style="text-align:center;margin-bottom:8px;margin-top:12px">
+        # Логотип
+        st.markdown("""
+        <div style="text-align:center;padding:32px 0 20px">
             <img src="https://merino.tech/cdn/shop/files/MT_logo_1.png?v=1685099753&width=260"
-                 style="max-width:220px;margin-bottom:8px">
-            <div style="font-size:12px;color:#aaa;margin-bottom:12px">{lt["subtitle"]}</div>
+                 style="max-width:220px">
+            <div style="font-size:12px;color:#aaa;margin-top:8px">Business Intelligence Hub</div>
         </div>
         """, unsafe_allow_html=True)
 
-        # ── CSS ──
-        st.markdown("""
-        <style>
-        /* Піднімаємо рядок з кнопками мов вгору щоб він зливався з табами */
-        div[data-testid="stHorizontalBlock"]:has(button[kind="primary"]) {
-            margin-top: -58px !important;
-            margin-bottom: 0 !important;
-        }
-        div[data-testid="stHorizontalBlock"] button {
-            border-radius: 50% !important;
-            width: 28px !important; height: 28px !important;
-            min-height: 28px !important;
-            padding: 0 !important;
-            font-size: 16px !important;
-            line-height: 28px !important;
-        }
-        div[data-testid="stHorizontalBlock"] button[kind="secondary"] {
-            border: none !important;
-            background: transparent !important;
-            opacity: 0.5 !important;
-        }
-        div[data-testid="stHorizontalBlock"] button[kind="primary"] {
-            background: transparent !important;
-            box-shadow: none !important;
-            opacity: 1 !important;
-        }
-        </style>""", unsafe_allow_html=True)
-        # ── Таби ──
-        if "login_tab" not in st.session_state:
-            st.session_state["login_tab"] = "login"
-        c1, c2, _ = st.columns([2, 2, 3])
-        with c1:
-            if st.button(lt["tab_login"], key="tab_login_btn", width="stretch",
-                         type="primary" if st.session_state["login_tab"]=="login" else "secondary"):
-                st.session_state["login_tab"] = "login"; st.rerun()
-        with c2:
-            if st.button(lt["tab_reg"], key="tab_reg_btn", width="stretch",
-                         type="primary" if st.session_state["login_tab"]=="reg" else "secondary"):
-                st.session_state["login_tab"] = "reg"; st.rerun()
-        st.markdown("---")
+        # Таби
+        tab_login, tab_reg = st.tabs(["🔐 Вхід", "📝 Реєстрація"])
 
-        # ── Вхід ──
-        if st.session_state["login_tab"] == "login":
-            email    = st.text_input(lt["email"], placeholder="your@email.com", key="login_email")
-            password = st.text_input(lt["password"], type="password", key="login_password")
-
-            if st.button(lt["btn_login"], type="primary", width="stretch"):
+        with tab_login:
+            email    = st.text_input("📧 Email", placeholder="your@email.com", key="login_email")
+            password = st.text_input("🔑 Пароль", type="password", key="login_password")
+            if st.button("Увійти →", type="primary", width="stretch"):
                 if not email or not password:
-                    st.error(lt["err_empty"])
+                    st.error("Введіть email і пароль")
                 else:
                     user = verify_login(email, password)
                     if user:
                         st.session_state.user = user
-                        if user["role"] != "admin":
-                            st.session_state.permissions = get_user_permissions(user["id"])
-                        else:
-                            st.session_state.permissions = set(ALL_REPORTS)
+                        st.session_state.permissions = (
+                            set(ALL_REPORTS) if user["role"] == "admin"
+                            else get_user_permissions(user["id"])
+                        )
                         st.rerun()
                     else:
-                        st.error(lt["err_wrong"])
+                        st.error("❌ Невірний email або пароль")
 
-        # ── Реєстрація ──
-        if st.session_state["login_tab"] == "reg":
-            st.caption(lt["reg_hint"])
-            reg_name  = st.text_input(lt["name"], placeholder=lt["name_ph"], key="reg_name")
-            reg_email = st.text_input(lt["email"], placeholder="your@email.com", key="reg_email")
-            reg_pass  = st.text_input(lt["password"], type="password", key="reg_pass")
-            reg_pass2 = st.text_input(lt["pass2"], type="password", key="reg_pass2")
-
-            if st.button(lt["btn_reg"], type="primary", width="stretch"):
+        with tab_reg:
+            st.caption("Після реєстрації адмін активує ваш акаунт")
+            reg_name  = st.text_input("👤 Ім'я", placeholder="Ваше ім'я", key="reg_name")
+            reg_email = st.text_input("📧 Email", placeholder="your@email.com", key="reg_email")
+            reg_pass  = st.text_input("🔑 Пароль", type="password", key="reg_pass")
+            reg_pass2 = st.text_input("🔑 Повторіть пароль", type="password", key="reg_pass2")
+            if st.button("Зареєструватись", type="primary", width="stretch"):
                 if reg_pass != reg_pass2:
-                    st.error(lt["err_pass"])
+                    st.error("Паролі не співпадають")
                 else:
                     ok, msg = _register_user(reg_email, reg_name, reg_pass)
                     if ok:
-                        st.success(lt["ok_reg"])
+                        st.success("✅ Заявку надіслано! Очікуйте активації адміністратором.")
                     else:
                         st.error(f"❌ {msg}")
-
 
 def logout():
     """Вихід з системи."""
