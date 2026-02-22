@@ -163,29 +163,106 @@ def _register_user(email: str, name: str, password: str) -> tuple:
         return False, f"Помилка: {err}"
 
 
+# ── Login translations ──
+LOGIN_T = {
+    "UA": {
+        "subtitle": "Business Intelligence Hub",
+        "tab_login": "🔐 Вхід",
+        "tab_reg": "📝 Реєстрація",
+        "email": "📧 Email",
+        "password": "🔑 Пароль",
+        "btn_login": "Увійти →",
+        "err_empty": "Введіть email і пароль",
+        "err_wrong": "❌ Невірний email або пароль",
+        "reg_hint": "Після реєстрації адмін активує ваш акаунт",
+        "name": "👤 Ім'я",
+        "name_ph": "Ваше ім'я",
+        "pass2": "🔑 Повторіть пароль",
+        "btn_reg": "Зареєструватись",
+        "err_pass": "Паролі не співпадають",
+        "ok_reg": "✅ Заявку надіслано! Очікуйте активації адміністратором.",
+    },
+    "RU": {
+        "subtitle": "Business Intelligence Hub",
+        "tab_login": "🔐 Вход",
+        "tab_reg": "📝 Регистрация",
+        "email": "📧 Email",
+        "password": "🔑 Пароль",
+        "btn_login": "Войти →",
+        "err_empty": "Введите email и пароль",
+        "err_wrong": "❌ Неверный email или пароль",
+        "reg_hint": "После регистрации админ активирует ваш аккаунт",
+        "name": "👤 Имя",
+        "name_ph": "Ваше имя",
+        "pass2": "🔑 Повторите пароль",
+        "btn_reg": "Зарегистрироваться",
+        "err_pass": "Пароли не совпадают",
+        "ok_reg": "✅ Заявка отправлена! Ожидайте активации администратором.",
+    },
+    "EN": {
+        "subtitle": "Business Intelligence Hub",
+        "tab_login": "🔐 Login",
+        "tab_reg": "📝 Register",
+        "email": "📧 Email",
+        "password": "🔑 Password",
+        "btn_login": "Login →",
+        "err_empty": "Enter email and password",
+        "err_wrong": "❌ Invalid email or password",
+        "reg_hint": "After registration, admin will activate your account",
+        "name": "👤 Name",
+        "name_ph": "Your name",
+        "pass2": "🔑 Repeat password",
+        "btn_reg": "Register",
+        "err_pass": "Passwords don't match",
+        "ok_reg": "✅ Request sent! Wait for admin activation.",
+    },
+}
+
+
 def show_login():
     """Відображає форму входу + реєстрації."""
+    # ── Мова ──
+    if "login_lang" not in st.session_state:
+        st.session_state.login_lang = "UA"
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        # ── Перемикач мови ──
+        lc1, lc2, lc3, lc4 = st.columns([3, 1, 1, 1])
+        with lc2:
+            if st.button("🇺🇦 UA", width="stretch",
+                         type="primary" if st.session_state.login_lang == "UA" else "secondary"):
+                st.session_state.login_lang = "UA"; st.rerun()
+        with lc3:
+            if st.button("🇷🇺 RU", width="stretch",
+                         type="primary" if st.session_state.login_lang == "RU" else "secondary"):
+                st.session_state.login_lang = "RU"; st.rerun()
+        with lc4:
+            if st.button("🇬🇧 EN", width="stretch",
+                         type="primary" if st.session_state.login_lang == "EN" else "secondary"):
+                st.session_state.login_lang = "EN"; st.rerun()
+
+        lt = LOGIN_T[st.session_state.login_lang]
+
         # ── Логотип ──
-        st.markdown("""
-        <div style="text-align:center;margin-bottom:24px;margin-top:20px">
+        st.markdown(f"""
+        <div style="text-align:center;margin-bottom:24px;margin-top:12px">
             <img src="https://merino.tech/cdn/shop/files/MT_logo_1.png?v=1685099753&width=260"
                  style="max-width:180px;margin-bottom:12px">
-            <div style="font-size:13px;color:#888">Business Intelligence Hub</div>
+            <div style="font-size:13px;color:#888">{lt["subtitle"]}</div>
         </div>
         """, unsafe_allow_html=True)
 
-        tab_login, tab_reg = st.tabs(["🔐 Вхід", "📝 Реєстрація"])
+        tab_login, tab_reg = st.tabs([lt["tab_login"], lt["tab_reg"]])
 
         # ── Вхід ──
         with tab_login:
-            email    = st.text_input("📧 Email", placeholder="your@email.com", key="login_email")
-            password = st.text_input("🔑 Пароль", type="password", key="login_password")
+            email    = st.text_input(lt["email"], placeholder="your@email.com", key="login_email")
+            password = st.text_input(lt["password"], type="password", key="login_password")
 
-            if st.button("Увійти →", type="primary", width="stretch"):
+            if st.button(lt["btn_login"], type="primary", width="stretch"):
                 if not email or not password:
-                    st.error("Введіть email і пароль")
+                    st.error(lt["err_empty"])
                 else:
                     user = verify_login(email, password)
                     if user:
@@ -196,23 +273,23 @@ def show_login():
                             st.session_state.permissions = set(ALL_REPORTS)
                         st.rerun()
                     else:
-                        st.error("❌ Невірний email або пароль")
+                        st.error(lt["err_wrong"])
 
         # ── Реєстрація ──
         with tab_reg:
-            st.caption("Після реєстрації адмін активує ваш акаунт")
-            reg_name  = st.text_input("👤 Ім'я", placeholder="Ваше ім'я", key="reg_name")
-            reg_email = st.text_input("📧 Email", placeholder="your@email.com", key="reg_email")
-            reg_pass  = st.text_input("🔑 Пароль", type="password", key="reg_pass")
-            reg_pass2 = st.text_input("🔑 Повторіть пароль", type="password", key="reg_pass2")
+            st.caption(lt["reg_hint"])
+            reg_name  = st.text_input(lt["name"], placeholder=lt["name_ph"], key="reg_name")
+            reg_email = st.text_input(lt["email"], placeholder="your@email.com", key="reg_email")
+            reg_pass  = st.text_input(lt["password"], type="password", key="reg_pass")
+            reg_pass2 = st.text_input(lt["pass2"], type="password", key="reg_pass2")
 
-            if st.button("Зареєструватись", type="primary", width="stretch"):
+            if st.button(lt["btn_reg"], type="primary", width="stretch"):
                 if reg_pass != reg_pass2:
-                    st.error("Паролі не співпадають")
+                    st.error(lt["err_pass"])
                 else:
                     ok, msg = _register_user(reg_email, reg_name, reg_pass)
                     if ok:
-                        st.success("✅ Заявку надіслано! Очікуйте активації адміністратором.")
+                        st.success(lt["ok_reg"])
                     else:
                         st.error(f"❌ {msg}")
 
@@ -412,7 +489,7 @@ def show_admin_panel():
                             st.markdown("---")
                             st.markdown("**📊 Доступ до звітів:**")
                             current_perms = load_user_perms(uid)
-                            available = [r for r in ALL_REPORTS if r != "🕷 Scraper Reviews"]
+                            available = list(ALL_REPORTS)
                             all_key = f"all_{uid}"
                             if f"sel_{uid}" not in st.session_state:
                                 st.session_state[f"sel_{uid}"] = list(current_perms & set(available))
@@ -450,7 +527,7 @@ def show_admin_panel():
             selected_reports = []
             if new_role == "viewer":
                 st.markdown("**📊 Доступ до звітів:**")
-                available = [r for r in ALL_REPORTS if r != "🕷 Scraper Reviews"]
+                available = list(ALL_REPORTS)
                 if "new_sel" not in st.session_state:
                     st.session_state["new_sel"] = list(available)
                 ca, cb = st.columns([1, 4])
