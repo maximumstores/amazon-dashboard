@@ -225,6 +225,43 @@ def show_login():
     if "login_lang" not in st.session_state:
         st.session_state.login_lang = "UA"
 
+    # ── Глобальний CSS для сторінки логіну ──
+    st.markdown("""
+    <style>
+    /* Кнопки мов — pill стиль */
+    div[data-testid="stHorizontalBlock"] button[kind="secondary"] {
+        border-radius: 20px !important;
+        border: 1.5px solid #ddd !important;
+        color: #555 !important;
+        font-weight: 500 !important;
+        font-size: 13px !important;
+    }
+    div[data-testid="stHorizontalBlock"] button[kind="primary"] {
+        border-radius: 20px !important;
+        font-weight: 700 !important;
+        font-size: 13px !important;
+    }
+    /* Кнопка Увійти */
+    div[data-testid="stVerticalBlock"] button[kind="primary"] {
+        border-radius: 10px !important;
+        font-size: 16px !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.5px !important;
+    }
+    /* Таби */
+    div[data-testid="stTabs"] button {
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        padding: 8px 20px !important;
+    }
+    /* Поля вводу */
+    div[data-testid="stTextInput"] input {
+        border-radius: 8px !important;
+        font-size: 15px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         # ── Перемикач мови ──
