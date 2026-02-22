@@ -281,19 +281,42 @@ def show_login():
         </div>
         """, unsafe_allow_html=True)
 
-        # ── Перемикач мови — під логотипом ──
-        lc1, lc2, lc3, lc4, lc5 = st.columns([3, 1, 1, 1, 3])
-        with lc2:
-            if st.button("🇺🇦 UA", width="stretch", type="primary" if st.session_state.login_lang == "UA" else "secondary", key="lang_ua"):
-                st.session_state.login_lang = "UA"; st.rerun()
-        with lc3:
-            if st.button("🇷🇺 RU", width="stretch", type="primary" if st.session_state.login_lang == "RU" else "secondary", key="lang_ru"):
-                st.session_state.login_lang = "RU"; st.rerun()
-        with lc4:
-            if st.button("🇬🇧 EN", width="stretch", type="primary" if st.session_state.login_lang == "EN" else "secondary", key="lang_en"):
-                st.session_state.login_lang = "EN"; st.rerun()
+        # ── Перемикач мови — мініатюрні кнопки ──
+        lang_now = st.session_state.login_lang
+        def _lang_btn(code, flag):
+            active = lang_now == code
+            bg = "#FF4B4B" if active else "transparent"
+            color = "#fff" if active else "#888"
+            border = "#FF4B4B" if active else "#ddd"
+            return f"""<a href="?_lang={code}" style="text-decoration:none">
+              <span style="background:{bg};color:{color};border:1px solid {border};
+                border-radius:12px;padding:2px 9px;font-size:11px;font-weight:600;
+                cursor:pointer;white-space:nowrap">{flag} {code}</span></a>"""
 
-        st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="text-align:center;margin-bottom:14px;display:flex;justify-content:center;gap:6px">
+            {_lang_btn("UA","🇺🇦")}
+            {_lang_btn("RU","🇷🇺")}
+            {_lang_btn("EN","🇬🇧")}
+        </div>""", unsafe_allow_html=True)
+
+        # Fallback — реальні кнопки приховані але функціональні
+        hc1,hc2,hc3,hc4,hc5 = st.columns([4,1,1,1,4])
+        with hc2:
+            if st.button("UA", key="lang_ua", help="Українська"):
+                st.session_state.login_lang="UA"; st.rerun()
+        with hc3:
+            if st.button("RU", key="lang_ru", help="Русский"):
+                st.session_state.login_lang="RU"; st.rerun()
+        with hc4:
+            if st.button("EN", key="lang_en", help="English"):
+                st.session_state.login_lang="EN"; st.rerun()
+        st.markdown("""<style>
+        button[data-testid="baseButton-secondary"]:has(div:contains("UA")),
+        button[data-testid="baseButton-secondary"]:has(div:contains("RU")),
+        button[data-testid="baseButton-secondary"]:has(div:contains("EN")) {
+            visibility:hidden; height:0; padding:0; margin:0; border:none;
+        }</style>""", unsafe_allow_html=True)
         tab_login, tab_reg = st.tabs([lt["tab_login"], lt["tab_reg"]])
 
         # ── Вхід ──
