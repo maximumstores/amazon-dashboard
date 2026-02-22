@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import os
@@ -1591,12 +1590,7 @@ def show_reviews(t):
     st.markdown("---")
     fa, fb, fc = st.columns([2, 2, 1])
 
-    # Фільтр ASIN
-    with fa:
-        dl_asins = ["✅ " + t.get("all_asins", "All")] + sorted(df['asin'].dropna().unique().tolist()) if 'asin' in df.columns else []
-        dl_asin = st.selectbox("📦 ASIN:", dl_asins, key="dl_asin_filter") if dl_asins else None
-
-    # Фільтр країни
+    # Фільтр країни — спочатку, щоб ASIN залежав від неї
     with fb:
         if has_domain:
             dl_domains_raw = sorted(df['domain'].dropna().unique().tolist())
@@ -1607,12 +1601,22 @@ def show_reviews(t):
         else:
             dl_domain = None
 
+    # Фільтр ASIN — залежить від вибраної країни
+    with fa:
+        if 'asin' in df.columns:
+            df_for_asin = df[df['domain'] == dl_domain] if dl_domain else df
+            asin_opts = sorted(df_for_asin['asin'].dropna().unique().tolist())
+            dl_asins = ["✅ " + t.get("all_asins", "All")] + asin_opts
+            dl_asin = st.selectbox("📦 ASIN:", dl_asins, key="dl_asin_filter")
+        else:
+            dl_asin = None
+
     # Застосовуємо фільтри до df для скачування
     df_dl = df.copy()
-    if dl_asin and not dl_asin.startswith("✅"):
-        df_dl = df_dl[df_dl['asin'] == dl_asin]
     if dl_domain:
         df_dl = df_dl[df_dl['domain'] == dl_domain]
+    if dl_asin and not dl_asin.startswith("✅"):
+        df_dl = df_dl[df_dl['asin'] == dl_asin]
 
     df_dl_balanced = balanced_reviews(df_dl, max_per_star=100).sort_values('rating', ascending=True)
     dl_cols = [c for c in display_cols if c in df_dl.columns]
