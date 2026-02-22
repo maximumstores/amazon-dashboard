@@ -1,5 +1,3 @@
-
-#dashboard.py
 import streamlit as st
 import pandas as pd
 import os
@@ -1740,6 +1738,523 @@ def show_orders():
 
 
 # ============================================
+# 🕷 SCRAPER MANAGER (вбудований)
+# ============================================
+
+import threading
+import queue
+
+APIFY_TOKEN_DEFAULT = os.getenv("APIFY_TOKEN", "")
+STARS_MAP = {5: "fiveStar", 4: "fourStar", 3: "threeStar", 2: "twoStar", 1: "oneStar"}
+DOMAIN_FLAGS = {
+    "com": "🇺🇸", "ca": "🇨🇦", "de": "🇩🇪", "co.uk": "🇬🇧",
+    "it": "🇮🇹", "es": "🇪🇸", "fr": "🇫🇷", "co.jp": "🇯🇵",
+    "com.au": "🇦🇺", "com.mx": "🇲🇽", "nl": "🇳🇱", "pl": "🇵🇱", "se": "🇸🇪",
+}
+
+def _scr_get_conn():
+    from urllib.parse import urlparse
+    r = urlparse(DATABASE_URL)
+    return psycopg2.connect(
+        database=r.path[1:], user=r.username, password=r.password,
+        host=r.hostname, port=r.port
+    )
+
+def _scr_ensure_table():
+    conn = _scr_get_conn(); cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS amazon_reviews (
+            id SERIAL PRIMARY KEY, asin VARCHAR(20), domain VARCHAR(20),
+            review_id VARCHAR(100) UNIQUE, author VARCHAR(255), rating INTEGER,
+            title TEXT, content TEXT, is_verified BOOLEAN,
+            product_attributes TEXT, review_date TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    conn.commit(); cur.close(); conn.close()
+
+def _scr_save(reviews, asin, domain):
+    conn = _scr_get_conn(); cur = conn.cursor(); inserted = 0
+    for rev in reviews:
+        url = rev.get("reviewUrl", "")
+        rid = url.split("/")[-1] if url else f"{asin}_{domain}_{rev.get('position','?')}"
+        try:
+            cur.execute("""
+                INSERT INTO amazon_reviews
+                (asin,domain,review_id,author,rating,title,content,is_verified,product_attributes,review_date)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (review_id) DO NOTHING
+            """, (asin, domain, rid,
+                  rev.get("author","Amazon User"), int(rev.get("ratingScore",0)),
+                  rev.get("reviewTitle",""), rev.get("reviewDescription",""),
+                  bool(rev.get("isVerified",False)), rev.get("variant",""), rev.get("date","")))
+            if cur.rowcount > 0: inserted += 1
+        except: pass
+    conn.commit(); cur.close(); conn.close()
+    return inserted
+
+def _scr_count(asin, domain):
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM amazon_reviews WHERE asin=%s AND domain=%s", (asin, domain))
+        n = cur.fetchone()[0]; cur.close(); conn.close(); return n
+    except: return 0
+
+def _scr_parse_url(url):
+    from urllib.parse import urlparse
+    p = urlparse(url.strip())
+    domain = p.netloc.replace("www.amazon.", "")
+    m = re.search(r"([A-Z0-9]{10})", p.path)
+    return domain, (m.group(1) if m else "UNKNOWN")
+
+def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, apify_token):
+    """Background thread — single pass or infinite loop."""
+    try:
+        _scr_ensure_table()
+    except Exception as e:
+        log_q.put(f"❌ DB error: {e}"); progress_q.put({"done": True}); return
+
+    endpoint = (
+        f"https://api.apify.com/v2/acts/junglee~amazon-reviews-scraper"
+        f"/run-sync-get-dataset-items?token={apify_token}"
+    )
+    cycle = 0
+    while not stop_event.is_set():
+        cycle += 1
+        total_steps = len(urls) * 5
+        step = 0
+        cycle_total = 0
+
+        if loop_mode:
+            log_q.put(f"\n{'🔄'*20}")
+            log_q.put(f"🔄  ЦИКЛ #{cycle} РОЗПОЧАТО")
+            log_q.put(f"{'🔄'*20}")
+
+        for url in urls:
+            if stop_event.is_set(): break
+            domain, asin = _scr_parse_url(url)
+            flag = DOMAIN_FLAGS.get(domain, "🌍")
+            log_q.put(f"\n{'='*50}")
+            log_q.put(f"{flag}  {asin}  ·  amazon.{domain}  (цикл #{cycle})")
+            log_q.put(f"{'='*50}")
+
+            url_new = 0
+            for star_num, star_text in STARS_MAP.items():
+                if stop_event.is_set(): break
+                step += 1
+                pct = int(step / total_steps * 100)
+                log_q.put(f"  ⏳ {star_num}★ — збираємо (max {max_per_star})...")
+                progress_q.put({"pct": pct, "label": f"Цикл #{cycle} · {asin} · {star_num}★"})
+                payload = {
+                    "productUrls": [{"url": url}],
+                    "filterByRatings": [star_text],
+                    "maxReviews": max_per_star,
+                    "sort": "recent",
+                }
+                try:
+                    res = requests.post(endpoint, json=payload, timeout=360)
+                    if res.status_code in (200, 201):
+                        data = res.json()
+                        if data:
+                            ins = _scr_save(data, asin, domain)
+                            url_new   += ins
+                            cycle_total += ins
+                            log_q.put(f"  ✅ {star_num}★: отримано {len(data)}, нових: {ins}")
+                        else:
+                            log_q.put(f"  ⚠️ {star_num}★: відгуків не знайдено")
+                    else:
+                        log_q.put(f"  ❌ {star_num}★: HTTP {res.status_code}")
+                except Exception as e:
+                    log_q.put(f"  ❌ {star_num}★: {e}")
+                time.sleep(1.5)
+
+            in_db = _scr_count(asin, domain)
+            log_q.put(f"🎯 {asin}/{domain}: +{url_new} нових · в БД: {in_db}")
+            time.sleep(3)
+
+        if loop_mode and not stop_event.is_set():
+            pause_min = 30
+            log_q.put(f"\n🏁 Цикл #{cycle} завершено! +{cycle_total} нових.")
+            log_q.put(f"⏸  Пауза {pause_min} хв перед наступним циклом...")
+            progress_q.put({"pct": 100, "label": f"Цикл #{cycle} готово, пауза {pause_min} хв..."})
+            # Pause in small chunks so stop_event is checked
+            for _ in range(pause_min * 12):  # every 5 sec
+                if stop_event.is_set(): break
+                time.sleep(5)
+        else:
+            break  # single pass done
+
+    log_q.put(f"\n🏁 ЗБІР ЗУПИНЕНО після {cycle} цикл(ів)")
+    progress_q.put({"pct": 100, "label": "Зупинено", "done": True, "total": cycle})
+
+
+def _scr_init():
+    defaults = {
+        "scr_running": False, "scr_logs": [], "scr_pct": 0,
+        "scr_label": "", "scr_done": False, "scr_cycles": 0,
+        "scr_log_q": None, "scr_prog_q": None,
+        "scr_stop_event": None,
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state: st.session_state[k] = v
+
+def _scr_flush():
+    lq = st.session_state.scr_log_q
+    pq = st.session_state.scr_prog_q
+    if lq:
+        while not lq.empty():
+            try: st.session_state.scr_logs.append(lq.get_nowait())
+            except: break
+    if pq:
+        while not pq.empty():
+            try:
+                msg = pq.get_nowait()
+                if "pct"   in msg: st.session_state.scr_pct    = msg["pct"]
+                if "label" in msg: st.session_state.scr_label  = msg["label"]
+                if "done"  in msg and msg["done"]:
+                    st.session_state.scr_done    = True
+                    st.session_state.scr_running = False
+                    st.session_state.scr_cycles  = msg.get("total", 0)
+            except: break
+
+def _scr_load_urls_db():
+    """Load all URLs from scraper_urls table."""
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("""
+            SELECT id, url, is_active, added_at, last_scraped
+            FROM scraper_urls ORDER BY id
+        """)
+        rows = cur.fetchall(); cur.close(); conn.close()
+        return rows
+    except: return []
+
+def _scr_ensure_urls_table():
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scraper_urls (
+                id           SERIAL PRIMARY KEY,
+                url          TEXT UNIQUE NOT NULL,
+                is_active    BOOLEAN DEFAULT TRUE,
+                added_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_scraped TIMESTAMP
+            );
+        """)
+        conn.commit(); cur.close(); conn.close()
+    except: pass
+
+def _scr_add_url(url):
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("INSERT INTO scraper_urls (url) VALUES (%s) ON CONFLICT (url) DO NOTHING", (url,))
+        inserted = cur.rowcount; conn.commit(); cur.close(); conn.close()
+        return inserted > 0
+    except: return False
+
+def _scr_delete_url(uid):
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("DELETE FROM scraper_urls WHERE id=%s", (uid,))
+        conn.commit(); cur.close(); conn.close()
+    except: pass
+
+def _scr_toggle_url(uid, active):
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE scraper_urls SET is_active=%s WHERE id=%s", (active, uid))
+        conn.commit(); cur.close(); conn.close()
+    except: pass
+
+
+def show_url_manager():
+    """Tab: manage scraper_urls table."""
+    _scr_ensure_urls_table()
+    st.markdown("### 🔗 Керування URL-ами для scraper.py")
+    st.caption("scraper.py автоматично підхоплює зміни з цієї таблиці — не потрібно перезапускати скрапер!")
+
+    # ── Додати нові URL-и ──
+    with st.expander("➕ Додати нові URL-и", expanded=True):
+        new_urls_input = st.text_area(
+            "Посилання Amazon (по одному на рядок):",
+            height=130,
+            placeholder="https://www.amazon.com/dp/B08HR2131Z\nhttps://www.amazon.de/dp/B08HWCL2RY",
+            key="scr_new_urls"
+        )
+        if st.button("💾 Додати в БД", type="primary"):
+            lines = [u.strip() for u in new_urls_input.strip().splitlines() if u.strip()]
+            added, skipped = 0, 0
+            for url in lines:
+                if _scr_add_url(url): added += 1
+                else: skipped += 1
+            if added:   st.success(f"✅ Додано: {added} URL-ів")
+            if skipped: st.warning(f"⚠️ Вже існують (пропущено): {skipped}")
+            st.rerun()
+
+    st.markdown("---")
+
+    # ── Список поточних URL-ів ──
+    rows = _scr_load_urls_db()
+    if not rows:
+        st.info("📭 Таблиця порожня. Додай URL-и вище — scraper.py підхопить їх у наступному циклі.")
+        return
+
+    st.markdown(f"**Всього URL-ів: {len(rows)}** · активних: {sum(1 for r in rows if r[2])}")
+    st.markdown("")
+
+    for row in rows:
+        uid, url, is_active, added_at, last_scraped = row
+        try:
+            domain, asin = _scr_parse_url(url)
+            flag = DOMAIN_FLAGS.get(domain, "🌍")
+            in_db = _scr_count(asin, domain)
+        except:
+            flag, asin, domain, in_db = "🌍", "?", "?", 0
+
+        last_str = last_scraped.strftime("%d.%m %H:%M") if last_scraped else "ніколи"
+        added_str = added_at.strftime("%d.%m.%Y") if added_at else ""
+        status_color = "#4CAF50" if is_active else "#555"
+        status_text  = "● Активний" if is_active else "○ Вимкнений"
+
+        col_card, col_toggle, col_del = st.columns([6, 1.5, 1])
+        with col_card:
+            st.markdown(f"""
+            <div style="background:#1e1e2e;border-left:4px solid {status_color};
+                        border-radius:8px;padding:10px 16px;margin-bottom:6px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <div>
+                  <span style="font-size:16px;font-weight:800;color:#fff">{flag} {asin}</span>
+                  <span style="color:#888;font-size:12px;margin-left:10px">amazon.{domain}</span>
+                </div>
+                <span style="color:{status_color};font-size:12px;font-weight:600">{status_text}</span>
+              </div>
+              <div style="margin-top:6px;font-size:12px;color:#666;display:flex;gap:20px">
+                <span>📊 В БД: <b style="color:#5B9BD5">{in_db}</b></span>
+                <span>🕐 Останній скрап: <b>{last_str}</b></span>
+                <span>📅 Додано: {added_str}</span>
+              </div>
+              <div style="margin-top:4px;font-size:11px;color:#444">{url}</div>
+            </div>""", unsafe_allow_html=True)
+
+        with col_toggle:
+            new_state = st.toggle(
+                "Активний" if is_active else "Вимкн.",
+                value=is_active,
+                key=f"toggle_{uid}"
+            )
+            if new_state != is_active:
+                _scr_toggle_url(uid, new_state)
+                st.rerun()
+
+        with col_del:
+            st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
+            if st.button("🗑", key=f"del_{uid}", help=f"Видалити {url}"):
+                _scr_delete_url(uid)
+                st.rerun()
+
+    st.markdown("---")
+    # Bulk actions
+    c1, c2, _ = st.columns([1, 1, 3])
+    with c1:
+        if st.button("✅ Увімкнути всі", use_container_width=True):
+            for row in rows: _scr_toggle_url(row[0], True)
+            st.rerun()
+    with c2:
+        if st.button("○ Вимкнути всі", use_container_width=True):
+            for row in rows: _scr_toggle_url(row[0], False)
+            st.rerun()
+
+
+def show_scraper_manager():
+    _scr_init()
+    _scr_flush()
+
+    st.markdown("## 🕷 Scraper Manager")
+    st.caption("Керуй URL-ами і запускай збір прямо з дашборду. scraper.py підхоплює зміни автоматично.")
+
+    # ── Tabs ──
+    tab_status, tab_urls = st.tabs(["📊 Статус & Логи", "🔗 URL Manager"])
+
+    with tab_urls:
+        show_url_manager()
+
+    with tab_status:
+        # ── Статус ──
+        top_l, top_r = st.columns([3, 1])
+        with top_l:
+            if st.session_state.scr_running:
+                st.info(f"🔄 {st.session_state.scr_label or 'Збір в процесі...'}")
+            elif st.session_state.scr_done:
+                st.success(f"✅ Завершено! Відпрацьовано циклів: **{st.session_state.scr_cycles}**")
+            else:
+                st.info("💤 Готовий до запуску")
+        with top_r:
+            if st.session_state.scr_running:
+                if st.button("⛔ Зупинити", use_container_width=True, type="secondary"):
+                    if st.session_state.scr_stop_event:
+                        st.session_state.scr_stop_event.set()
+                    st.session_state.scr_running = False
+                    st.session_state.scr_done    = True
+                    st.rerun()
+
+        st.progress(st.session_state.scr_pct, text=st.session_state.scr_label or " ")
+        st.markdown("---")
+
+    # ── Форма ──
+    with st.expander("⚙️ Налаштування", expanded=not st.session_state.scr_running):
+        st.markdown("#### 🔗 Посилання Amazon (по одному на рядок)")
+        default_urls = "\n".join([
+            "https://www.amazon.com/dp/B08HR2131Z",
+            "https://www.amazon.ca/dp/B0G3B2JRVB",
+            "https://www.amazon.de/dp/B08HWCL2RY",
+            "https://www.amazon.co.uk/dp/B07XCDPRGZ",
+            "https://www.amazon.it/dp/B0DP7SQLGC",
+            "https://www.amazon.es/dp/B0DD5PJ27Q",
+        ])
+        urls_input = st.text_area("URLs:", value=default_urls, height=160,
+                                   disabled=st.session_state.scr_running)
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            max_per_star = st.slider("Max відгуків на ⭐:", 10, 200, 100, 10,
+                                     disabled=st.session_state.scr_running)
+        with c2:
+            apify_token = st.text_input("Apify Token:", value=APIFY_TOKEN_DEFAULT,
+                                        type="password", disabled=st.session_state.scr_running)
+        with c3:
+            loop_mode = st.toggle("🔄 Нескінченний цикл", value=False,
+                                  disabled=st.session_state.scr_running,
+                                  help="Після кожного проходу чекає 30 хв і запускається знову")
+            pause_label = "♾ Нескінченно" if loop_mode else "1 прохід"
+            st.caption(f"Режим: **{pause_label}**")
+
+        raw_lines = [u.strip() for u in urls_input.strip().splitlines() if u.strip()]
+
+        # Превью товарів
+        if raw_lines:
+            st.markdown("**📋 Товари:**")
+            cols = st.columns(min(len(raw_lines), 3))
+            for i, url in enumerate(raw_lines):
+                try:
+                    domain, asin = _scr_parse_url(url)
+                    flag = DOMAIN_FLAGS.get(domain, "🌍")
+                    in_db = _scr_count(asin, domain)
+                    with cols[i % 3]:
+                        st.markdown(f"""
+                        <div style="background:#1e1e2e;border-left:4px solid #4472C4;
+                                    border-radius:8px;padding:10px 14px;margin-bottom:8px">
+                          <div style="font-size:11px;color:#888">{flag} amazon.{domain}</div>
+                          <div style="font-size:16px;font-weight:800;color:#fff">{asin}</div>
+                          <div style="font-size:12px;color:#aaa;margin-top:4px">
+                            📊 В БД: <b style="color:#5B9BD5">{in_db}</b> відгуків
+                          </div>
+                        </div>""", unsafe_allow_html=True)
+                except:
+                    with cols[i % 3]: st.warning(f"⚠️ {url[:40]}")
+
+        n = len(raw_lines)
+        est = round(n * 5 * 1.5 / 60, 1)
+        loop_note = " × ∞ циклів" if loop_mode else ""
+        st.caption(f"⏱ ~{est} хв на 1 прохід ({n} товарів × 5 зірок){loop_note}")
+
+        c_drop, c_btn, _ = st.columns([1, 1, 2])
+        with c_drop:
+            drop_first = st.checkbox("🗑 Скинути таблицю", value=False,
+                                     disabled=st.session_state.scr_running)
+        with c_btn:
+            start = st.button(
+                "🚀 Запустити" if not st.session_state.scr_running else "⏳ Іде...",
+                disabled=st.session_state.scr_running or not raw_lines,
+                use_container_width=True, type="primary"
+            )
+
+    # ── Запуск ──
+    if start and raw_lines and not st.session_state.scr_running:
+        if drop_first:
+            try:
+                conn = _scr_get_conn(); cur = conn.cursor()
+                cur.execute("DROP TABLE IF EXISTS amazon_reviews;")
+                conn.commit(); cur.close(); conn.close()
+                st.toast("🗑 Таблицю скинуто")
+            except Exception as e:
+                st.error(f"❌ {e}")
+
+        lq = queue.Queue()
+        pq = queue.Queue()
+        stop_ev = threading.Event()
+
+        st.session_state.scr_logs      = []
+        st.session_state.scr_pct       = 0
+        st.session_state.scr_label     = "Старт..."
+        st.session_state.scr_done      = False
+        st.session_state.scr_running   = True
+        st.session_state.scr_cycles    = 0
+        st.session_state.scr_log_q     = lq
+        st.session_state.scr_prog_q    = pq
+        st.session_state.scr_stop_event = stop_ev
+
+        threading.Thread(
+            target=_scr_worker,
+            args=(raw_lines, max_per_star, lq, pq, loop_mode, stop_ev, apify_token),
+            daemon=True
+        ).start()
+        st.rerun()
+
+    # ── Логи ──
+    st.markdown("### 📜 Логи")
+    logs = st.session_state.scr_logs
+    if logs:
+        colored = []
+        for line in logs[-80:]:
+            if "===" in line:
+                colored.append(f'<span style="color:#5B9BD5;font-weight:700">{line}</span>')
+            elif "🔄" in line and "ЦИКЛ" in line:
+                colored.append(f'<span style="color:#AB47BC;font-weight:800;font-size:14px">{line}</span>')
+            elif "✅" in line:
+                colored.append(f'<span style="color:#4CAF50">{line}</span>')
+            elif "❌" in line:
+                colored.append(f'<span style="color:#F44336">{line}</span>')
+            elif "⚠️" in line:
+                colored.append(f'<span style="color:#FFC107">{line}</span>')
+            elif "🏁" in line or "ГОТОВО" in line or "ЗУПИНЕНО" in line:
+                colored.append(f'<span style="color:#FFD700;font-weight:800">{line}</span>')
+            elif "🎯" in line:
+                colored.append(f'<span style="color:#AB47BC">{line}</span>')
+            elif "⏸" in line:
+                colored.append(f'<span style="color:#888;font-style:italic">{line}</span>')
+            else:
+                colored.append(f'<span style="color:#ccc">{line}</span>')
+
+        st.markdown(f"""
+        <div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;
+                    padding:16px 20px;font-family:'Courier New',monospace;font-size:13px;
+                    line-height:1.7;max-height:500px;overflow-y:auto">
+          {"<br>".join(colored)}
+        </div>""", unsafe_allow_html=True)
+
+        if not st.session_state.scr_running:
+            c1, c2, _ = st.columns([1, 1, 3])
+            with c1:
+                if st.button("🗑 Очистити логи", use_container_width=True):
+                    st.session_state.scr_logs = []
+                    st.session_state.scr_done = False
+                    st.rerun()
+            with c2:
+                st.download_button("📥 Зберегти лог", "\n".join(logs).encode(),
+                                   "scraper_log.txt", "text/plain", use_container_width=True)
+    else:
+        st.markdown("""
+        <div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;
+                    padding:24px;color:#555;font-family:monospace;text-align:center">
+          Логи з'являться після запуску...
+        </div>""", unsafe_allow_html=True)
+
+    # Auto-refresh поки іде
+    if st.session_state.scr_running:
+        time.sleep(2)
+        st.rerun()
+
+
+# ============================================
 # MAIN
 # ============================================
 
@@ -1778,7 +2293,8 @@ st.sidebar.header("📊 Reports")
 report_options = [
     "🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
     "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
-    "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast","📋 FBA Inventory Table"
+    "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast",
+    "📋 FBA Inventory Table","🕷 Scraper Reviews"
 ]
 current_index = report_options.index(st.session_state.report_choice) if st.session_state.report_choice in report_options else 0
 report_choice = st.sidebar.radio("Select Report:", report_options, index=current_index)
@@ -1794,6 +2310,7 @@ elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "🐢 Inventory Health (Aging)":show_aging(df_filtered, t)
 elif report_choice == "🧠 AI Forecast":              show_ai_forecast(df, t)
 elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filtered, t, selected_date)
+elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v4.0 🌍")
+st.sidebar.caption("📦 Amazon FBA BI System v4.2 🌍")
