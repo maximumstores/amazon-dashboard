@@ -67,6 +67,16 @@ translations = {
         "verified_pct": "Верифіковані (%)",
         "star_dist": "Розподіл по зірках",
         "worst_asin": "Проблемні ASIN (1-2★)",
+        "rev_table_by_country": "📋 Зведена таблиця по країнах",
+        "rev_count_by_country": "📊 Відгуків по країнах",
+        "rev_neg_by_country": "🔴 % Негативних по країнах",
+        "rev_rating_by_country": "⭐ Рейтинг по країнах",
+        "rev_country_analysis": "🌍 Аналіз по країнах",
+        "rev_star_filter": "⭐ Рейтинг:",
+        "rev_country_filter": "🌍 Країна (маркетплейс):",
+        "rev_filters": "⭐ Фільтри відгуків",
+        "all_countries": "Всі країни",
+        "all_asins": "Всі ASINи",
     },
     "EN": {
         "title": "📦 Amazon FBA: Business Intelligence Hub",
@@ -115,6 +125,16 @@ translations = {
         "verified_pct": "Verified (%)",
         "star_dist": "Star Distribution",
         "worst_asin": "Problematic ASINs (1-2★)",
+        "rev_table_by_country": "📋 Summary Table by Country",
+        "rev_count_by_country": "📊 Reviews by Country",
+        "rev_neg_by_country": "🔴 % Negative by Country",
+        "rev_rating_by_country": "⭐ Rating by Country",
+        "rev_country_analysis": "🌍 Country Analysis",
+        "rev_star_filter": "⭐ Rating:",
+        "rev_country_filter": "🌍 Country (marketplace):",
+        "rev_filters": "⭐ Review Filters",
+        "all_countries": "All countries",
+        "all_asins": "All ASINs",
     },
     "RU": {
         "title": "📦 Amazon FBA: Business Intelligence Hub",
@@ -163,6 +183,16 @@ translations = {
         "verified_pct": "Верифицированные (%)",
         "star_dist": "Распределение по звездам",
         "worst_asin": "Проблемные ASIN (1-2★)",
+        "rev_table_by_country": "📋 Сводная таблица по странам",
+        "rev_count_by_country": "📊 Отзывов по странам",
+        "rev_neg_by_country": "🔴 % Негативных по странам",
+        "rev_rating_by_country": "⭐ Рейтинг по странам",
+        "rev_country_analysis": "🌍 Анализ по странам",
+        "rev_star_filter": "⭐ Рейтинг:",
+        "rev_country_filter": "🌍 Страна (маркетплейс):",
+        "rev_filters": "⭐ Фильтры отзывов",
+        "all_countries": "Все страны",
+        "all_asins": "Все ASINы",
     }
 }
 
@@ -954,7 +984,7 @@ def show_reviews(t):
     has_domain = 'domain' in df_all.columns
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("⭐ Фільтри відгуків")
+    st.sidebar.subheader(t["rev_filters"])
 
     selected_domains = []
     if has_domain:
@@ -962,7 +992,7 @@ def show_reviews(t):
         domain_display_list = [DOMAIN_LABELS.get(d, f'🌍 {d}') for d in all_domains]
         display_to_code = {DOMAIN_LABELS.get(d, f'🌍 {d}'): d for d in all_domains}
         sel_domain_display = st.sidebar.multiselect(
-            "🌍 Країна (маркетплейс):", domain_display_list, default=[], key="rev_domain"
+            t["rev_country_filter"], domain_display_list, default=[], key="rev_domain"
         )
         selected_domains = [display_to_code[d] for d in sel_domain_display if d in display_to_code]
 
@@ -981,7 +1011,7 @@ def show_reviews(t):
     sel_raw = st.sidebar.selectbox("📦 ASIN:", asin_options, index=default_asin_idx, key="rev_asin")
     selected_asin = None if sel_raw == '🌐 Всі ASINи' else sel_raw
 
-    star_filter = st.sidebar.multiselect("⭐ Рейтинг:", [5, 4, 3, 2, 1], default=[], key="rev_stars")
+    star_filter = st.sidebar.multiselect(t["rev_star_filter"], [5, 4, 3, 2, 1], default=[], key="rev_stars")
 
     if selected_asin and has_domain:
         st.sidebar.markdown("---")
@@ -1009,8 +1039,8 @@ def show_reviews(t):
         st.warning("Немає відгуків за цими фільтрами.")
         return
 
-    asin_label    = selected_asin if selected_asin else "Всі ASINи"
-    country_label = ", ".join([DOMAIN_LABELS.get(d, d) for d in selected_domains]) if selected_domains else "Всі країни"
+    asin_label    = selected_asin if selected_asin else t["all_asins"]
+    country_label = ", ".join([DOMAIN_LABELS.get(d, d) for d in selected_domains]) if selected_domains else t["all_countries"]
 
     if selected_asin:
         first_domain = df['domain'].dropna().iloc[0] if has_domain and not df.empty else 'com'
@@ -1051,7 +1081,7 @@ def show_reviews(t):
         st.markdown("---")
 
     if has_domain and selected_asin is None:
-        st.markdown("### 🌍 Аналіз по країнах")
+        st.markdown(f"### {t['rev_country_analysis']}")
 
         domain_stats = df.groupby('domain').agg(
             Reviews=('rating', 'count'),
@@ -1065,7 +1095,7 @@ def show_reviews(t):
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown("#### ⭐ Рейтинг по країнах")
+            st.markdown(f"#### {t['rev_rating_by_country']}")
             ds_sort = domain_stats.sort_values('Rating', ascending=True)
             colors = ['#F44336' if r < 4.0 else '#FFC107' if r < 4.4 else '#4CAF50' for r in ds_sort['Rating']]
             fig = go.Figure(go.Bar(
@@ -1079,7 +1109,7 @@ def show_reviews(t):
             st.plotly_chart(fig, width="stretch")
 
         with col2:
-            st.markdown("#### 🔴 % Негативних по країнах")
+            st.markdown(f"#### {t['rev_neg_by_country']}")
             ds_neg = domain_stats.sort_values('Neg %', ascending=False)
             neg_colors = ['#F44336' if v > 20 else '#FFC107' if v > 10 else '#4CAF50' for v in ds_neg['Neg %']]
             fig2 = go.Figure(go.Bar(
@@ -1091,13 +1121,13 @@ def show_reviews(t):
             st.plotly_chart(fig2, width="stretch")
 
         with col3:
-            st.markdown("#### 📊 Відгуків по країнах")
+            st.markdown(f"#### {t['rev_count_by_country']}")
             fig3 = px.pie(domain_stats, values='Reviews', names='Country', hole=0.4,
                           color_discrete_sequence=px.colors.qualitative.Set3)
             fig3.update_layout(height=max(280, len(domain_stats) * 50))
             st.plotly_chart(fig3, width="stretch")
 
-        st.markdown("#### 📋 Зведена таблиця по країнах")
+        st.markdown(f"#### {t['rev_table_by_country']}")
         disp = domain_stats[['Country', 'Reviews', 'Rating', 'Neg %', 'Pos %']].sort_values('Rating', ascending=False)
         st.dataframe(
             disp.style
