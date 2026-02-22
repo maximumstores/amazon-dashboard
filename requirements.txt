@@ -16,3 +16,4 @@ xlrd
 pyarrow
 requests
 httpx
+bcrypt
