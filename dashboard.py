@@ -110,10 +110,10 @@ translations = {
         "rev_star_dist": "### 📊 Загальний розподіл зірок",
         "rev_texts": "### 📋 Тексти відгуків (до 100 на кожну зірку, max 500)",
         "rev_sort_hint": "Сортування: спочатку 1★ — щоб проблеми були першими",
-        "rev_dl_balanced": "📥 Вибірка balanced (CSV)",
-        "rev_dl_all": "📥 Всі відфільтровані (CSV)",
-        "rev_dl_balanced_hint": "100 відгуків на кожну зірку (1-5★). Ідеально для AI-аналізу та порівняння",
-        "rev_dl_all_hint": "Всі відгуки що пройшли фільтр. Може бути великий файл",
+        "rev_dl_balanced": "📥 Скачати по фільтру",
+        "rev_dl_all": "📥 Скачати все з бази",
+        "rev_dl_balanced_hint": "Вибрані ASIN / країна — до 100 відгуків на зірку",
+        "rev_dl_all_hint": "Всі відгуки з бази даних без обмежень",
         "rev_shown": "Показано {n} з {total} відгуків",
         "rev_click_hint": "👆 Клікни на рядок — побачиш детальний аналіз цього ASIN · Посилання відкриють Amazon у новій вкладці",
         "rev_select_hint": "👇 Вибери ASIN для детального аналізу:",
@@ -230,10 +230,10 @@ translations = {
         "rev_star_dist": "### 📊 Overall Star Distribution",
         "rev_texts": "### 📋 Review Texts (up to 100 per star, max 500)",
         "rev_sort_hint": "Sorted: 1★ first — problems first",
-        "rev_dl_balanced": "📥 Balanced sample (CSV)",
-        "rev_dl_all": "📥 All filtered (CSV)",
-        "rev_dl_balanced_hint": "100 reviews per star (1-5★). Perfect for AI analysis and comparison",
-        "rev_dl_all_hint": "All reviews matching current filter. File may be large",
+        "rev_dl_balanced": "📥 Download filtered",
+        "rev_dl_all": "📥 Download all from DB",
+        "rev_dl_balanced_hint": "Selected ASIN / country — up to 100 per star",
+        "rev_dl_all_hint": "All reviews from database, no limits",
         "rev_shown": "Showing {n} of {total} reviews",
         "rev_click_hint": "👆 Click row to see detailed ASIN analysis · Links open Amazon in new tab",
         "rev_select_hint": "👇 Select ASIN for detailed analysis:",
@@ -350,10 +350,10 @@ translations = {
         "rev_star_dist": "### 📊 Общее распределение звёзд",
         "rev_texts": "### 📋 Тексты отзывов (до 100 на звезду, макс 500)",
         "rev_sort_hint": "Сортировка: сначала 1★ — проблемы первыми",
-        "rev_dl_balanced": "📥 Выборка balanced (CSV)",
-        "rev_dl_all": "📥 Все отфильтрованные (CSV)",
-        "rev_dl_balanced_hint": "100 отзывов на каждую звезду (1-5★). Идеально для AI-анализа",
-        "rev_dl_all_hint": "Все отзывы из текущего фильтра. Файл может быть большим",
+        "rev_dl_balanced": "📥 Скачать по фильтру",
+        "rev_dl_all": "📥 Скачать всё из базы",
+        "rev_dl_balanced_hint": "Выбранный ASIN / страна — до 100 отзывов на звезду",
+        "rev_dl_all_hint": "Все отзывы из базы данных без ограничений",
         "rev_shown": "Показано {n} из {total} отзывов",
         "rev_click_hint": "👆 Нажми на строку — увидишь детальный анализ · Ссылки откроют Amazon в новой вкладке",
         "rev_select_hint": "👇 Выбери ASIN для детального анализа:",
@@ -1576,21 +1576,11 @@ def show_reviews(t):
     st.markdown(t["rev_texts"])
     st.caption(t["rev_sort_hint"])
 
-    df_table = balanced_reviews(df, max_per_star=100).sort_values('rating', ascending=True)
-    display_cols   = ['review_date', 'asin', 'domain', 'rating', 'title', 'content', 'product_attributes', 'author', 'is_verified']
-    available_cols = [c for c in display_cols if c in df_table.columns]
+    display_cols = ['review_date', 'asin', 'domain', 'rating', 'title', 'content', 'product_attributes', 'author', 'is_verified']
 
-    st.dataframe(df_table[available_cols], width="stretch", height=450)
-
-    star_summary = df_table['rating'].value_counts().sort_index(ascending=False)
-    summary_str  = " | ".join([f"{s}★: {c}" for s, c in star_summary.items()])
-    st.caption(t["rev_shown"].format(n=len(df_table), total=len(df)) + f" · {summary_str}")
-
-    # ── Фільтри під таблицею + кнопки скачування ──
-    st.markdown("---")
+    # ── Фільтри над таблицею ──
     fa, fb, fc = st.columns([2, 2, 1])
 
-    # Фільтр країни — спочатку, щоб ASIN залежав від неї
     with fb:
         if has_domain:
             dl_domains_raw = sorted(df['domain'].dropna().unique().tolist())
@@ -1601,7 +1591,6 @@ def show_reviews(t):
         else:
             dl_domain = None
 
-    # Фільтр ASIN — залежить від вибраної країни
     with fa:
         if 'asin' in df.columns:
             df_for_asin = df[df['domain'] == dl_domain] if dl_domain else df
@@ -1611,30 +1600,38 @@ def show_reviews(t):
         else:
             dl_asin = None
 
-    # Застосовуємо фільтри до df для скачування
+    # ── Застосовуємо фільтри ──
     df_dl = df.copy()
     if dl_domain:
         df_dl = df_dl[df_dl['domain'] == dl_domain]
     if dl_asin and not dl_asin.startswith("✅"):
         df_dl = df_dl[df_dl['asin'] == dl_asin]
 
-    df_dl_balanced = balanced_reviews(df_dl, max_per_star=100).sort_values('rating', ascending=True)
-    dl_cols = [c for c in display_cols if c in df_dl.columns]
-
-    # Кнопки
     with fc:
         st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
         st.caption(f"📊 {len(df_dl)} відгуків")
 
+    # ── Таблиця реагує на фільтри ──
+    df_table = balanced_reviews(df_dl, max_per_star=100).sort_values('rating', ascending=True)
+    available_cols = [c for c in display_cols if c in df_table.columns]
+    dl_cols = [c for c in display_cols if c in df_dl.columns]
+
+    st.dataframe(df_table[available_cols], width="stretch", height=450)
+
+    star_summary = df_table['rating'].value_counts().sort_index(ascending=False)
+    summary_str  = " | ".join([f"{s}★: {c}" for s, c in star_summary.items()])
+    st.caption(t["rev_shown"].format(n=len(df_table), total=len(df_dl)) + f" · {summary_str}")
+
+    # ── Кнопки скачування ──
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(t["rev_dl_balanced"],
-            df_dl_balanced[dl_cols].to_csv(index=False).encode('utf-8'),
+            df_table[available_cols].to_csv(index=False).encode('utf-8'),
             f"reviews_balanced_{asin_label}.csv", "text/csv")
         st.caption(t["rev_dl_balanced_hint"])
     with col2:
         st.download_button(t["rev_dl_all"],
-            df_dl[dl_cols].to_csv(index=False).encode('utf-8'),
+            df_all[dl_cols].to_csv(index=False).encode('utf-8'),
             f"reviews_full_{asin_label}.csv", "text/csv")
         st.caption(t["rev_dl_all_hint"])
 
