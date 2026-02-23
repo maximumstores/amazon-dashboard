@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Merino BI — Amazon Intelligence Platform</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg: #0a0c10;
+    --bg2: #0f1218;
+    --border: #1e2330;
+    --accent: #e8b84b;
+    --accent2: #5b9bd5;
+    --red: #e05252;
+    --green: #4caf82;
+    --text: #e2e8f0;
+    --muted: #64748b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(30,35,48,.6) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(30,35,48,.6) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 60px 24px 80px;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 48px;
+  }
+
+  .logo-badge {
+    background: var(--accent);
+    color: #000;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .version {
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+  }
+
+  /* Hero */
+  .hero {
+    margin-bottom: 56px;
+  }
+
+  .hero h1 {
+    font-size: clamp(36px, 6vw, 60px);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -1px;
+    margin-bottom: 20px;
+  }
+
+  .hero h1 span {
+    color: var(--accent);
+  }
+
+  .hero p {
+    font-size: 17px;
+    color: #94a3b8;
+    line-height: 1.7;
+    max-width: 620px;
+    font-weight: 400;
+  }
+
+  /* Stats row */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin-bottom: 48px;
+  }
+
+  .stat {
+    background: var(--bg2);
+    padding: 24px 20px;
+    text-align: center;
+  }
+
+  .stat-num {
+    font-size: 32px;
+    font-weight: 800;
+    color: var(--accent);
+    font-family: 'Space Mono', monospace;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* Modules */
+  .section-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: var(--muted);
+    margin-bottom: 20px;
+    font-family: 'Space Mono', monospace;
+  }
+
+  .modules {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 48px;
+  }
+
+  .module {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color .2s;
+  }
+
+  .module:hover { border-color: #2d3748; }
+
+  .module::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--module-color, var(--accent));
+    opacity: .7;
+  }
+
+  .module-icon {
+    font-size: 20px;
+    margin-bottom: 10px;
+    display: block;
+  }
+
+  .module-name {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+
+  .module-desc {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  /* Features */
+  .features {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-bottom: 48px;
+  }
+
+  .feature-group h3 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent2);
+    margin-bottom: 14px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-family: 'Space Mono', monospace;
+  }
+
+  .feature-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .feature-list li {
+    font-size: 13px;
+    color: #94a3b8;
+    padding-left: 16px;
+    position: relative;
+    line-height: 1.5;
+  }
+
+  .feature-list li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+  }
+
+  /* Access card */
+  .access {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    padding: 28px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 40px;
+  }
+
+  .access-left h3 {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+    margin-bottom: 12px;
+    font-family: 'Space Mono', monospace;
+  }
+
+  .creds {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .cred {
+    display: flex;
+    gap: 12px;
+    font-family: 'Space Mono', monospace;
+    font-size: 12px;
+  }
+
+  .cred-key {
+    color: var(--muted);
+    min-width: 60px;
+  }
+
+  .cred-val {
+    color: var(--accent);
+  }
+
+  .access-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--accent);
+    color: #000;
+    text-decoration: none;
+    font-family: 'Space Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 14px 28px;
+    letter-spacing: 1px;
+    white-space: nowrap;
+    transition: opacity .2s;
+  }
+
+  .access-btn:hover { opacity: .85; }
+
+  /* Pipeline */
+  .pipeline {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    padding: 24px 28px;
+    margin-bottom: 48px;
+  }
+
+  .pipeline-title {
+    font-size: 11px;
+    font-family: 'Space Mono', monospace;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 18px;
+  }
+
+  .pipeline-flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .pipe-step {
+    background: #161b24;
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+  }
+
+  .pipe-arrow {
+    color: var(--accent);
+    font-size: 14px;
+    padding: 0 4px;
+  }
+
+  /* Footer */
+  .footer {
+    border-top: 1px solid var(--border);
+    padding-top: 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .footer-left {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .tech-stack {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .tech {
+    background: #161b24;
+    border: 1px solid var(--border);
+    padding: 4px 10px;
+    font-size: 10px;
+    font-family: 'Space Mono', monospace;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  @media (max-width: 640px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .modules { grid-template-columns: 1fr 1fr; }
+    .features { grid-template-columns: 1fr; }
+    .access { flex-direction: column; }
+    .footer { flex-direction: column; gap: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="header">
+    <span class="logo-badge">Merino BI</span>
+    <span class="version">// Amazon Intelligence Platform v2.1</span>
+  </div>
+
+  <div class="hero">
+    <h1>Повний контроль<br>над <span>Amazon бізнесом</span><br>в одному місці</h1>
+    <p>Автоматична збірка даних з 30+ джерел, аналіз відгуків, фінансів, залишків та трафіку — з AI-інсайтами в реальному часі.</p>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-num">30+</div>
+      <div class="stat-label">Типів звітів</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">36×</div>
+      <div class="stat-label">Оновлень на день</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">9</div>
+      <div class="stat-label">Маркетплейсів</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">3</div>
+      <div class="stat-label">Мови інтерфейсу</div>
+    </div>
+  </div>
+
+  <div class="section-title">// Модулі системи</div>
+
+  <div class="modules">
+    <div class="module" style="--module-color: #5b9bd5">
+      <span class="module-icon">📊</span>
+      <div class="module-name">Sales & Traffic</div>
+      <div class="module-desc">Сесії, конверсія, Buy Box, дохід по ASIN і маркетплейсу</div>
+    </div>
+    <div class="module" style="--module-color: #e8b84b">
+      <span class="module-icon">⭐</span>
+      <div class="module-name">Amazon Reviews</div>
+      <div class="module-desc">2500+ відгуків, аналіз по країнах, негатив, AI-аналіз проблем</div>
+    </div>
+    <div class="module" style="--module-color: #4caf82">
+      <span class="module-icon">💰</span>
+      <div class="module-name">Settlements</div>
+      <div class="module-desc">Net Payout, комісії, рефанди, P&L по валютах</div>
+    </div>
+    <div class="module" style="--module-color: #e05252">
+      <span class="module-icon">📦</span>
+      <div class="module-name">Inventory Health</div>
+      <div class="module-desc">Залишки, velocity, aging, заморожені кошти по SKU</div>
+    </div>
+    <div class="module" style="--module-color: #a78bfa">
+      <span class="module-icon">🛒</span>
+      <div class="module-name">Orders Analytics</div>
+      <div class="module-desc">Тренди замовлень, топ SKU, динаміка продажів</div>
+    </div>
+    <div class="module" style="--module-color: #f97316">
+      <span class="module-icon">🤖</span>
+      <div class="module-name">AI Insights (Gemini)</div>
+      <div class="module-desc">Контекстні питання до кожного звіту з реальними даними</div>
+    </div>
+  </div>
+
+  <div class="features">
+    <div class="feature-group">
+      <h3>// Дані & Автоматизація</h3>
+      <ul class="feature-list">
+        <li>Amazon SP-API + Advertising API інтеграція</li>
+        <li>12 ETL-завантажувачів, 36 запусків/день</li>
+        <li>Apify scraper для відгуків по всіх маркетплейсах</li>
+        <li>PostgreSQL з авто-схемою та UPSERT деdup</li>
+        <li>Дата останнього збору по кожному ASIN</li>
+      </ul>
+    </div>
+    <div class="feature-group">
+      <h3>// Інтерфейс & Доступ</h3>
+      <ul class="feature-list">
+        <li>Ролева авторизація: admin / user з правами по звітах</li>
+        <li>Мультимовність: UA 🇺🇦 / EN 🇺🇸 / RU 🌍</li>
+        <li>Фільтри ASIN × Країна у всіх розділах</li>
+        <li>CSV експорт: balanced вибірка або повний дамп</li>
+        <li>Хмарний деплой: Streamlit Cloud</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="pipeline">
+    <div class="pipeline-title">// Data Pipeline</div>
+    <div class="pipeline-flow">
+      <span class="pipe-step">Amazon SP-API</span>
+      <span class="pipe-arrow">→</span>
+      <span class="pipe-step">ETL Python</span>
+      <span class="pipe-arrow">→</span>
+      <span class="pipe-step">PostgreSQL</span>
+      <span class="pipe-arrow">→</span>
+      <span class="pipe-step">Streamlit</span>
+      <span class="pipe-arrow">→</span>
+      <span class="pipe-step">Gemini AI</span>
+      <span class="pipe-arrow">→</span>
+      <span class="pipe-step">Insights</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-left">MR.EQUIPP LIMITED · Built with obsession</div>
+    <div class="tech-stack">
+      <span class="tech">Python</span>
+      <span class="tech">Streamlit</span>
+      <span class="tech">PostgreSQL</span>
+      <span class="tech">Plotly</span>
+      <sp
