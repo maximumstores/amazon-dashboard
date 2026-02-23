@@ -14,6 +14,11 @@ import numpy as np
 import datetime as dt
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+try:
+    import google.generativeai as genai
+    GEMINI_OK = True
+except ImportError:
+    GEMINI_OK = False
 
 load_dotenv()
 
@@ -120,6 +125,13 @@ translations = {
         "rev_goto_asin": "📦 Перейти до ASIN:",
         "rev_not_selected": "— не вибрано —",
         "rev_back": "← Назад до всіх ASINів",
+        "about_title": "## ℹ️ Про Merino BI Dashboard",
+        "about_caption": "Amazon Intelligence Platform — повний контроль над FBA бізнесом в одному місці",
+        "about_modules": "### 📦 Модулі системи",
+        "about_pipeline": "### ⚙️ Data Pipeline",
+        "about_features": "**✅ Особливості**",
+        "about_stack": "**🔧 Технічний стек**",
+        "about_footer": "MR.EQUIPP LIMITED · Built with obsession · v5.0",
         "rev_asins_in_filter": "📦 ASINів у фільтрі",
         "insights_title": "🧠 Інсайти",
         "insight_rating_health": "Здоров'я рейтингу",
@@ -240,6 +252,13 @@ translations = {
         "rev_goto_asin": "📦 Go to ASIN:",
         "rev_not_selected": "— not selected —",
         "rev_back": "← Back to all ASINs",
+        "about_title": "## ℹ️ About Merino BI Dashboard",
+        "about_caption": "Amazon Intelligence Platform — full control over your FBA business in one place",
+        "about_modules": "### 📦 System Modules",
+        "about_pipeline": "### ⚙️ Data Pipeline",
+        "about_features": "**✅ Features**",
+        "about_stack": "**🔧 Tech Stack**",
+        "about_footer": "MR.EQUIPP LIMITED · Built with obsession · v5.0",
         "rev_asins_in_filter": "📦 ASINs in filter",
         "insights_title": "🧠 Insights",
         "insight_rating_health": "Rating Health",
@@ -360,6 +379,13 @@ translations = {
         "rev_goto_asin": "📦 Перейти к ASIN:",
         "rev_not_selected": "— не выбрано —",
         "rev_back": "← Назад ко всем ASINам",
+        "about_title": "## ℹ️ О Merino BI Dashboard",
+        "about_caption": "Amazon Intelligence Platform — полный контроль над FBA бизнесом в одном месте",
+        "about_modules": "### 📦 Модули системы",
+        "about_pipeline": "### ⚙️ Data Pipeline",
+        "about_features": "**✅ Особенности**",
+        "about_stack": "**🔧 Технологии**",
+        "about_footer": "MR.EQUIPP LIMITED · Built with obsession · v5.0",
         "rev_asins_in_filter": "📦 ASINов в фильтре",
         "insights_title": "🧠 Инсайты",
         "insight_rating_health": "Здоровье рейтинга",
@@ -1103,41 +1129,65 @@ def show_asin_links_table(df, has_domain):
         st.info("Немає даних про ASINи.")
         return None, None
 
+    # Визначаємо колонку дати
+    date_col = None
+    for c in ['review_date', 'scraped_at', 'created_at', 'date']:
+        if c in df.columns:
+            date_col = c
+            break
+
     if has_domain and 'domain' in df.columns:
-        combos = df.groupby(['asin', 'domain']).agg(
+        agg_dict = dict(
             Reviews=('rating', 'count'),
             Rating=('rating', 'mean'),
             Neg=('rating', lambda x: (x <= 2).sum()),
-        ).reset_index()
+        )
+        if date_col:
+            agg_dict['Остання дата'] = (date_col, 'max')
+        combos = df.groupby(['asin', 'domain']).agg(**agg_dict).reset_index()
         combos['Neg %'] = (combos['Neg'] / combos['Reviews'] * 100).round(1)
         combos['Country'] = combos['domain'].map(lambda x: DOMAIN_LABELS.get(x, f'🌍 {x}'))
         combos['🔗 Amazon'] = combos.apply(
             lambda r: f"https://www.amazon.{r['domain']}/dp/{r['asin']}", axis=1
         )
         combos = combos.sort_values(['Neg %'], ascending=False)
-        table_df = combos[['asin', 'Country', 'Reviews', 'Rating', 'Neg %', 'domain', '🔗 Amazon']].rename(
+        cols_to_take = ['asin', 'Country', 'Reviews', 'Rating', 'Neg %']
+        if date_col: cols_to_take.append('Остання дата')
+        cols_to_take += ['domain', '🔗 Amazon']
+        table_df = combos[cols_to_take].rename(
             columns={'asin': 'ASIN', 'domain': '_domain'}
         ).reset_index(drop=True)
     else:
-        asin_stats = df.groupby('asin').agg(
+        agg_dict = dict(
             Reviews=('rating', 'count'),
             Rating=('rating', 'mean'),
             Neg=('rating', lambda x: (x <= 2).sum()),
-        ).reset_index()
+        )
+        if date_col:
+            agg_dict['Остання дата'] = (date_col, 'max')
+        asin_stats = df.groupby('asin').agg(**agg_dict).reset_index()
         asin_stats['Neg %'] = (asin_stats['Neg'] / asin_stats['Reviews'] * 100).round(1)
         asin_stats['🔗 Amazon'] = asin_stats['asin'].apply(lambda a: f"https://www.amazon.com/dp/{a}")
         asin_stats['_domain'] = 'com'
-        table_df = asin_stats[['asin', 'Reviews', 'Rating', 'Neg %', '_domain', '🔗 Amazon']].rename(
+        cols_to_take = ['asin', 'Reviews', 'Rating', 'Neg %']
+        if date_col: cols_to_take.append('Остання дата')
+        cols_to_take += ['_domain', '🔗 Amazon']
+        table_df = asin_stats[cols_to_take].rename(
             columns={'asin': 'ASIN'}
         ).reset_index(drop=True)
 
     table_df['Rating'] = table_df['Rating'].round(2)
+
+    # Форматуємо дату
+    if 'Остання дата' in table_df.columns:
+        table_df['Остання дата'] = pd.to_datetime(table_df['Остання дата'], errors='coerce').dt.strftime('%Y-%m-%d')
 
     st.dataframe(
         table_df.drop(columns=['_domain']),
         column_config={
             "🔗 Amazon": st.column_config.LinkColumn("🔗 Amazon", display_text="Відкрити →"),
             "Rating": st.column_config.NumberColumn("⭐ Rating", format="%.2f ★"),
+            "Остання дата": st.column_config.TextColumn("📅 Остання дата"),
             "Neg %": st.column_config.NumberColumn("🔴 Neg %", format="%.1f%%"),
             "Reviews": st.column_config.NumberColumn("📝 Відгуків"),
         },
@@ -1583,6 +1633,20 @@ def show_reviews(t):
 
     insights_reviews(df, asin=selected_asin)
 
+    # ── AI Chat ──
+    neg_examples = df[df['rating'] <= 2][['asin','domain','rating','title','content']].head(10).to_string() if not df.empty else ""
+    ctx_rev = f"""Amazon Reviews аналіз:
+- Всього відгуків: {len(df)} | Середній рейтинг: {df['rating'].mean():.2f}★
+- Негативних (1-2★): {int((df['rating']<=2).sum())} | Позитивних (4-5★): {int((df['rating']>=4).sum())}
+- ASIN: {selected_asin or 'всі'} | Країни: {', '.join(selected_domains) if selected_domains else 'всі'}
+Приклади негативних відгуків:
+{neg_examples}"""
+    show_ai_chat(ctx_rev, [
+        "🔴 Які головні проблеми продукту з негативних відгуків?",
+        "💡 Як покращити рейтинг? Конкретні дії",
+        "📝 Напиши відповідь покупцю на головну скаргу",
+    ], "reviews")
+
     st.markdown("---")
     st.markdown(t["rev_texts"])
     st.caption(t["rev_sort_hint"])
@@ -1650,6 +1714,159 @@ def show_reviews(t):
 # ============================================
 # OTHER REPORT FUNCTIONS
 # ============================================
+
+
+# ════════════════════════════════════════════
+# AI CHAT BLOCK — вставляється в кожен розділ
+# ════════════════════════════════════════════
+
+def show_ai_chat(context: str, preset_questions: list, section_key: str):
+    """Універсальний AI-чат блок з Gemini для будь-якого розділу."""
+    st.markdown("---")
+    st.markdown("### 🤖 AI Інсайти")
+
+    # ── Ключ Gemini ──
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    if not gemini_key:
+        gemini_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else ""
+    if not gemini_key:
+        st.info("💡 Додай GEMINI_API_KEY в Streamlit Secrets щоб активувати AI-чат")
+        return
+
+    if not GEMINI_OK:
+        st.warning("pip install google-generativeai")
+        return
+
+    genai.configure(api_key=gemini_key)
+
+    # ── Список моделей ──
+    with st.expander("🔍 Доступні моделі Gemini для вашого ключа"):
+        try:
+            models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
+            st.write(models)
+        except Exception as e:
+            st.write(f"Помилка: {e}")
+
+    # ── Швидкі кнопки ──
+    ai_cols = st.columns(len(preset_questions))
+    clicked_q = None
+    for i, (col, q) in enumerate(zip(ai_cols, preset_questions)):
+        if col.button(q, key=f"ai_btn_{section_key}_{i}", use_container_width=True):
+            clicked_q = q
+
+    # ── Поле вводу ──
+    user_q = st.text_input(
+        "💬 Задайте питання про ваші дані",
+        value=clicked_q or "",
+        placeholder="Чому впали продажі? Які можливості для зростання?",
+        key=f"ai_input_{section_key}"
+    )
+
+    if st.button("🚀 Спитати AI", key=f"ai_submit_{section_key}", type="primary"):
+        if user_q:
+            with st.spinner("AI аналізує дані..."):
+                try:
+                    model = genai.GenerativeModel("gemini-1.5-flash")
+                    prompt = f"""Ти — експерт з Amazon FBA бізнесу. 
+Аналізуй тільки надані дані, не вигадуй факти.
+Давай конкретні actionable рекомендації.
+
+ДАНІ:
+{context}
+
+ПИТАННЯ: {user_q}
+
+Відповідай стисло, по суті, з конкретними числами з даних."""
+                    response = model.generate_content(prompt)
+                    st.markdown("#### 🧠 Відповідь AI:")
+                    st.markdown(response.text)
+                except Exception as e:
+                    st.error(f"Помилка Gemini: {e}")
+        else:
+            st.warning("Введіть питання")
+
+
+
+def show_about():
+    st.markdown("""
+<style>
+.about-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:#1e2330; border:1px solid #1e2330; margin:24px 0; }
+.about-stat { background:#0f1218; padding:20px; text-align:center; }
+.about-stat-num { font-size:28px; font-weight:800; color:#e8b84b; font-family:monospace; }
+.about-stat-lbl { font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin-top:4px; }
+.module-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:16px 0 32px; }
+.mod { background:#0f1218; border:1px solid #1e2330; border-top:2px solid var(--c); padding:16px; }
+.mod-icon { font-size:20px; margin-bottom:8px; }
+.mod-name { font-size:13px; font-weight:700; margin-bottom:4px; }
+.mod-desc { font-size:12px; color:#64748b; line-height:1.5; }
+.pipe { display:flex; align-items:center; flex-wrap:wrap; gap:4px; margin:16px 0 32px; }
+.pipe-step { background:#161b24; border:1px solid #1e2330; padding:8px 14px; font-size:12px; font-family:monospace; }
+.pipe-arr { color:#e8b84b; padding:0 4px; }
+.tech-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+.tech { background:#161b24; border:1px solid #1e2330; padding:4px 10px; font-size:11px; font-family:monospace; color:#64748b; }
+</style>
+""", unsafe_allow_html=True)
+
+    st.markdown(t["about_title"])
+    st.caption(t["about_caption"])
+    st.markdown("---")
+
+    # Stats
+    st.markdown("""
+<div class="about-grid">
+  <div class="about-stat"><div class="about-stat-num">30+</div><div class="about-stat-lbl">Типів звітів</div></div>
+  <div class="about-stat"><div class="about-stat-num">36×</div><div class="about-stat-lbl">Оновлень/день</div></div>
+  <div class="about-stat"><div class="about-stat-num">9</div><div class="about-stat-lbl">Маркетплейсів</div></div>
+  <div class="about-stat"><div class="about-stat-num">3</div><div class="about-stat-lbl">Мови інтерфейсу</div></div>
+</div>""", unsafe_allow_html=True)
+
+    # Modules
+    st.markdown(t["about_modules"])
+    st.markdown("""
+<div class="module-grid">
+  <div class="mod" style="--c:#5b9bd5"><div class="mod-icon">📈</div><div class="mod-name">Sales & Traffic</div><div class="mod-desc">Сесії, конверсія, Buy Box, дохід по ASIN і маркетплейсу щодня</div></div>
+  <div class="mod" style="--c:#e8b84b"><div class="mod-icon">⭐</div><div class="mod-name">Amazon Reviews</div><div class="mod-desc">2500+ відгуків, аналіз по країнах, негатив, AI-аналіз проблем продукту</div></div>
+  <div class="mod" style="--c:#4caf82"><div class="mod-icon">💰</div><div class="mod-name">Settlements</div><div class="mod-desc">Net Payout, комісії Amazon, рефанди, P&L по валютах і датах</div></div>
+  <div class="mod" style="--c:#e05252"><div class="mod-icon">📦</div><div class="mod-name">Inventory Health</div><div class="mod-desc">Залишки, velocity, aging-аналіз, заморожені кошти по SKU</div></div>
+  <div class="mod" style="--c:#a78bfa"><div class="mod-icon">🛒</div><div class="mod-name">Orders Analytics</div><div class="mod-desc">Тренди замовлень, топ SKU, сезонність, динаміка продажів</div></div>
+  <div class="mod" style="--c:#f97316"><div class="mod-icon">🤖</div><div class="mod-name">AI Insights</div><div class="mod-desc">Gemini AI з контекстом реальних даних у кожному розділі</div></div>
+</div>""", unsafe_allow_html=True)
+
+    # Pipeline
+    st.markdown(t["about_pipeline"])
+    st.markdown("""
+<div class="pipe">
+  <span class="pipe-step">Amazon SP-API</span><span class="pipe-arr">→</span>
+  <span class="pipe-step">12 ETL Loaders</span><span class="pipe-arr">→</span>
+  <span class="pipe-step">PostgreSQL</span><span class="pipe-arr">→</span>
+  <span class="pipe-step">Streamlit Cloud</span><span class="pipe-arr">→</span>
+  <span class="pipe-step">Gemini AI</span><span class="pipe-arr">→</span>
+  <span class="pipe-step">Insights & Actions</span>
+</div>""", unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(t["about_features"])
+        st.markdown("""
+- Ролева авторизація: admin / user з правами по звітах  
+- Мультимовність: 🇺🇦 UA / 🇺🇸 EN / 🌍 RU  
+- Фільтри ASIN × Країна у всіх розділах  
+- CSV-експорт: balanced вибірка або повний дамп БД  
+- Дата останнього збору відгуків по кожному ASIN  
+""")
+    with col2:
+        st.markdown(t["about_stack"])
+        st.markdown("""
+- **Backend**: Python, PostgreSQL, SQLAlchemy  
+- **Frontend**: Streamlit, Plotly  
+- **APIs**: Amazon SP-API, Advertising API, Apify  
+- **AI**: Google Gemini 1.5 Flash  
+- **Deploy**: Streamlit Cloud  
+""")
+
+    st.markdown("---")
+    st.caption(t["about_footer"])
+
 
 def show_overview(df_filtered, t, selected_date):
     st.markdown(f"### {t['ov_title']}")
@@ -1769,6 +1986,17 @@ def show_sales_traffic(t):
     st.download_button(t["st_download"], csv, "sales_traffic.csv","text/csv")
     insights_sales_traffic(df_filtered, as_)
 
+    # ── AI Chat ──
+    ctx = f"""Sales & Traffic за обраний період:
+- Сесії: {ts:,} | Перегляди: {tpv:,} | Замовлення: {tu:,}
+- Дохід: ${tr:,.2f} | Конверсія: {ac:.2f}% | Buy Box: {ab:.1f}%
+- Топ ASIN за доходом: {as_.nlargest(3,'Revenue')[['ASIN','Revenue','Conv %']].to_string()}"""
+    show_ai_chat(ctx, [
+        "📈 Проаналізуй тренди продажів і виявлення проблем",
+        "🏆 Які ASIN показують низький Buy Box і що робити?",
+        "🎯 Де найвищий CVR і чому? Дай поради для інших",
+    ], "sales_traffic")
+
 
 def show_settlements(t):
     df_settlements = load_settlements()
@@ -1816,6 +2044,17 @@ def show_settlements(t):
     disp = ['Posted Date','Transaction Type','Order ID','Amount','Currency','Description']
     st.dataframe(df_f[[c for c in disp if c in df_f.columns]].sort_values('Posted Date',ascending=False).head(100),width="stretch")
     insights_settlements(df_f)
+
+    # ── AI Chat ──
+    ctx_set = f"""Settlement фінанси:
+- Net Payout: {sym}{net:,.2f} | Gross Sales: {sym}{gross:,.2f}
+- Refunds: {sym}{refunds:,.2f} | Fees: {sym}{fees:,.2f}
+- Валюта: {sel_cur} | Комісія: {abs(fees)/gross*100:.1f}% від продажів"""
+    show_ai_chat(ctx_set, [
+        "💰 Як знизити комісії Amazon і збільшити net payout?",
+        "📊 Чи нормальний рівень рефандів? Що робити?",
+        "🎯 Де найбільші витрати і як їх оптимізувати?",
+    ], "settlements")
 
 
 def show_returns(t=None):
@@ -1897,6 +2136,18 @@ def show_returns(t=None):
     st.download_button(t["ret_download"],df_f.to_csv(index=False).encode('utf-8'),"returns.csv","text/csv")
     insights_returns(df_f, rr)
 
+    # ── AI Chat ──
+    top_ret = df_f['SKU'].value_counts().head(5).to_string() if not df_f.empty else ""
+    ctx_ret = f"""Returns аналіз:
+- Всього повернень: {len(df_f)} | Return Rate: {rr:.1f}%
+- Вартість повернень: ${df_f['Return Value'].sum():,.2f}
+- Топ SKU за поверненнями: {top_ret}"""
+    show_ai_chat(ctx_ret, [
+        "🔴 Чому так багато повернень? Головні причини",
+        "📦 Які SKU найпроблемніші і що робити?",
+        "💡 Як знизити Return Rate? Конкретні кроки",
+    ], "returns")
+
 
 def show_inventory_finance(df_filtered, t):
     tv = df_filtered['Stock Value'].sum(); tu = df_filtered['Available'].sum()
@@ -1937,6 +2188,17 @@ def show_aging(df_filtered, t):
             if not ds.empty:
                 fig = px.scatter(ds,x='Available',y='Velocity',size='Stock Value',color='Store Name' if 'Store Name' in ds.columns else None,hover_name='SKU',log_x=True)
                 fig.update_layout(height=400); st.plotly_chart(fig, width="stretch")
+
+    # ── AI Chat ──
+    slow = df_filtered[df_filtered['Velocity'] < 0.1][['SKU','Available','Stock Value']].head(5).to_string() if 'Velocity' in df_filtered.columns else ""
+    ctx_aging = f"""Inventory Health:
+- SKU всього: {len(df_filtered)} | Загальна вартість: ${df_filtered['Stock Value'].sum():,.0f if 'Stock Value' in df_filtered.columns else 0}
+- Повільні SKU (Velocity<0.1): {slow}"""
+    show_ai_chat(ctx_aging, [
+        "🐢 Які SKU застряли? Як прискорити їх продаж?",
+        "💸 Де заморожені гроші? Що ліквідувати першим?",
+        "📦 Як оптимізувати склад для зменшення storage fees?",
+    ], "aging")
 
 
 def show_ai_forecast(df, t):
@@ -1997,6 +2259,15 @@ def show_orders(t=None):
             sc = df_f['Order Status'].value_counts().reset_index(); sc.columns=['Status','Count']
             fig3 = px.pie(sc,values='Count',names='Status',hole=0.4); st.plotly_chart(fig3, width="stretch")
     insights_orders(df_f)
+
+    # ── AI Chat ──
+    top_skus = df_f.groupby('SKU')['quantity'].sum().nlargest(5).to_string() if 'SKU' in df_f.columns and 'quantity' in df_f.columns else ""
+    ctx_ord = f"""Orders аналіз: замовлень {len(df_f)}. Топ SKU: {top_skus}"""
+    show_ai_chat(ctx_ord, [
+        "🛒 Які SKU найбільш прибуткові? Де збільшити запас?",
+        "📈 Як прискорити зростання продажів?",
+        "🎯 Які тренди в замовленнях?",
+    ], "orders")
 
 
 # ============================================
@@ -2385,7 +2656,7 @@ all_nav = [
     "🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
     "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
     "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast",
-    "📋 FBA Inventory Table","🕷 Scraper Reviews",
+    "📋 FBA Inventory Table","🕷 Scraper Reviews","ℹ️ Про додаток",
 ]
 # Адмін бачить все + адмінку
 if user["role"] == "admin":
@@ -2416,6 +2687,7 @@ elif report_choice == "🧠 AI Forecast":              show_ai_forecast(df, t)
 elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filtered, t, selected_date)
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 elif report_choice == "👑 User Management":          show_admin_panel()
+elif report_choice == "ℹ️ Про додаток":              show_about()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
