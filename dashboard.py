@@ -1739,13 +1739,10 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 
     genai.configure(api_key=gemini_key)
 
-    # ── Список моделей ──
-    with st.expander("🔍 Доступні моделі Gemini для вашого ключа"):
-        try:
-            models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
-            st.write(models)
-        except Exception as e:
-            st.write(f"Помилка: {e}")
+    # Модель з secrets або дефолт
+    gemini_model = os.environ.get("GEMINI_MODEL", "")
+    if not gemini_model:
+        gemini_model = st.secrets.get("GEMINI_MODEL", "gemini-2.5-flash") if hasattr(st, "secrets") else "gemini-2.5-flash"
 
     # ── Швидкі кнопки ──
     ai_cols = st.columns(len(preset_questions))
@@ -1766,7 +1763,7 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
         if user_q:
             with st.spinner("AI аналізує дані..."):
                 try:
-                    model = genai.GenerativeModel("gemini-1.5-flash")
+                    model = genai.GenerativeModel(gemini_model)
                     prompt = f"""Ти — експерт з Amazon FBA бізнесу. 
 Аналізуй тільки надані дані, не вигадуй факти.
 Давай конкретні actionable рекомендації.
