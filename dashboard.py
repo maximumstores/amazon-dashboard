@@ -1790,20 +1790,34 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 def show_about():
     st.markdown("""
 <style>
-.about-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:#1e2330; border:1px solid #1e2330; margin:24px 0; }
-.about-stat { background:#0f1218; padding:20px; text-align:center; }
-.about-stat-num { font-size:28px; font-weight:800; color:#e8b84b; font-family:monospace; }
-.about-stat-lbl { font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin-top:4px; }
+/* Адаптивні кольори для світлої і темної теми */
+:root {
+  --ab-bg: #f8fafc;
+  --ab-border: #e2e8f0;
+  --ab-text: #1e293b;
+  --ab-muted: #64748b;
+  --ab-accent: #d97706;
+  --ab-card: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --ab-bg:#0f1218; --ab-border:#1e2330; --ab-text:#e2e8f0; --ab-muted:#64748b; --ab-accent:#e8b84b; --ab-card:#161b24; }
+}
+[data-theme="dark"] {
+  --ab-bg:#0f1218; --ab-border:#1e2330; --ab-text:#e2e8f0; --ab-muted:#64748b; --ab-accent:#e8b84b; --ab-card:#161b24;
+}
+
+.about-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--ab-border); border:1px solid var(--ab-border); margin:24px 0; }
+.about-stat { background:var(--ab-card); padding:20px; text-align:center; }
+.about-stat-num { font-size:28px; font-weight:800; color:var(--ab-accent); font-family:monospace; }
+.about-stat-lbl { font-size:11px; color:var(--ab-muted); text-transform:uppercase; letter-spacing:1px; margin-top:4px; }
 .module-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:16px 0 32px; }
-.mod { background:#0f1218; border:1px solid #1e2330; border-top:2px solid var(--c); padding:16px; }
+.mod { background:var(--ab-card); border:1px solid var(--ab-border); border-top:3px solid var(--c,#e8b84b); padding:16px; border-radius:4px; }
 .mod-icon { font-size:20px; margin-bottom:8px; }
-.mod-name { font-size:13px; font-weight:700; margin-bottom:4px; }
-.mod-desc { font-size:12px; color:#64748b; line-height:1.5; }
+.mod-name { font-size:13px; font-weight:700; margin-bottom:4px; color:var(--ab-text); }
+.mod-desc { font-size:12px; color:var(--ab-muted); line-height:1.5; }
 .pipe { display:flex; align-items:center; flex-wrap:wrap; gap:4px; margin:16px 0 32px; }
-.pipe-step { background:#161b24; border:1px solid #1e2330; padding:8px 14px; font-size:12px; font-family:monospace; }
-.pipe-arr { color:#e8b84b; padding:0 4px; }
-.tech-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
-.tech { background:#161b24; border:1px solid #1e2330; padding:4px 10px; font-size:11px; font-family:monospace; color:#64748b; }
+.pipe-step { background:var(--ab-card); border:1px solid var(--ab-border); padding:8px 14px; font-size:12px; font-family:monospace; color:var(--ab-text); border-radius:3px; }
+.pipe-arr { color:var(--ab-accent); padding:0 4px; font-weight:bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -2656,13 +2670,13 @@ all_nav = [
     "🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
     "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
     "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast",
-    "📋 FBA Inventory Table","🕷 Scraper Reviews","ℹ️ Про додаток",
+    "📋 FBA Inventory Table","🕷 Scraper Reviews",
 ]
 # Адмін бачить все + адмінку
 if user["role"] == "admin":
-    report_options = all_nav + ["👑 User Management"]
+    report_options = all_nav + ["👑 User Management", "ℹ️ Про додаток"]
 else:
-    report_options = [r for r in all_nav if can_view(r)]
+    report_options = [r for r in all_nav if can_view(r)] + ["ℹ️ Про додаток"]
 
 if not report_options:
     st.warning("У вас немає доступу до жодного розділу. Зверніться до адміністратора.")
