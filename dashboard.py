@@ -1871,7 +1871,7 @@ def show_about():
 - **Backend**: Python, PostgreSQL, SQLAlchemy  
 - **Frontend**: Streamlit, Plotly  
 - **APIs**: Amazon SP-API, Advertising API, Apify  
-- **AI**: Google Gemini 1.5 Flash  
+- **AI**: Google Gemini  
 - **Deploy**: Streamlit Cloud  
 """)
 
