@@ -1744,43 +1744,48 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
     if not gemini_model:
         gemini_model = st.secrets.get("GEMINI_MODEL", "gemini-2.5-flash") if hasattr(st, "secrets") else "gemini-2.5-flash"
 
-    # ── Швидкі кнопки ──
+    # ── Швидкі кнопки — клік одразу запускає AI ──
     ai_cols = st.columns(len(preset_questions))
-    clicked_q = None
+    auto_q = None
     for i, (col, q) in enumerate(zip(ai_cols, preset_questions)):
         if col.button(q, key=f"ai_btn_{section_key}_{i}", use_container_width=True):
-            clicked_q = q
+            auto_q = q
 
     # ── Поле вводу ──
     user_q = st.text_input(
         "💬 Задайте питання про ваші дані",
-        value=clicked_q or "",
         placeholder="Чому впали продажі? Які можливості для зростання?",
         key=f"ai_input_{section_key}"
     )
 
-    if st.button("🚀 Спитати AI", key=f"ai_submit_{section_key}", type="primary"):
-        if user_q:
-            with st.spinner("AI аналізує дані..."):
-                try:
-                    model = genai.GenerativeModel(gemini_model)
-                    prompt = f"""Ти — експерт з Amazon FBA бізнесу. 
+    # Визначаємо фінальне питання: кнопка має пріоритет
+    final_q = auto_q or user_q
+
+    run_ai = auto_q is not None  # кнопка — одразу запуск
+    if not run_ai:
+        run_ai = st.button("🚀 Спитати AI", key=f"ai_submit_{section_key}", type="primary")
+
+    if run_ai and final_q:
+        with st.spinner("AI аналізує дані..."):
+            try:
+                model = genai.GenerativeModel(gemini_model)
+                prompt = f"""Ти — експерт з Amazon FBA бізнесу. 
 Аналізуй тільки надані дані, не вигадуй факти.
 Давай конкретні actionable рекомендації.
 
 ДАНІ:
 {context}
 
-ПИТАННЯ: {user_q}
+ПИТАННЯ: {final_q}
 
 Відповідай стисло, по суті, з конкретними числами з даних."""
-                    response = model.generate_content(prompt)
-                    st.markdown("#### 🧠 Відповідь AI:")
-                    st.markdown(response.text)
-                except Exception as e:
-                    st.error(f"Помилка Gemini: {e}")
-        else:
-            st.warning("Введіть питання")
+                response = model.generate_content(prompt)
+                st.markdown("#### 🧠 Відповідь AI:")
+                st.markdown(response.text)
+            except Exception as e:
+                st.error(f"Помилка Gemini: {e}")
+    elif run_ai and not final_q:
+        st.warning("Введіть питання")
 
 
 
