@@ -17,3 +17,4 @@ pyarrow
 requests
 httpx
 bcrypt
+google-generativeai
