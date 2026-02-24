@@ -41,6 +41,49 @@ def ensure_ai_chat_table():
             conn.commit()
     except Exception as e:
         pass  # не критично якщо не вдалось
+import streamlit as st
+import pandas as pd
+import os
+import re
+import psycopg2
+import requests
+import threading
+import queue
+import time
+import plotly.express as px
+import plotly.graph_objects as go
+from sklearn.linear_model import LinearRegression
+import numpy as np
+import datetime as dt
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+try:
+    import google.generativeai as genai
+    GEMINI_OK = True
+except ImportError:
+    GEMINI_OK = False
+
+load_dotenv()
+
+def ensure_ai_chat_table():
+    """Створює таблицю ai_chat_history якщо не існує."""
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS ai_chat_history (
+                    id          SERIAL PRIMARY KEY,
+                    session_id  TEXT NOT NULL,
+                    username    TEXT,
+                    section     TEXT,
+                    role        TEXT,  -- 'user' або 'assistant'
+                    message     TEXT,
+                    created_at  TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            conn.commit()
+    except Exception as e:
+        pass  # не критично якщо не вдалось
 
 def save_chat_message(session_id, username, section, role, message):
     try:
@@ -1993,17 +2036,23 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
         )
         # 3. Auto-fix порожні рядки тільки для відомих TEXT колонок fba_inventory
         # Тільки "Available", "Price", "Velocity", "Days of Supply" — вони TEXT з пустими рядками
-        _text_cols = ['"Available"', '"Price"', '"Velocity"', '"Days of Supply"',
-                      '"Quantity"', '"Item Price"', '"Item Tax"', '"Shipping Price"',
-                      '"Total Amount"', '"Amount"', '"Impressions"', '"Clicks"',
-                      '"Spend"', '"Sales"', '"ACOS"', '"ROAS"', '"CTR"', '"CPC"', '"Orders"']
-        for _col in _text_cols:
-            # CAST("Available" AS FLOAT) → CAST(NULLIF("Available", '') AS FLOAT)
-            sql_query = _re.sub(
-                r'CAST\(' + _re.escape(_col) + r'\s+AS\s+(FLOAT|INT|BIGINT|DOUBLE PRECISION)\)',
-                lambda m, c=_col: f'CAST(NULLIF({c}, '') AS {m.group(1)})',
-                sql_query
-            )
+        # 3. Simple string replace для TEXT колонок — без regex lambda
+        _nullif_pairs = [
+            ('"Available"', 'FLOAT'), ('"Available"', 'INT'),
+            ('"Price"', 'FLOAT'), ('"Velocity"', 'FLOAT'),
+            ('"Days of Supply"', 'FLOAT'), ('"Days of Supply"', 'INT'),
+            ('"Quantity"', 'INT'), ('"Item Price"', 'FLOAT'),
+            ('"Item Tax"', 'FLOAT'), ('"Shipping Price"', 'FLOAT'),
+            ('"Total Amount"', 'FLOAT'), ('"Amount"', 'FLOAT'),
+            ('"Impressions"', 'INT'), ('"Clicks"', 'INT'),
+            ('"Spend"', 'FLOAT'), ('"Sales"', 'FLOAT'),
+            ('"ACOS"', 'FLOAT'), ('"ROAS"', 'FLOAT'),
+            ('"CTR"', 'FLOAT'), ('"CPC"', 'FLOAT'), ('"Orders"', 'INT'),
+        ]
+        for _col, _type in _nullif_pairs:
+            _old = f'CAST({_col} AS {_type})'
+            _new = f"CAST(NULLIF({_col}, '') AS {_type})"
+            sql_query = sql_query.replace(_old, _new)
         engine = get_engine()
         import pandas as _pd
         with engine.connect() as _conn:
