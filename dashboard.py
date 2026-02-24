@@ -1813,39 +1813,109 @@ def get_db_schema():
    - product_attributes (TEXT), scraped_at (TIMESTAMP)
 
 3. settlements — фінансові розрахунки Amazon
-   Колонки (точні назви, з великої літери бо так в БД):
-   - "Settlement ID", "Settlement Start Date", "Settlement End Date"
-   - "Transaction Type" (TEXT) — 'Order', 'Refund', 'FBA Inventory Fee' etc
-   - "Amount" (FLOAT) — сума (від'ємна = витрати)
-   - "Posted Date" (DATE)
-   - "ASIN" (TEXT), "SKU" (TEXT), "Description" (TEXT)
-   - "Currency" (TEXT)
-   Приклад: SELECT SUM("Amount") FROM settlements WHERE "Transaction Type"='Order'
+   Колонки (ТОЧНІ назви з лоадера v2.6, всі в подвійних лапках):
+   - "Settlement ID" (TEXT)
+   - "Settlement Start Date" (TEXT), "Settlement End Date" (TEXT)
+   - "Deposit Date" (TEXT)
+   - "Total Amount" (TEXT) — загальна сума виплати
+   - "Currency" (TEXT) — 'USD', 'EUR', 'GBP' etc
+   - "Transaction Type" (TEXT) — 'Order', 'Refund', 'other-transaction' etc
+   - "Order ID" (TEXT)
+   - "SKU" (TEXT)
+   - "Description" (TEXT)
+   - "Quantity" (TEXT)
+   - "Marketplace" (TEXT)
+   - "Amount Type" (TEXT) — тип суми
+   - "Amount Description" (TEXT)
+   - "Amount" (TEXT) — ⚠️ TEXT! Кастуй: CAST("Amount" AS FLOAT). Від'ємне = витрати
+   - "Fulfillment ID" (TEXT)
+   - "Posted Date" (TEXT) — дата, кастуй: CAST("Posted Date" AS DATE)
+   - "Posted Date Time" (TEXT) — з часом
+   ⚠️ ASIN колонки НЕ ІСНУЄ в settlements!
+   Приклад: SELECT SUM(CAST("Amount" AS FLOAT)) FROM settlements WHERE "Transaction Type"='Order'
 
-4. fba_inventory — залишки FBA
-   Колонки (точні назви):
-   - id, sku (TEXT), asin (TEXT)
-   - "Store Name" (TEXT)
-   - available (INT), inbound_quantity (INT)
-   - reserved_quantity (INT), unfulfillable_quantity (INT)
-   - "Stock Value" (FLOAT) — вартість залишків
-   - created_at (TIMESTAMP), date (DATE)
-   Приклад: SELECT sku, available, "Stock Value" FROM fba_inventory
+4. fba_inventory — FBA Inventory (два лоадери пишуть в одну таблицю!)
+   created_at (TIMESTAMP) — час запису, використовуй для фільтрації останнього знімку
 
-5. returns — повернення
-   Колонки (точні назви, з великої літери):
-   - "Return Date" (DATE), "SKU" (TEXT), "ASIN" (TEXT)
-   - "Quantity" (INT), "Reason" (TEXT), "Status" (TEXT)
-   - "Return Value" (FLOAT)
-   Приклад: SELECT "SKU", COUNT(*) FROM returns GROUP BY "SKU" ORDER BY 2 DESC
+   ГРУПА А — колонки від amazon_fba_inventory_loader.py v3.0 (назви з великої, в лапках):
+   - "SKU" (TEXT), "ASIN" (TEXT), "FNSKU" (TEXT)
+   - "Product Name" (TEXT), "Store Name" (TEXT), "Market Place" (TEXT)
+   - "Available" (TEXT) — доступно, кастуй: CAST("Available" AS INT)
+   - "Price" (TEXT) — ціна, кастуй: CAST("Price" AS FLOAT)
+   - "Velocity" (TEXT) — продажів/день, кастуй: CAST("Velocity" AS FLOAT)
+   - "Inbound" (TEXT), "Total Quantity" (TEXT), "FBA Reserved Quantity" (TEXT)
+   - "Units Shipped Last 7 Days" (TEXT), "Units Shipped Last 30 Days" (TEXT)
+   - "Days of Supply" (TEXT)
+   - "Upto 90 Days", "91 to 180 Days", "181 to 270 Days", "271 to 365 Days", "More than 365 Days" (TEXT) — вік запасів
+   ⚠️ "Stock Value" НЕ існує в БД — рахуй: CAST("Available" AS FLOAT) * CAST("Price" AS FLOAT)
 
-6. orders — замовлення
-   Колонки (точні назви, з великої літери):
-   - "Order Date" (DATE), "SKU" (TEXT), "ASIN" (TEXT)
-   - "Quantity" (INT), "Price" (FLOAT), "Currency" (TEXT)
-   - "Order ID" (TEXT), "Status" (TEXT)
+   ГРУПА Б — колонки від inventory_planning_loader.py v1.0 (назви lowercase):
+   - snapshot_date (DATE), sku (TEXT), asin (TEXT)
+   - available (BIGINT), your_price (DOUBLE PRECISION)
+   - units_shipped_t7/t30/t60/t90 (BIGINT)
+   - days_of_supply (BIGINT), sell_through (DOUBLE PRECISION)
+   - inv_age_0_to_90_days, inv_age_91_to_180_days etc (BIGINT)
+   - estimated_storage_cost_next_month (DOUBLE PRECISION)
+   - recommended_action (TEXT)
 
-7. ai_chat_history — історія AI чату
+   ВИКОРИСТОВУЙ ГРУПУ А для більшості запитів (оперативні дані):
+   -- Останній знімок:
+   SELECT "SKU","ASIN","Available","Price","Velocity","Days of Supply",
+          CAST("Available" AS FLOAT)*CAST("Price" AS FLOAT) AS stock_value
+   FROM fba_inventory
+   WHERE created_at >= NOW() - INTERVAL '24 hours'
+     AND "Available" IS NOT NULL AND "SKU" IS NOT NULL
+   ORDER BY stock_value DESC
+
+5. returns — повернення FBA (лоадер v1.0, TRUNCATE при кожному завантаженні)
+   ⚠️ Всі колонки TEXT! TRUNCATE при кожному завантаженні.
+   Колонки (ТОЧНІ назви з лоадера):
+   - "Order ID" (TEXT), "Order Date" (TEXT), "Return Date" (TEXT)
+   - "SKU" (TEXT), "ASIN" (TEXT), "FNSKU" (TEXT), "Product Name" (TEXT)
+   - "Quantity" (TEXT) — кастуй: CAST("Quantity" AS INT)
+   - "Fulfillment Center" (TEXT)
+   - "Detailed Disposition" (TEXT) — 'SELLABLE', 'DAMAGED', 'CUSTOMER_DAMAGED' etc
+   - "Reason" (TEXT) — причина повернення: 'CUSTOMER_RETURN', 'DEFECTIVE' etc
+   - "Status" (TEXT)
+   - "License Plate Number" (TEXT)
+   - "Customer Comments" (TEXT) — коментар покупця
+   ⚠️ "Return Value" НЕ існує в БД — це обчислюється в Python через join з orders!
+   ⚠️ "ASIN" колонка є, але може бути порожньою — краще фільтрувати по "SKU"
+   Приклад: SELECT "SKU", COUNT(*) as cnt, SUM(CAST("Quantity" AS INT)) as units FROM returns GROUP BY "SKU" ORDER BY units DESC LIMIT 20
+   Приклад топ причин: SELECT "Reason", COUNT(*) FROM returns GROUP BY "Reason" ORDER BY 2 DESC
+
+6. orders — замовлення (лоадер v1.1, TRUNCATE при кожному завантаженні)
+   ⚠️ Всі колонки TEXT! CAST при числових операціях.
+   Колонки (ТОЧНІ назви з лоадера):
+   - "Order ID" (TEXT) — amazon-order-id
+   - "Order Date" (TEXT) — purchase-date, кастуй: CAST("Order Date" AS TIMESTAMP)
+   - "SKU" (TEXT), "ASIN" (TEXT), "Product Name" (TEXT)
+   - "Quantity" (TEXT) — кастуй: CAST("Quantity" AS INT)
+   - "Item Price" (TEXT) — кастуй: CAST("Item Price" AS FLOAT)
+   - "Item Tax" (TEXT) — кастуй: CAST("Item Tax" AS FLOAT)
+   - "Shipping Price" (TEXT) — кастуй: CAST("Shipping Price" AS FLOAT)
+   - "Order Status" (TEXT) — 'Shipped', 'Pending', 'Cancelled' etc
+   - "Fulfillment Channel" (TEXT) — 'AFN' (FBA) або 'MFN' (FBM)
+   - "Ship City" (TEXT), "Ship State" (TEXT), "Ship Country" (TEXT)
+   ⚠️ НЕ існує колонка "Price" або "Currency" або "Status" — тільки "Item Price" і "Order Status"!
+   Приклад: SELECT "SKU", SUM(CAST("Quantity" AS INT)) as units, SUM(CAST("Item Price" AS FLOAT)) as revenue FROM orders GROUP BY "SKU" ORDER BY revenue DESC LIMIT 20
+
+7. advertising — Amazon Advertising (Sponsored Products кампанії)
+   ⚠️ Всі колонки TEXT! TRUNCATE при кожному завантаженні (тільки поточні дані).
+   Колонки (ТОЧНІ назви):
+   - "Campaign ID" (TEXT), "Campaign Name" (TEXT), "Campaign Status" (TEXT)
+   - "Impressions" (TEXT) — кастуй: CAST("Impressions" AS INT)
+   - "Clicks" (TEXT) — кастуй: CAST("Clicks" AS INT)
+   - "CTR" (TEXT) — % кліків, кастуй: CAST("CTR" AS FLOAT)
+   - "Spend" (TEXT) — витрати $, кастуй: CAST("Spend" AS FLOAT)
+   - "CPC" (TEXT) — cost per click, кастуй: CAST("CPC" AS FLOAT)
+   - "Orders" (TEXT) — кастуй: CAST("Orders" AS INT)
+   - "Sales" (TEXT) — продажі $, кастуй: CAST("Sales" AS FLOAT)
+   - "ACOS" (TEXT) — % витрат від продажів, кастуй: CAST("ACOS" AS FLOAT)
+   - "ROAS" (TEXT) — return on ad spend, кастуй: CAST("ROAS" AS FLOAT)
+   Приклад: SELECT "Campaign Name", CAST("Spend" AS FLOAT) as spend, CAST("ACOS" AS FLOAT) as acos FROM advertising ORDER BY spend DESC LIMIT 10
+
+8. ai_chat_history — історія AI чату
    Колонки: id, session_id, username, section, role, message, created_at
 
 КРИТИЧНІ ПРАВИЛА ПРО ТИПИ ДАНИХ:
