@@ -622,13 +622,23 @@ def load_reviews():
 # ============================================
 
 def insight_card(emoji, title, text, color=""):
-    border_color = "#4472C4"
-    bg_style = f"background:{color};" if color else "background:rgba(68,114,196,0.08);"
+    # color map: старі темні кольори → нові акцентні для border
+    color_to_border = {
+        "#0d2b1e": "#22c55e",   # зелений
+        "#1a2b1e": "#22c55e",
+        "#2b2400": "#f59e0b",   # жовтий
+        "#2b0d0d": "#ef4444",   # червоний
+        "#1a1a2e": "#6366f1",   # синій
+        "#1e293b": "#4472C4",
+    }
+    border_color = color_to_border.get(color, "#4472C4")
+    # Визначаємо колір фону і тексту через CSS змінні — адаптивно
     st.markdown(
-        f'<div style="{bg_style}border-left:4px solid {border_color};border-radius:8px;'
-        f'padding:14px 18px;margin-bottom:10px;">'
-        f'<div style="font-size:16px;font-weight:700;margin-bottom:4px;">{emoji} {title}</div>'
-        f'<div style="font-size:14px;line-height:1.5;">{text}</div>'
+        f'<div style="border-left:4px solid {border_color};border-radius:6px;'
+        f'padding:12px 16px;margin-bottom:8px;'
+        f'background:color-mix(in srgb, {border_color} 10%, transparent);">'
+        f'<div style="font-size:14px;font-weight:700;margin-bottom:3px;color:{border_color}">{emoji} {title}</div>'
+        f'<div style="font-size:13px;line-height:1.5;opacity:0.9;">{text}</div>'
         f'</div>',
         unsafe_allow_html=True
     )
