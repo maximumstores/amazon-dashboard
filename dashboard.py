@@ -2033,10 +2033,25 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
         st.warning("pip install google-generativeai")
         return
 
-    genai.configure(api_key=gemini_key)
+    # ── Ротація ключів для збільшення квоти ──
+    gemini_key2 = os.environ.get("GEMINI_API_KEY_2", "")
+    if not gemini_key2 and hasattr(st, "secrets"):
+        gemini_key2 = st.secrets.get("GEMINI_API_KEY_2", "")
+
+    if gemini_key2:
+        # Ротація по лічильнику запитів
+        if "gemini_key_counter" not in st.session_state:
+            st.session_state["gemini_key_counter"] = 0
+        st.session_state["gemini_key_counter"] += 1
+        # Чергуємо ключі кожен запит
+        active_key = gemini_key if st.session_state["gemini_key_counter"] % 2 == 0 else gemini_key2
+    else:
+        active_key = gemini_key
+
+    genai.configure(api_key=active_key)
     gemini_model = os.environ.get("GEMINI_MODEL", "")
     if not gemini_model:
-        gemini_model = st.secrets.get("GEMINI_MODEL", "gemini-2.5-flash") if hasattr(st, "secrets") else "gemini-2.5-flash"
+        gemini_model = st.secrets.get("GEMINI_MODEL", "gemini-1.5-flash") if hasattr(st, "secrets") else "gemini-1.5-flash"
 
     # ── ID сесії ──
     if "ai_session_id" not in st.session_state:
