@@ -41,49 +41,6 @@ def ensure_ai_chat_table():
             conn.commit()
     except Exception as e:
         pass  # не критично якщо не вдалось
-import streamlit as st
-import pandas as pd
-import os
-import re
-import psycopg2
-import requests
-import threading
-import queue
-import time
-import plotly.express as px
-import plotly.graph_objects as go
-from sklearn.linear_model import LinearRegression
-import numpy as np
-import datetime as dt
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
-try:
-    import google.generativeai as genai
-    GEMINI_OK = True
-except ImportError:
-    GEMINI_OK = False
-
-load_dotenv()
-
-def ensure_ai_chat_table():
-    """Створює таблицю ai_chat_history якщо не існує."""
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS ai_chat_history (
-                    id          SERIAL PRIMARY KEY,
-                    session_id  TEXT NOT NULL,
-                    username    TEXT,
-                    section     TEXT,
-                    role        TEXT,  -- 'user' або 'assistant'
-                    message     TEXT,
-                    created_at  TIMESTAMP DEFAULT NOW()
-                )
-            """))
-            conn.commit()
-    except Exception as e:
-        pass  # не критично якщо не вдалось
 
 def save_chat_message(session_id, username, section, role, message):
     try:
@@ -2028,12 +1985,21 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
             .replace('≥', '>=').replace('≤', '<=')
             .replace('≠', '!=').replace('—', '--').replace('–', '-')
         )
-        # 2. Auto-cast report_date (TEXT) перед порівнянням
+        # Auto-cast report_date (TEXT) перед порівнянням
+        def _fix_rd(m):
+            return f'CAST(report_date AS DATE) {m.group(1)}'
         sql_query = _re.sub(
-            r'(?<!\w)(report_date)\s*(>=|<=|>|<|=|<>)',
-            r'CAST( AS DATE) ',
+            r'(?<![A-Za-z_])report_date\s*(>=|<=|>|<|=|<>)',
+            _fix_rd,
             sql_query
         )
+        # Фільтруємо порожні report_date в sales_traffic
+        if 'spapi.sales_traffic' in sql_query:
+            sql_query = _re.sub(
+                r'(FROM spapi\.sales_traffic\s+WHERE\s)',
+                r"\1report_date != '' AND report_date IS NOT NULL AND ",
+                sql_query
+            )
         # 3. Auto-fix порожні рядки тільки для відомих TEXT колонок fba_inventory
         # Тільки "Available", "Price", "Velocity", "Days of Supply" — вони TEXT з пустими рядками
         # 3. Simple string replace для TEXT колонок — без regex lambda
