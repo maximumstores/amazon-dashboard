@@ -1979,13 +1979,23 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
 
     # ── КРОК 2: Виконуємо SQL ──
     try:
-        # Sanitize SQL: замінюємо unicode оператори на ASCII
-        sql_query = sql_query.replace('≥', '>=').replace('≤', '<=').replace('≠', '!=').replace('—', '--')
-        # Auto-fix report_date без CAST
         import re as _re
+        # 1. Unicode → ASCII оператори
+        sql_query = (sql_query
+            .replace('≥', '>=').replace('≤', '<=')
+            .replace('≠', '!=').replace('—', '--').replace('–', '-')
+        )
+        # 2. Auto-cast report_date (TEXT) перед порівнянням
         sql_query = _re.sub(
-            r'report_date\s*(>=|<=|>|<|=)',
-            lambda m: f'CAST(report_date AS DATE) {m.group(1)}',
+            r'(?<!\w)(report_date)\s*(>=|<=|>|<|=|<>)',
+            r'CAST( AS DATE) ',
+            sql_query
+        )
+        # 3. Auto-fix порожні рядки при CAST числових колонок fba_inventory
+        # CAST("Days of Supply" AS FLOAT) → CAST(NULLIF("Days of Supply",'') AS FLOAT)
+        sql_query = _re.sub(
+            r'CAST\(("[\w\s]+")\s+AS\s+(FLOAT|INT|DOUBLE PRECISION)\)',
+            r'CAST(NULLIF(, '') AS )',
             sql_query
         )
         engine = get_engine()
