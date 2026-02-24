@@ -1929,6 +1929,7 @@ def get_db_schema():
    Колонки: id, session_id, username, section, role, message, created_at
 
 КРИТИЧНІ ПРАВИЛА ПРО ТИПИ ДАНИХ:
+- НІКОЛИ не використовуй unicode символи ≥ ≤ ≠ — в SQL! Тільки ASCII: >= <= != --
 - buy_box_percentage, unit_session_percentage — TEXT, завжди: CAST(колонка AS FLOAT)
 - Якщо бачиш помилку "function avg(text)" — додай CAST(... AS FLOAT)
 - Числові агрегації на TEXT колонках завжди потребують CAST
@@ -1978,6 +1979,15 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
 
     # ── КРОК 2: Виконуємо SQL ──
     try:
+        # Sanitize SQL: замінюємо unicode оператори на ASCII
+        sql_query = sql_query.replace('≥', '>=').replace('≤', '<=').replace('≠', '!=').replace('—', '--')
+        # Auto-fix report_date без CAST
+        import re as _re
+        sql_query = _re.sub(
+            r'report_date\s*(>=|<=|>|<|=)',
+            lambda m: f'CAST(report_date AS DATE) {m.group(1)}',
+            sql_query
+        )
         engine = get_engine()
         import pandas as _pd
         with engine.connect() as _conn:
