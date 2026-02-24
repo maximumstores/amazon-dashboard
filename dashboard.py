@@ -3180,7 +3180,7 @@ if st.sidebar.button(t["update_btn"], width="stretch"):
 df = load_data()
 
 if not df.empty:
-    for col in ['Available','Price','Velocity','Stock Value']:
+    for col in ['Available','Price','Velocity','Stock Value']: 
         if col not in df.columns: df[col] = 0
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     df['Stock Value'] = df['Available'] * df['Price']
