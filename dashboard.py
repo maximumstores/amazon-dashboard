@@ -111,6 +111,119 @@ translations = {
         "st_page_views": "Перегляди",
         "st_units": "Замовлено штук",
         "st_conversion": "Конверсія",
+        "st_revenue": "Дохід",import streamlit as st
+import pandas as pd
+import os
+import re
+import psycopg2
+import requests
+import threading
+import queue
+import time
+import plotly.express as px
+import plotly.graph_objects as go
+from sklearn.linear_model import LinearRegression
+import numpy as np
+import datetime as dt
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+try:
+    import google.generativeai as genai
+    GEMINI_OK = True
+except ImportError:
+    GEMINI_OK = False
+
+load_dotenv()
+
+def ensure_ai_chat_table():
+    """Створює таблицю ai_chat_history якщо не існує."""
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS ai_chat_history (
+                    id          SERIAL PRIMARY KEY,
+                    session_id  TEXT NOT NULL,
+                    username    TEXT,
+                    section     TEXT,
+                    role        TEXT,  -- 'user' або 'assistant'
+                    message     TEXT,
+                    created_at  TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            conn.commit()
+    except Exception as e:
+        pass  # не критично якщо не вдалось
+
+def save_chat_message(session_id, username, section, role, message):
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("""
+                INSERT INTO ai_chat_history (session_id, username, section, role, message)
+                VALUES (:sid, :user, :sec, :role, :msg)
+            """), {"sid": session_id, "user": username, "sec": section, "role": role, "msg": message})
+            conn.commit()
+    except Exception:
+        pass
+
+def load_chat_history(session_id, section):
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT role, message FROM ai_chat_history
+                WHERE session_id = :sid AND section = :sec
+                ORDER BY created_at ASC LIMIT 50
+            """), {"sid": session_id, "sec": section}).fetchall()
+        return [{"role": r[0], "content": r[1]} for r in rows]
+    except Exception:
+        return []
+
+
+st.set_page_config(page_title="Amazon FBA Ultimate BI", layout="wide", page_icon="📦")
+ensure_ai_chat_table()
+
+translations = {
+    "UA": {
+        "title": "📦 Amazon FBA: Business Intelligence Hub",
+        "update_btn": "🔄 Оновити дані",
+        "sidebar_title": "🔍 Фільтри",
+        "date_label": "📅 Дата:",
+        "store_label": "🏪 Магазин:",
+        "all_stores": "Всі",
+        "total_sku": "Всього SKU",
+        "total_avail": "Штук на складі",
+        "total_value": "💰 Вартість складу",
+        "velocity_30": "Продажі (30 днів)",
+        "chart_value_treemap": "💰 Де заморожені гроші?",
+        "chart_velocity": "🚀 Швидкість vs Залишки",
+        "chart_age": "⏳ Вік інвентарю",
+        "top_money_sku": "🏆 Топ SKU за вартістю",
+        "top_qty_sku": "🏆 Топ SKU за кількістю",
+        "avg_price": "Середня ціна",
+        "ai_header": "🧠 AI Прогноз залишків",
+        "ai_select": "Оберіть SKU:",
+        "ai_days": "Горизонт прогнозу:",
+        "ai_result_date": "📅 Дата Sold-out:",
+        "ai_result_days": "Днів залишилось:",
+        "ai_ok": "✅ Запасів вистачить",
+        "ai_error": "Недостатньо даних для прогнозу",
+        "footer_date": "📅 Дані оновлено:",
+        "download_excel": "📥 Завантажити Excel",
+        "settlements_title": "🏦 Фінансові виплати (Settlements)",
+        "net_payout": "Чиста виплата",
+        "gross_sales": "Валові продажі",
+        "total_fees": "Всього комісій",
+        "total_refunds": "Повернення коштів",
+        "chart_payout_trend": "📉 Динаміка виплат",
+        "chart_fee_breakdown": "💸 Структура витрат",
+        "currency_select": "💱 Валюта:",
+        "sales_traffic_title": "📈 Sales & Traffic",
+        "st_sessions": "Сесії",
+        "st_page_views": "Перегляди",
+        "st_units": "Замовлено штук",
+        "st_conversion": "Конверсія",
         "st_revenue": "Дохід",
         "st_buy_box": "Buy Box %",
         "reviews_title": "⭐ Відгуки покупців",
@@ -1991,13 +2104,19 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
             r'CAST( AS DATE) ',
             sql_query
         )
-        # 3. Auto-fix порожні рядки при CAST числових колонок fba_inventory
-        # CAST("Days of Supply" AS FLOAT) → CAST(NULLIF("Days of Supply",'') AS FLOAT)
-        sql_query = _re.sub(
-            r'CAST\(("[\w\s]+")\s+AS\s+(FLOAT|INT|DOUBLE PRECISION)\)',
-            r'CAST(NULLIF(, '') AS )',
-            sql_query
-        )
+        # 3. Auto-fix порожні рядки тільки для відомих TEXT колонок fba_inventory
+        # Тільки "Available", "Price", "Velocity", "Days of Supply" — вони TEXT з пустими рядками
+        _text_cols = ['"Available"', '"Price"', '"Velocity"', '"Days of Supply"',
+                      '"Quantity"', '"Item Price"', '"Item Tax"', '"Shipping Price"',
+                      '"Total Amount"', '"Amount"', '"Impressions"', '"Clicks"',
+                      '"Spend"', '"Sales"', '"ACOS"', '"ROAS"', '"CTR"', '"CPC"', '"Orders"']
+        for _col in _text_cols:
+            # CAST("Available" AS FLOAT) → CAST(NULLIF("Available", '') AS FLOAT)
+            sql_query = _re.sub(
+                r'CAST\(' + _re.escape(_col) + r'\s+AS\s+(FLOAT|INT|BIGINT|DOUBLE PRECISION)\)',
+                lambda m, c=_col: f'CAST(NULLIF({c}, '') AS {m.group(1)})',
+                sql_query
+            )
         engine = get_engine()
         import pandas as _pd
         with engine.connect() as _conn:
