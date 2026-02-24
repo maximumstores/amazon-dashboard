@@ -22,7 +22,54 @@ except ImportError:
 
 load_dotenv()
 
+def ensure_ai_chat_table():
+    """Створює таблицю ai_chat_history якщо не існує."""
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS ai_chat_history (
+                    id          SERIAL PRIMARY KEY,
+                    session_id  TEXT NOT NULL,
+                    username    TEXT,
+                    section     TEXT,
+                    role        TEXT,  -- 'user' або 'assistant'
+                    message     TEXT,
+                    created_at  TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            conn.commit()
+    except Exception as e:
+        pass  # не критично якщо не вдалось
+
+def save_chat_message(session_id, username, section, role, message):
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("""
+                INSERT INTO ai_chat_history (session_id, username, section, role, message)
+                VALUES (:sid, :user, :sec, :role, :msg)
+            """), {"sid": session_id, "user": username, "sec": section, "role": role, "msg": message})
+            conn.commit()
+    except Exception:
+        pass
+
+def load_chat_history(session_id, section):
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT role, message FROM ai_chat_history
+                WHERE session_id = :sid AND section = :sec
+                ORDER BY created_at ASC LIMIT 50
+            """), {"sid": session_id, "sec": section}).fetchall()
+        return [{"role": r[0], "content": r[1]} for r in rows]
+    except Exception:
+        return []
+
+
 st.set_page_config(page_title="Amazon FBA Ultimate BI", layout="wide", page_icon="📦")
+ensure_ai_chat_table()
 
 translations = {
     "UA": {
@@ -1642,9 +1689,9 @@ def show_reviews(t):
 Приклади негативних відгуків:
 {neg_examples}"""
     show_ai_chat(ctx_rev, [
-        "🔴 Які головні проблеми продукту з негативних відгуків?",
-        "💡 Як покращити рейтинг? Конкретні дії",
-        "📝 Напиши відповідь покупцю на головну скаргу",
+        "Які ASIN мають рейтинг нижче 3.5★? Скільки негативних?",
+        "Які топ-3 скарги по відгуках за останній місяць?",
+        "Порівняй рейтинги по країнах — де найгірше?",
     ], "reviews")
 
     st.markdown("---")
@@ -1720,8 +1767,106 @@ def show_reviews(t):
 # AI CHAT BLOCK — вставляється в кожен розділ
 # ════════════════════════════════════════════
 
+def get_db_schema():
+    """Повертає схему БД для SQL генерації."""
+    schema = """
+ТАБЛИЦІ В БАЗІ ДАНИХ PostgreSQL:
+
+1. sales_traffic — трафік і продажі по ASIN
+   Колонки: date, asin, sessions, session_percentage, page_views, page_views_percentage,
+   buy_box_percentage, units_ordered, units_ordered_b2b, unit_session_percentage (CVR),
+   ordered_product_sales, ordered_product_sales_b2b, total_order_items
+
+2. amazon_reviews — відгуки покупців
+   Колонки: id, asin, domain, rating, title, content, author, review_date,
+   is_verified, product_attributes, scraped_at
+
+3. settlements — фінансові розрахунки Amazon
+   Колонки: settlement_id, settlement_start_date, settlement_end_date, currency,
+   total_amount, type, amount, amount_type, amount_description, asin, sku
+
+4. inventory — залишки на складах FBA
+   Колонки: id, sku, asin, store_name, available, inbound_quantity,
+   reserved_quantity, unfulfillable_quantity, created_at, date
+
+5. returns_analytics — повернення
+   Колонки: id, return_date, sku, asin, quantity, return_reason,
+   status, reimbursement_type
+
+6. orders — замовлення
+   Колонки: id, order_id, order_date, sku, asin, quantity, price, currency, status
+
+7. ai_chat_history — історія AI чату
+   Колонки: id, session_id, username, section, role, message, created_at
+"""
+    return schema
+
+
+def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: str):
+    """3-кроковий AI pipeline: SQL → PostgreSQL → Аналіз."""
+
+    model = genai.GenerativeModel(gemini_model)
+    schema = get_db_schema()
+
+    # ── КРОК 1: Генеруємо SQL ──
+    sql_prompt = f"""Ти — SQL експерт. Напиши PostgreSQL запит для відповіді на питання.
+
+{schema}
+
+ПИТАННЯ: {question}
+
+ПРАВИЛА:
+- Тільки SELECT запити (ніяких INSERT/UPDATE/DELETE)
+- Використовуй реальні назви таблиць і колонок зі схеми
+- Обмежуй результат LIMIT 50
+- Для дат використовуй CURRENT_DATE
+- Якщо питання не потребує SQL або незрозуміле — відповідай: NO_SQL
+
+Відповідай ТІЛЬКИ SQL кодом без пояснень, без ```sql```, просто чистий SQL."""
+
+    sql_resp = model.generate_content(sql_prompt)
+    sql_query = sql_resp.text.strip().replace("```sql", "").replace("```", "").strip()
+
+    if sql_query.upper().startswith("NO_SQL") or len(sql_query) < 10:
+        return None, None, None
+
+    # Безпека — тільки SELECT
+    first_word = sql_query.split()[0].upper() if sql_query.split() else ""
+    if first_word not in ("SELECT", "WITH"):
+        return sql_query, None, "⚠️ Небезпечний запит заблоковано"
+
+    # ── КРОК 2: Виконуємо SQL ──
+    try:
+        engine = get_engine()
+        import pandas as _pd
+        df_result = _pd.read_sql(sql_query, engine)
+        if df_result.empty:
+            return sql_query, df_result, None
+    except Exception as e:
+        return sql_query, None, f"SQL помилка: {e}"
+
+    # ── КРОК 3: AI аналізує результат ──
+    result_str = df_result.to_string(index=False, max_rows=30)
+
+    analysis_prompt = f"""Ти — експерт з Amazon FBA бізнесу.
+
+Питання користувача: {question}
+
+Результат SQL запиту:
+{result_str}
+
+Додатковий контекст розділу:
+{context[:500]}
+
+Дай конкретну, actionable відповідь з числами з результату.
+Стисло, по суті. Виділяй ключові числа жирним (**число**)."""
+
+    analysis_resp = model.generate_content(analysis_prompt)
+    return sql_query, df_result, analysis_resp.text
+
+
 def show_ai_chat(context: str, preset_questions: list, section_key: str):
-    """Універсальний AI-чат блок з Gemini для будь-якого розділу."""
+    """AI-чат з 3-кроковим SQL pipeline і пам'яттю в БД."""
     st.markdown("---")
     st.markdown("### 🤖 AI Інсайти")
 
@@ -1732,19 +1877,51 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
     if not gemini_key:
         st.info("💡 Додай GEMINI_API_KEY в Streamlit Secrets щоб активувати AI-чат")
         return
-
     if not GEMINI_OK:
         st.warning("pip install google-generativeai")
         return
 
     genai.configure(api_key=gemini_key)
-
-    # Модель з secrets або дефолт
     gemini_model = os.environ.get("GEMINI_MODEL", "")
     if not gemini_model:
         gemini_model = st.secrets.get("GEMINI_MODEL", "gemini-2.5-flash") if hasattr(st, "secrets") else "gemini-2.5-flash"
 
-    # ── Швидкі кнопки — клік одразу запускає AI ──
+    # ── ID сесії ──
+    if "ai_session_id" not in st.session_state:
+        import uuid, datetime as _dt
+        _user = st.session_state.get("user", {})
+        _uid  = str(_user.get("id", "anon"))
+        _date = _dt.date.today().isoformat()
+        st.session_state["ai_session_id"] = f"{_uid}_{_date}_{str(uuid.uuid4())[:6]}"
+    session_id = st.session_state["ai_session_id"]
+
+    # ── Завантажуємо історію ──
+    hist_key = f"ai_history_{section_key}"
+    if hist_key not in st.session_state:
+        st.session_state[hist_key] = load_chat_history(session_id, section_key)
+    history = st.session_state[hist_key]
+
+    # ── Показуємо попередні повідомлення ──
+    if history:
+        for msg in history[-10:]:
+            if msg["role"] == "user":
+                st.chat_message("user").markdown(msg["content"])
+            else:
+                st.chat_message("assistant").markdown(msg["content"])
+
+        if st.button("🗑 Очистити чат", key=f"ai_clear_{section_key}"):
+            st.session_state[hist_key] = []
+            try:
+                engine = get_engine()
+                with engine.connect() as conn:
+                    conn.execute(text("DELETE FROM ai_chat_history WHERE session_id=:sid AND section=:sec"),
+                                 {"sid": session_id, "sec": section_key})
+                    conn.commit()
+            except Exception:
+                pass
+            st.rerun()
+
+    # ── Швидкі кнопки ──
     ai_cols = st.columns(len(preset_questions))
     auto_q = None
     for i, (col, q) in enumerate(zip(ai_cols, preset_questions)):
@@ -1752,40 +1929,61 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
             auto_q = q
 
     # ── Поле вводу ──
-    user_q = st.text_input(
-        "💬 Задайте питання про ваші дані",
-        placeholder="Чому впали продажі? Які можливості для зростання?",
-        key=f"ai_input_{section_key}"
-    )
-
-    # Визначаємо фінальне питання: кнопка має пріоритет
+    user_q = st.chat_input("💬 Питання про ваші дані...", key=f"ai_input_{section_key}")
     final_q = auto_q or user_q
 
-    run_ai = auto_q is not None  # кнопка — одразу запуск
-    if not run_ai:
-        run_ai = st.button("🚀 Спитати AI", key=f"ai_submit_{section_key}", type="primary")
+    if final_q:
+        st.chat_message("user").markdown(final_q)
 
-    if run_ai and final_q:
-        with st.spinner("AI аналізує дані..."):
+        with st.spinner("🔍 Крок 1: AI складає SQL..."):
             try:
-                model = genai.GenerativeModel(gemini_model)
-                prompt = f"""Ти — експерт з Amazon FBA бізнесу. 
-Аналізуй тільки надані дані, не вигадуй факти.
-Давай конкретні actionable рекомендації.
-
-ДАНІ:
-{context}
-
-ПИТАННЯ: {final_q}
-
-Відповідай стисло, по суті, з конкретними числами з даних."""
-                response = model.generate_content(prompt)
-                st.markdown("#### 🧠 Відповідь AI:")
-                st.markdown(response.text)
+                sql_query, df_result, analysis = run_ai_sql_pipeline(
+                    final_q, section_key, gemini_model, context
+                )
             except Exception as e:
-                st.error(f"Помилка Gemini: {e}")
-    elif run_ai and not final_q:
-        st.warning("Введіть питання")
+                st.error(f"Помилка: {e}")
+                return
+
+        if sql_query:
+            with st.expander("🔍 SQL запит", expanded=False):
+                st.code(sql_query, language="sql")
+
+        if isinstance(analysis, str) and analysis.startswith("⚠️"):
+            st.error(analysis)
+            return
+
+        if df_result is not None and not df_result.empty:
+            with st.expander(f"⚡ Результат з БД ({len(df_result)} рядків)", expanded=False):
+                st.dataframe(df_result, use_container_width=True)
+
+        if analysis and not analysis.startswith("SQL помилка"):
+            answer_md = analysis
+        elif df_result is not None and df_result.empty:
+            answer_md = "📭 Запит виконався, але даних не знайдено по цьому питанню."
+        elif analysis and analysis.startswith("SQL помилка"):
+            # Fallback — відповідаємо на основі контексту
+            with st.spinner("🤖 AI аналізує контекст..."):
+                try:
+                    m = genai.GenerativeModel(gemini_model)
+                    fallback_prompt = "Amazon FBA експерт. Дані: " + context[:1000] + "\nПитання: " + final_q + "\nВідповідь:"
+                    r = m.generate_content(fallback_prompt)
+                    answer_md = r.text + "\n\n*⚠️ SQL не спрацював: " + str(analysis) + "*"
+                except Exception as e2:
+                    answer_md = f"Помилка: {e2}"
+        else:
+            answer_md = "Не вдалось отримати відповідь."
+
+        with st.chat_message("assistant"):
+            st.markdown(answer_md)
+
+        # ── Зберігаємо ──
+        history.append({"role": "user", "content": final_q})
+        history.append({"role": "assistant", "content": answer_md})
+        st.session_state[hist_key] = history
+
+        username = st.session_state.get("user", {}).get("email", "unknown")
+        save_chat_message(session_id, username, section_key, "user", final_q)
+        save_chat_message(session_id, username, section_key, "assistant", answer_md)
 
 
 
@@ -2008,9 +2206,9 @@ def show_sales_traffic(t):
 - Дохід: ${tr:,.2f} | Конверсія: {ac:.2f}% | Buy Box: {ab:.1f}%
 - Топ ASIN за доходом: {as_.nlargest(3,'Revenue')[['ASIN','Revenue','Conv %']].to_string()}"""
     show_ai_chat(ctx, [
-        "📈 Проаналізуй тренди продажів і виявлення проблем",
-        "🏆 Які ASIN показують низький Buy Box і що робити?",
-        "🎯 Де найвищий CVR і чому? Дай поради для інших",
+        "Який ASIN виріс найбільше за останні 7 днів?",
+        "Які ASIN мають Buy Box нижче 80%?",
+        "Де CVR вище середнього? Топ 5",
     ], "sales_traffic")
 
 
@@ -2067,9 +2265,9 @@ def show_settlements(t):
 - Refunds: {sym}{refunds:,.2f} | Fees: {sym}{fees:,.2f}
 - Валюта: {sel_cur} | Комісія: {abs(fees)/gross*100:.1f}% від продажів"""
     show_ai_chat(ctx_set, [
-        "💰 Як знизити комісії Amazon і збільшити net payout?",
-        "📊 Чи нормальний рівень рефандів? Що робити?",
-        "🎯 Де найбільші витрати і як їх оптимізувати?",
+        "Який місяць приніс найбільший net payout за рік?",
+        "Яка частка рефандів від gross sales по місяцях?",
+        "Де найвищі FBA fees? Топ SKU за комісіями",
     ], "settlements")
 
 
@@ -2159,9 +2357,9 @@ def show_returns(t=None):
 - Вартість повернень: ${df_f['Return Value'].sum():,.2f}
 - Топ SKU за поверненнями: {top_ret}"""
     show_ai_chat(ctx_ret, [
-        "🔴 Чому так багато повернень? Головні причини",
-        "📦 Які SKU найпроблемніші і що робити?",
-        "💡 Як знизити Return Rate? Конкретні кроки",
+        "Які SKU мають найбільше повернень за 30 днів?",
+        "Які топ-3 причини повернень по всіх SKU?",
+        "Порівняй return rate цього місяця vs попереднього",
     ], "returns")
 
 
@@ -2211,9 +2409,9 @@ def show_aging(df_filtered, t):
 - SKU всього: {len(df_filtered)} | Загальна вартість: ${df_filtered['Stock Value'].sum():,.0f if 'Stock Value' in df_filtered.columns else 0}
 - Повільні SKU (Velocity<0.1): {slow}"""
     show_ai_chat(ctx_aging, [
-        "🐢 Які SKU застряли? Як прискорити їх продаж?",
-        "💸 Де заморожені гроші? Що ліквідувати першим?",
-        "📦 Як оптимізувати склад для зменшення storage fees?",
+        "Які SKU мають залишок більше 90 днів продажів?",
+        "Топ 5 SKU де заморожено найбільше коштів",
+        "Які SKU закінчаться за 14 днів при поточному темпі?",
     ], "aging")
 
 
@@ -2280,9 +2478,9 @@ def show_orders(t=None):
     top_skus = df_f.groupby('SKU')['quantity'].sum().nlargest(5).to_string() if 'SKU' in df_f.columns and 'quantity' in df_f.columns else ""
     ctx_ord = f"""Orders аналіз: замовлень {len(df_f)}. Топ SKU: {top_skus}"""
     show_ai_chat(ctx_ord, [
-        "🛒 Які SKU найбільш прибуткові? Де збільшити запас?",
-        "📈 Як прискорити зростання продажів?",
-        "🎯 Які тренди в замовленнях?",
+        "Топ 5 SKU за кількістю замовлень за останні 30 днів",
+        "Порівняй обсяг замовлень: цей тиждень vs минулий",
+        "Які SKU не мали замовлень більше 14 днів?",
     ], "orders")
 
 
