@@ -111,119 +111,6 @@ translations = {
         "st_page_views": "Перегляди",
         "st_units": "Замовлено штук",
         "st_conversion": "Конверсія",
-        "st_revenue": "Дохід",import streamlit as st
-import pandas as pd
-import os
-import re
-import psycopg2
-import requests
-import threading
-import queue
-import time
-import plotly.express as px
-import plotly.graph_objects as go
-from sklearn.linear_model import LinearRegression
-import numpy as np
-import datetime as dt
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
-try:
-    import google.generativeai as genai
-    GEMINI_OK = True
-except ImportError:
-    GEMINI_OK = False
-
-load_dotenv()
-
-def ensure_ai_chat_table():
-    """Створює таблицю ai_chat_history якщо не існує."""
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS ai_chat_history (
-                    id          SERIAL PRIMARY KEY,
-                    session_id  TEXT NOT NULL,
-                    username    TEXT,
-                    section     TEXT,
-                    role        TEXT,  -- 'user' або 'assistant'
-                    message     TEXT,
-                    created_at  TIMESTAMP DEFAULT NOW()
-                )
-            """))
-            conn.commit()
-    except Exception as e:
-        pass  # не критично якщо не вдалось
-
-def save_chat_message(session_id, username, section, role, message):
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            conn.execute(text("""
-                INSERT INTO ai_chat_history (session_id, username, section, role, message)
-                VALUES (:sid, :user, :sec, :role, :msg)
-            """), {"sid": session_id, "user": username, "sec": section, "role": role, "msg": message})
-            conn.commit()
-    except Exception:
-        pass
-
-def load_chat_history(session_id, section):
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT role, message FROM ai_chat_history
-                WHERE session_id = :sid AND section = :sec
-                ORDER BY created_at ASC LIMIT 50
-            """), {"sid": session_id, "sec": section}).fetchall()
-        return [{"role": r[0], "content": r[1]} for r in rows]
-    except Exception:
-        return []
-
-
-st.set_page_config(page_title="Amazon FBA Ultimate BI", layout="wide", page_icon="📦")
-ensure_ai_chat_table()
-
-translations = {
-    "UA": {
-        "title": "📦 Amazon FBA: Business Intelligence Hub",
-        "update_btn": "🔄 Оновити дані",
-        "sidebar_title": "🔍 Фільтри",
-        "date_label": "📅 Дата:",
-        "store_label": "🏪 Магазин:",
-        "all_stores": "Всі",
-        "total_sku": "Всього SKU",
-        "total_avail": "Штук на складі",
-        "total_value": "💰 Вартість складу",
-        "velocity_30": "Продажі (30 днів)",
-        "chart_value_treemap": "💰 Де заморожені гроші?",
-        "chart_velocity": "🚀 Швидкість vs Залишки",
-        "chart_age": "⏳ Вік інвентарю",
-        "top_money_sku": "🏆 Топ SKU за вартістю",
-        "top_qty_sku": "🏆 Топ SKU за кількістю",
-        "avg_price": "Середня ціна",
-        "ai_header": "🧠 AI Прогноз залишків",
-        "ai_select": "Оберіть SKU:",
-        "ai_days": "Горизонт прогнозу:",
-        "ai_result_date": "📅 Дата Sold-out:",
-        "ai_result_days": "Днів залишилось:",
-        "ai_ok": "✅ Запасів вистачить",
-        "ai_error": "Недостатньо даних для прогнозу",
-        "footer_date": "📅 Дані оновлено:",
-        "download_excel": "📥 Завантажити Excel",
-        "settlements_title": "🏦 Фінансові виплати (Settlements)",
-        "net_payout": "Чиста виплата",
-        "gross_sales": "Валові продажі",
-        "total_fees": "Всього комісій",
-        "total_refunds": "Повернення коштів",
-        "chart_payout_trend": "📉 Динаміка виплат",
-        "chart_fee_breakdown": "💸 Структура витрат",
-        "currency_select": "💱 Валюта:",
-        "sales_traffic_title": "📈 Sales & Traffic",
-        "st_sessions": "Сесії",
-        "st_page_views": "Перегляди",
-        "st_units": "Замовлено штук",
-        "st_conversion": "Конверсія",
         "st_revenue": "Дохід",
         "st_buy_box": "Buy Box %",
         "reviews_title": "⭐ Відгуки покупців",
@@ -1952,7 +1839,7 @@ def get_db_schema():
    - "Amount Description" (TEXT)
    - "Amount" (TEXT) — ⚠️ TEXT! Кастуй: CAST("Amount" AS FLOAT). Від'ємне = витрати
    - "Fulfillment ID" (TEXT)
-   - "Posted Date" (TEXT) — дата, кастуй: CAST("Posted Date" AS DATE)
+   - "Posted Date" (TEXT) — формат DD.MM.YYYY (31.12.2025)! Кастуй: TO_DATE("Posted Date", 'DD.MM.YYYY')
    - "Posted Date Time" (TEXT) — з часом
    ⚠️ ASIN колонки НЕ ІСНУЄ в settlements!
    Приклад: SELECT SUM(CAST("Amount" AS FLOAT)) FROM settlements WHERE "Transaction Type"='Order'
@@ -2023,7 +1910,7 @@ def get_db_schema():
    ⚠️ НЕ існує колонка "Price" або "Currency" або "Status" — тільки "Item Price" і "Order Status"!
    Приклад: SELECT "SKU", SUM(CAST("Quantity" AS INT)) as units, SUM(CAST("Item Price" AS FLOAT)) as revenue FROM orders GROUP BY "SKU" ORDER BY revenue DESC LIMIT 20
 
-7. advertising — Amazon Advertising (Sponsored Products кампанії)
+7. advertising — Amazon Advertising (⚠️ ТАБЛИЦЯ ЩЕ НЕ ІСНУЄ в БД! Не використовуй поки що) (Sponsored Products кампанії)
    ⚠️ Всі колонки TEXT! TRUNCATE при кожному завантаженні (тільки поточні дані).
    Колонки (ТОЧНІ назви):
    - "Campaign ID" (TEXT), "Campaign Name" (TEXT), "Campaign Status" (TEXT)
