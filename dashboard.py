@@ -31,39 +31,6 @@ def ensure_ai_chat_table():
                 CREATE TABLE IF NOT EXISTS ai_chat_history (
                     id          SERIAL PRIMARY KEY,
                     session_id  TEXT NOT NULL,
-                    username    TEXT,import streamlit as st
-import pandas as pd
-import os
-import re
-import psycopg2
-import requests
-import threading
-import queue
-import time
-import plotly.express as px
-import plotly.graph_objects as go
-from sklearn.linear_model import LinearRegression
-import numpy as np
-import datetime as dt
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
-try:
-    import google.generativeai as genai
-    GEMINI_OK = True
-except ImportError:
-    GEMINI_OK = False
-
-load_dotenv()
-
-def ensure_ai_chat_table():
-    """Створює таблицю ai_chat_history якщо не існує."""
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS ai_chat_history (
-                    id          SERIAL PRIMARY KEY,
-                    session_id  TEXT NOT NULL,
                     username    TEXT,
                     section     TEXT,
                     role        TEXT,  -- 'user' або 'assistant'
@@ -654,13 +621,17 @@ def load_reviews():
 # HELPERS
 # ============================================
 
-def insight_card(emoji, title, text, color="#1e1e2e"):
-    st.markdown(f"""
-    <div style="background:{color};border-left:4px solid #4472C4;border-radius:8px;
-                padding:14px 18px;margin-bottom:10px;">
-        <div style="font-size:16px;font-weight:700;color:#fff;margin-bottom:4px;">{emoji} {title}</div>
-        <div style="font-size:14px;color:#ccc;line-height:1.5;">{text}</div>
-    </div>""", unsafe_allow_html=True)
+def insight_card(emoji, title, text, color=""):
+    border_color = "#4472C4"
+    bg_style = f"background:{color};" if color else "background:rgba(68,114,196,0.08);"
+    st.markdown(
+        f'<div style="{bg_style}border-left:4px solid {border_color};border-radius:8px;'
+        f'padding:14px 18px;margin-bottom:10px;">'
+        f'<div style="font-size:16px;font-weight:700;margin-bottom:4px;">{emoji} {title}</div>'
+        f'<div style="font-size:14px;line-height:1.5;">{text}</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
 
 
 def balanced_reviews(df, max_per_star=100):
