@@ -1768,36 +1768,78 @@ def show_reviews(t):
 # ════════════════════════════════════════════
 
 def get_db_schema():
-    """Повертає схему БД для SQL генерації."""
+    """Повертає реальну схему БД для SQL генерації."""
     schema = """
-ТАБЛИЦІ В БАЗІ ДАНИХ PostgreSQL:
+РЕАЛЬНІ ТАБЛИЦІ В БАЗІ ДАНИХ PostgreSQL (використовуй ТОЧНО ці назви):
 
-1. sales_traffic — трафік і продажі по ASIN
-   Колонки: date, asin, sessions, session_percentage, page_views, page_views_percentage,
-   buy_box_percentage, units_ordered, units_ordered_b2b, unit_session_percentage (CVR),
-   ordered_product_sales, ordered_product_sales_b2b, total_order_items
+1. spapi.sales_traffic — трафік і продажі по ASIN (схема: spapi)
+   ВАЖЛИВО: таблиця в схемі spapi, запит: FROM spapi.sales_traffic
+   Колонки (точні назви):
+   - report_date (DATE) — дата звіту, використовуй для фільтрів по даті
+   - child_asin (TEXT) — ASIN товару, використовуй для GROUP BY asin
+   - parent_asin (TEXT)
+   - sessions (INT)
+   - session_percentage (FLOAT)
+   - page_views (INT)
+   - page_views_percentage (FLOAT)
+   - buy_box_percentage (FLOAT) — % Buy Box
+   - units_ordered (INT)
+   - units_ordered_b2b (INT)
+   - unit_session_percentage (FLOAT) — CVR конверсія
+   - ordered_product_sales (FLOAT) — дохід
+   - ordered_product_sales_b2b (FLOAT)
+   - total_order_items (INT)
+   Приклад: SELECT child_asin, SUM(ordered_product_sales) FROM spapi.sales_traffic WHERE report_date >= CURRENT_DATE-7 GROUP BY child_asin
 
 2. amazon_reviews — відгуки покупців
-   Колонки: id, asin, domain, rating, title, content, author, review_date,
-   is_verified, product_attributes, scraped_at
+   Колонки (точні назви):
+   - id, asin (TEXT), domain (TEXT), rating (INT 1-5)
+   - title (TEXT), content (TEXT), author (TEXT)
+   - review_date (DATE), is_verified (BOOL)
+   - product_attributes (TEXT), scraped_at (TIMESTAMP)
 
 3. settlements — фінансові розрахунки Amazon
-   Колонки: settlement_id, settlement_start_date, settlement_end_date, currency,
-   total_amount, type, amount, amount_type, amount_description, asin, sku
+   Колонки (точні назви, з великої літери бо так в БД):
+   - "Settlement ID", "Settlement Start Date", "Settlement End Date"
+   - "Transaction Type" (TEXT) — 'Order', 'Refund', 'FBA Inventory Fee' etc
+   - "Amount" (FLOAT) — сума (від'ємна = витрати)
+   - "Posted Date" (DATE)
+   - "ASIN" (TEXT), "SKU" (TEXT), "Description" (TEXT)
+   - "Currency" (TEXT)
+   Приклад: SELECT SUM("Amount") FROM settlements WHERE "Transaction Type"='Order'
 
-4. inventory — залишки на складах FBA
-   Колонки: id, sku, asin, store_name, available, inbound_quantity,
-   reserved_quantity, unfulfillable_quantity, created_at, date
+4. fba_inventory — залишки FBA
+   Колонки (точні назви):
+   - id, sku (TEXT), asin (TEXT)
+   - "Store Name" (TEXT)
+   - available (INT), inbound_quantity (INT)
+   - reserved_quantity (INT), unfulfillable_quantity (INT)
+   - "Stock Value" (FLOAT) — вартість залишків
+   - created_at (TIMESTAMP), date (DATE)
+   Приклад: SELECT sku, available, "Stock Value" FROM fba_inventory
 
-5. returns_analytics — повернення
-   Колонки: id, return_date, sku, asin, quantity, return_reason,
-   status, reimbursement_type
+5. returns — повернення
+   Колонки (точні назви, з великої літери):
+   - "Return Date" (DATE), "SKU" (TEXT), "ASIN" (TEXT)
+   - "Quantity" (INT), "Reason" (TEXT), "Status" (TEXT)
+   - "Return Value" (FLOAT)
+   Приклад: SELECT "SKU", COUNT(*) FROM returns GROUP BY "SKU" ORDER BY 2 DESC
 
 6. orders — замовлення
-   Колонки: id, order_id, order_date, sku, asin, quantity, price, currency, status
+   Колонки (точні назви, з великої літери):
+   - "Order Date" (DATE), "SKU" (TEXT), "ASIN" (TEXT)
+   - "Quantity" (INT), "Price" (FLOAT), "Currency" (TEXT)
+   - "Order ID" (TEXT), "Status" (TEXT)
 
 7. ai_chat_history — історія AI чату
    Колонки: id, session_id, username, section, role, message, created_at
+
+КРИТИЧНІ ПРАВИЛА:
+- spapi.sales_traffic: завжди пиши FROM spapi.sales_traffic (не просто sales_traffic)
+- spapi.sales_traffic: ASIN це child_asin, дата це report_date
+- settlements, returns, orders, fba_inventory: колонки з великої літери брати в подвійні лапки "Column Name"
+- Завжди LIMIT 50
+- Тільки SELECT/WITH запити
 """
     return schema
 
