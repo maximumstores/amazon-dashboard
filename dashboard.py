@@ -41,49 +41,6 @@ def ensure_ai_chat_table():
             conn.commit()
     except Exception as e:
         pass  # не критично якщо не вдалось
-import streamlit as st
-import pandas as pd
-import os
-import re
-import psycopg2
-import requests
-import threading
-import queue
-import time
-import plotly.express as px
-import plotly.graph_objects as go
-from sklearn.linear_model import LinearRegression
-import numpy as np
-import datetime as dt
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
-try:
-    import google.generativeai as genai
-    GEMINI_OK = True
-except ImportError:
-    GEMINI_OK = False
-
-load_dotenv()
-
-def ensure_ai_chat_table():
-    """Створює таблицю ai_chat_history якщо не існує."""
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS ai_chat_history (
-                    id          SERIAL PRIMARY KEY,
-                    session_id  TEXT NOT NULL,
-                    username    TEXT,
-                    section     TEXT,
-                    role        TEXT,  -- 'user' або 'assistant'
-                    message     TEXT,
-                    created_at  TIMESTAMP DEFAULT NOW()
-                )
-            """))
-            conn.commit()
-    except Exception as e:
-        pass  # не критично якщо не вдалось
 
 def save_chat_message(session_id, username, section, role, message):
     try:
@@ -1825,11 +1782,11 @@ def get_db_schema():
    - session_percentage (FLOAT)
    - page_views (INT)
    - page_views_percentage (FLOAT)
-   - buy_box_percentage (FLOAT) — % Buy Box
+   - buy_box_percentage (TEXT, зберігається як рядок!) — % Buy Box, ЗАВЖДИ кастуй: CAST(buy_box_percentage AS FLOAT), приклад: AVG(CAST(buy_box_percentage AS FLOAT))
    - units_ordered (INT)
    - units_ordered_b2b (INT)
-   - unit_session_percentage (FLOAT) — CVR конверсія
-   - ordered_product_sales (FLOAT) — дохід
+   - unit_session_percentage (TEXT) — CVR конверсія, ЗАВЖДИ кастуй: CAST(unit_session_percentage AS FLOAT)
+   - ordered_product_sales (TEXT або FLOAT) — дохід, кастуй якщо помилка: CAST(ordered_product_sales AS FLOAT)
    - ordered_product_sales_b2b (FLOAT)
    - total_order_items (INT)
    Приклад: SELECT child_asin, SUM(ordered_product_sales) FROM spapi.sales_traffic WHERE report_date >= CURRENT_DATE-7 GROUP BY child_asin
@@ -1876,6 +1833,11 @@ def get_db_schema():
 
 7. ai_chat_history — історія AI чату
    Колонки: id, session_id, username, section, role, message, created_at
+
+КРИТИЧНІ ПРАВИЛА ПРО ТИПИ ДАНИХ:
+- buy_box_percentage, unit_session_percentage — TEXT, завжди: CAST(колонка AS FLOAT)
+- Якщо бачиш помилку "function avg(text)" — додай CAST(... AS FLOAT)
+- Числові агрегації на TEXT колонках завжди потребують CAST
 
 КРИТИЧНІ ПРАВИЛА:
 - spapi.sales_traffic: завжди пиши FROM spapi.sales_traffic (не просто sales_traffic)
