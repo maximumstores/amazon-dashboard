@@ -31,6 +31,39 @@ def ensure_ai_chat_table():
                 CREATE TABLE IF NOT EXISTS ai_chat_history (
                     id          SERIAL PRIMARY KEY,
                     session_id  TEXT NOT NULL,
+                    username    TEXT,import streamlit as st
+import pandas as pd
+import os
+import re
+import psycopg2
+import requests
+import threading
+import queue
+import time
+import plotly.express as px
+import plotly.graph_objects as go
+from sklearn.linear_model import LinearRegression
+import numpy as np
+import datetime as dt
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+try:
+    import google.generativeai as genai
+    GEMINI_OK = True
+except ImportError:
+    GEMINI_OK = False
+
+load_dotenv()
+
+def ensure_ai_chat_table():
+    """Створює таблицю ai_chat_history якщо не існує."""
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS ai_chat_history (
+                    id          SERIAL PRIMARY KEY,
+                    session_id  TEXT NOT NULL,
                     username    TEXT,
                     section     TEXT,
                     role        TEXT,  -- 'user' або 'assistant'
@@ -1775,21 +1808,31 @@ def get_db_schema():
 1. spapi.sales_traffic — трафік і продажі по ASIN (схема: spapi)
    ВАЖЛИВО: таблиця в схемі spapi, запит: FROM spapi.sales_traffic
    Колонки (точні назви):
-   - report_date (DATE) — дата звіту, використовуй для фільтрів по даті
-   - child_asin (TEXT) — ASIN товару, використовуй для GROUP BY asin
+   - report_date (DATE) — дата звіту
+   - child_asin (TEXT) — ASIN товару
    - parent_asin (TEXT)
-   - sessions (INT)
-   - session_percentage (FLOAT)
-   - page_views (INT)
-   - page_views_percentage (FLOAT)
-   - buy_box_percentage (TEXT, зберігається як рядок!) — % Buy Box, ЗАВЖДИ кастуй: CAST(buy_box_percentage AS FLOAT), приклад: AVG(CAST(buy_box_percentage AS FLOAT))
-   - units_ordered (INT)
-   - units_ordered_b2b (INT)
-   - unit_session_percentage (TEXT) — CVR конверсія, ЗАВЖДИ кастуй: CAST(unit_session_percentage AS FLOAT)
-   - ordered_product_sales (TEXT або FLOAT) — дохід, кастуй якщо помилка: CAST(ordered_product_sales AS FLOAT)
-   - ordered_product_sales_b2b (FLOAT)
-   - total_order_items (INT)
-   Приклад: SELECT child_asin, SUM(ordered_product_sales) FROM spapi.sales_traffic WHERE report_date >= CURRENT_DATE-7 GROUP BY child_asin
+
+   ⚠️ ВСІ ЧИСЛОВІ КОЛОНКИ ЗБЕРІГАЮТЬСЯ ЯК TEXT — ЗАВЖДИ ДОДАВАЙ CAST:
+   - sessions → CAST(sessions AS FLOAT)
+   - page_views → CAST(page_views AS FLOAT)
+   - page_views_percentage → CAST(page_views_percentage AS FLOAT)
+   - buy_box_percentage → CAST(buy_box_percentage AS FLOAT)
+   - units_ordered → CAST(units_ordered AS FLOAT)
+   - units_ordered_b2b → CAST(units_ordered_b2b AS FLOAT)
+   - unit_session_percentage → CAST(unit_session_percentage AS FLOAT)
+   - ordered_product_sales → CAST(ordered_product_sales AS FLOAT)
+   - ordered_product_sales_b2b → CAST(ordered_product_sales_b2b AS FLOAT)
+   - total_order_items → CAST(total_order_items AS FLOAT)
+   - session_percentage → CAST(session_percentage AS FLOAT)
+
+   Правильний приклад:
+   SELECT child_asin,
+          SUM(CAST(ordered_product_sales AS FLOAT)) AS revenue,
+          SUM(CAST(units_ordered AS FLOAT)) AS units,
+          AVG(CAST(buy_box_percentage AS FLOAT)) AS avg_bb
+   FROM spapi.sales_traffic
+   WHERE report_date >= CURRENT_DATE-30
+   GROUP BY child_asin
 
 2. amazon_reviews — відгуки покупців
    Колонки (точні назви):
