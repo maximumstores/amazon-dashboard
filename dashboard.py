@@ -2405,8 +2405,9 @@ def show_aging(df_filtered, t):
 
     # ── AI Chat ──
     slow = df_filtered[df_filtered['Velocity'] < 0.1][['SKU','Available','Stock Value']].head(5).to_string() if 'Velocity' in df_filtered.columns else ""
+    _stock_val = df_filtered['Stock Value'].sum() if 'Stock Value' in df_filtered.columns else 0
     ctx_aging = f"""Inventory Health:
-- SKU всього: {len(df_filtered)} | Загальна вартість: ${df_filtered['Stock Value'].sum():,.0f if 'Stock Value' in df_filtered.columns else 0}
+- SKU всього: {len(df_filtered)} | Загальна вартість: ${_stock_val:,.0f}
 - Повільні SKU (Velocity<0.1): {slow}"""
     show_ai_chat(ctx_aging, [
         "Які SKU мають залишок більше 90 днів продажів?",
