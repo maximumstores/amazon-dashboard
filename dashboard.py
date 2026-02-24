@@ -1886,7 +1886,8 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
     try:
         engine = get_engine()
         import pandas as _pd
-        df_result = _pd.read_sql(sql_query, engine)
+        with engine.connect() as _conn:
+            df_result = _pd.read_sql(text(sql_query), _conn)
         if df_result.empty:
             return sql_query, df_result, None
     except Exception as e:
@@ -2180,8 +2181,9 @@ def show_overview(df_filtered, t, selected_date):
         for emoji, msg, severity, df_detail in alerts:
             color = "#2b0d0d" if severity == "critical" else "#2b2000"
             border = "#f04f5a" if severity == "critical" else "#f0a500"
+            text_color = "#ffcccc" if severity == "critical" else "#ffe0a0"
             st.markdown(f"""
-<div style="background:{color};border-left:3px solid {border};padding:10px 16px;margin:4px 0;border-radius:3px;font-size:14px">
+<div style="background:{color};border-left:3px solid {border};padding:10px 16px;margin:4px 0;border-radius:3px;font-size:14px;color:{text_color}">
 {emoji} <b>{msg}</b>
 </div>""", unsafe_allow_html=True)
             if df_detail is not None and not df_detail.empty:
