@@ -2004,8 +2004,24 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
                 r"\1report_date != '' AND report_date IS NOT NULL AND ",
                 sql_query
             )
-        # 3. Auto-fix порожні рядки тільки для відомих TEXT колонок fba_inventory
-        # Тільки "Available", "Price", "Velocity", "Days of Supply" — вони TEXT з пустими рядками
+        # 3. Auto-fix NULLIF для відомих TEXT колонок — з будь-яким аліасом або без
+        # Regex: CAST([alias.]"Column" AS TYPE) → CAST(NULLIF([alias.]"Column", '') AS TYPE)
+        for _col, _type in [
+            ('"Available"','INT'),('"Available"','FLOAT'),
+            ('"Price"','FLOAT'),('"Velocity"','FLOAT'),
+            ('"Days of Supply"','FLOAT'),('"Days of Supply"','INT'),
+            ('"Quantity"','INT'),('"Item Price"','FLOAT'),
+            ('"Item Tax"','FLOAT'),('"Amount"','FLOAT'),
+            ('"Spend"','FLOAT'),('"Sales"','FLOAT'),
+            ('"ACOS"','FLOAT'),('"ROAS"','FLOAT'),
+        ]:
+            # З аліасом: CAST(alias."Col" AS TYPE) → CAST(NULLIF(alias."Col",'') AS TYPE)
+            sql_query = _re.sub(
+                rf'CAST\(([a-zA-Z_]\w*\.)?{_re.escape(_col)}\s+AS\s+{_type}\)',
+                lambda m, c=_col, t=_type: f"CAST(NULLIF({m.group(1) or ''}{c}, '') AS {t})",
+                sql_query
+            )
+        # (legacy pairs below kept for safety)
         # 2.5 Захист від ділення на нуль — NULLIF для знаменника
         # LAG(..., 1, 0) / LAG(...) → може бути 0, замінюємо на NULLIF
         sql_query = _re.sub(
