@@ -15,7 +15,7 @@ import datetime as dt
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 try:
-    import google.generativeai as genai
+    import google.generativeai as genai  # TODO: migrate to google.genai
     GEMINI_OK = True
 except ImportError:
     GEMINI_OK = False
@@ -2139,7 +2139,7 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
     ai_cols = st.columns(len(preset_questions))
     auto_q = None
     for i, (col, q) in enumerate(zip(ai_cols, preset_questions)):
-        if col.button(q, key=f"ai_btn_{section_key}_{i}", use_container_width=True):
+        if col.button(q, key=f"ai_btn_{section_key}_{i}", width='stretch'):
             auto_q = q
 
     # ── Поле вводу ──
@@ -2168,7 +2168,7 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 
         if df_result is not None and not df_result.empty:
             with st.expander(f"⚡ Результат з БД ({len(df_result)} рядків)", expanded=False):
-                st.dataframe(df_result, use_container_width=True)
+                st.dataframe(df_result, width='stretch')
 
         if analysis and not analysis.startswith("SQL помилка"):
             answer_md = analysis
@@ -2339,7 +2339,7 @@ def show_overview(df_filtered, t, selected_date):
         bad_rev = df_reviews[df_reviews['rating'] <= 2]
         last_7d = pd.Timestamp.now() - pd.Timedelta(days=7)
         if 'review_date' in df_reviews.columns:
-            recent_bad = bad_rev[pd.to_datetime(df_reviews['review_date'], errors='coerce') >= last_7d]
+            recent_bad = bad_rev[pd.to_datetime(bad_rev['review_date'], errors='coerce') >= last_7d]
             if not recent_bad.empty:
                 alerts.append(("⭐", f"{len(recent_bad)} відгуків 1-2★ за останні 7 днів", "warning", None))
 
@@ -2356,7 +2356,7 @@ def show_overview(df_filtered, t, selected_date):
                 with st.expander(f"Показати SKU ({len(df_detail)})"):
                     show_cols = ['SKU','Available','days_left']
                     show_cols = [c for c in show_cols if c in df_detail.columns]
-                    st.dataframe(df_detail[show_cols].head(10), use_container_width=True)
+                    st.dataframe(df_detail[show_cols].head(10), width='stretch')
     else:
         st.success("✅ Все в нормі — критичних проблем не виявлено")
 
@@ -2437,7 +2437,7 @@ def show_overview(df_filtered, t, selected_date):
                 legend=dict(orientation='h', y=1.1),
                 plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)'
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             st.info("Немає даних Sales & Traffic")
 
@@ -2453,7 +2453,7 @@ def show_overview(df_filtered, t, selected_date):
                 else:        return "✅"
             df_health['Status'] = df_health['days_left'].apply(health_icon)
             df_health.columns = ['SKU','Залишок','Днів','⚡']
-            st.dataframe(df_health, use_container_width=True, height=280, hide_index=True)
+            st.dataframe(df_health, width='stretch', height=280, hide_index=True)
         else:
             st.info("Немає даних інвентаря")
 
