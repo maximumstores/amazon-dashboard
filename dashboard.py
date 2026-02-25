@@ -1984,10 +1984,16 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
     # ── КРОК 2: Виконуємо SQL ──
     try:
         import re as _re
-        # 1. Unicode → ASCII оператори
-        sql_query = (sql_query
-            .replace('≥', '>=').replace('≤', '<=')
-            .replace('≠', '!=').replace('—', '--').replace('–', '-')
+        # 1. Unicode → ASCII оператори (codepoint + literal)
+        for _uc, _ac in [('≥','>='),('≤','<='),('≠','!='),('—','--'),('–','-'),
+                         ('≥','>='),('≤','<='),('≠','!='),('—','--'),('–','-')]:
+            sql_query = sql_query.replace(_uc, _ac)
+        # Auto-cast "Order Date" TEXT → TIMESTAMP перед порівнянням
+        import re as _re2
+        sql_query = _re2.sub(
+            r'"Order Date"\s*(>=|<=|>|<|=|<>)\s*',
+            lambda m: f'CAST("Order Date" AS TIMESTAMP) {m.group(1)} ',
+            sql_query
         )
         # Auto-cast report_date (TEXT) перед порівнянням
         def _fix_rd(m):
