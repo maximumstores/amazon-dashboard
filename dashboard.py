@@ -1930,6 +1930,10 @@ def get_db_schema():
 
 КРИТИЧНІ ПРАВИЛА ПРО ТИПИ ДАНИХ:
 - НІКОЛИ не використовуй unicode символи ≥ ≤ ≠ — в SQL! Тільки ASCII: >= <= != --
+- При розрахунку % зростання ЗАВЖДИ використовуй NULLIF щоб уникнути ділення на нуль:
+  ПРАВИЛЬНО: (new - old) / NULLIF(old, 0) * 100
+  НЕПРАВИЛЬНО: (new - old) / old * 100
+- При використанні LAG з дефолтом 0: LAG(col, 1, 0) може бути 0 → використовуй NULLIF(LAG(col,1,0), 0)
 - buy_box_percentage, unit_session_percentage — TEXT, завжди: CAST(колонка AS FLOAT)
 - Якщо бачиш помилку "function avg(text)" — додай CAST(... AS FLOAT)
 - Числові агрегації на TEXT колонках завжди потребують CAST
@@ -2002,6 +2006,18 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
             )
         # 3. Auto-fix порожні рядки тільки для відомих TEXT колонок fba_inventory
         # Тільки "Available", "Price", "Velocity", "Days of Supply" — вони TEXT з пустими рядками
+        # 2.5 Захист від ділення на нуль — NULLIF для знаменника
+        # LAG(..., 1, 0) / LAG(...) → може бути 0, замінюємо на NULLIF
+        sql_query = _re.sub(
+            r'\)\s*/\s*LAG\(',
+            r') / NULLIF(LAG(',
+            sql_query
+        )
+        sql_query = _re.sub(
+            r'NULLIF\(LAG\(([^)]+)\)\)',
+            r'NULLIF(LAG(), 0)',
+            sql_query
+        )
         # 3. Simple string replace для TEXT колонок — без regex lambda
         _nullif_pairs = [
             ('"Available"', 'FLOAT'), ('"Available"', 'INT'),
@@ -2143,7 +2159,7 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
                 return
 
         if sql_query:
-            with st.expander("🔍 SQL запит", expanded=False):
+            with st.expander("🔍 SQL запит", expanded=True):
                 st.code(sql_query, language="sql")
 
         if isinstance(analysis, str) and analysis.startswith("⚠️"):
@@ -3180,7 +3196,7 @@ if st.sidebar.button(t["update_btn"], width="stretch"):
 df = load_data()
 
 if not df.empty:
-    for col in ['Available','Price','Velocity','Stock Value']: 
+    for col in ['Available','Price','Velocity','Stock Value']:
         if col not in df.columns: df[col] = 0
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     df['Stock Value'] = df['Available'] * df['Price']
