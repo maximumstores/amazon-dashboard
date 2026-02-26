@@ -1985,9 +1985,22 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
     try:
         import re as _re
         # 1. Unicode → ASCII оператори (codepoint + literal)
-        for _uc, _ac in [('≥','>='),('≤','<='),('≠','!='),('—','--'),('–','-'),
-                         ('≥','>='),('≤','<='),('≠','!='),('—','--'),('–','-')]:
+        # Unicode → ASCII: encode/decode trick catches ANY unicode variant
+        import unicodedata as _ud
+        _uc_map = {'≥':'>=','≤':'<=','≠':'!=','—':'--','–':'-',
+                   '−':'-','·':'*','’':"'",'‘':"'"}
+        for _uc, _ac in _uc_map.items():
             sql_query = sql_query.replace(_uc, _ac)
+        # Fix unquoted column refs: alias.SKU → alias."SKU" (case-sensitive columns)
+        import re as _re
+        _cols_upper = ['SKU','ASIN','FNSKU']
+        for _col in _cols_upper:
+            # alias.SKU → alias."SKU" but not alias."SKU" already
+            sql_query = _re.sub(
+                rf'([a-zA-Z_]\w*)\.{_col}(?![\w"])',
+                rf'\1."{_col}"',
+                sql_query
+            )
         # Auto-cast "Order Date" TEXT → TIMESTAMP перед порівнянням
         import re as _re2
         sql_query = _re2.sub(
@@ -2161,7 +2174,7 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
     ai_cols = st.columns(len(preset_questions))
     auto_q = None
     for i, (col, q) in enumerate(zip(ai_cols, preset_questions)):
-        if col.button(q, key=f"ai_btn_{section_key}_{i}", width='stretch'):
+        if col.button(q, key=f"ai_btn_{section_key}_{i}", use_container_width=True):
             auto_q = q
 
     # ── Поле вводу ──
@@ -2190,7 +2203,7 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 
         if df_result is not None and not df_result.empty:
             with st.expander(f"⚡ Результат з БД ({len(df_result)} рядків)", expanded=False):
-                st.dataframe(df_result, width='stretch')
+                st.dataframe(df_result, use_container_width=True)
 
         if analysis and not analysis.startswith("SQL помилка"):
             answer_md = analysis
@@ -2378,7 +2391,7 @@ def show_overview(df_filtered, t, selected_date):
                 with st.expander(f"Показати SKU ({len(df_detail)})"):
                     show_cols = ['SKU','Available','days_left']
                     show_cols = [c for c in show_cols if c in df_detail.columns]
-                    st.dataframe(df_detail[show_cols].head(10), width='stretch')
+                    st.dataframe(df_detail[show_cols].head(10), use_container_width=True)
     else:
         st.success("✅ Все в нормі — критичних проблем не виявлено")
 
@@ -2459,7 +2472,7 @@ def show_overview(df_filtered, t, selected_date):
                 legend=dict(orientation='h', y=1.1),
                 plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)'
             )
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Немає даних Sales & Traffic")
 
@@ -2475,7 +2488,7 @@ def show_overview(df_filtered, t, selected_date):
                 else:        return "✅"
             df_health['Status'] = df_health['days_left'].apply(health_icon)
             df_health.columns = ['SKU','Залишок','Днів','⚡']
-            st.dataframe(df_health, width='stretch', height=280, hide_index=True)
+            st.dataframe(df_health, use_container_width=True, height=280, hide_index=True)
         else:
             st.info("Немає даних інвентаря")
 
@@ -2790,7 +2803,7 @@ def show_aging(df_filtered, t):
 
 def show_ai_forecast(df, t):
     st.markdown("### Select SKU for Forecast")
-    skus = sorted(df['SKU'].unique())
+    skus = sorted([s for s in df['SKU'].unique() if s is not None and str(s).strip() != ''])
     if not skus: st.info("No SKU available"); return
     col1,col2 = st.columns([2,1])
     target_sku    = col1.selectbox(t["ai_select"],skus)
