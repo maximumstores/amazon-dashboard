@@ -2239,73 +2239,106 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 
 
 def show_inventory_unified():
-    st.markdown("### 📦 Склад (Inventory) — spapi.inventory_unified")
-    st.caption("Всі колонки з таблиці spapi.inventory_unified")
-
+    st.markdown("### 📦 Склад (Inventory)")
     import psycopg2, pandas as _pd
     try:
         conn = psycopg2.connect(os.environ.get("DATABASE_URL", ""))
 
-        # Рядків і колонок
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM spapi.inventory_unified")
-        total_rows = cur.fetchone()[0]
+        # Фільтри вгорі
+        c1, c2 = st.columns([3, 3])
+        search_sku  = c1.text_input("🔍 SKU", "")
+        search_asin = c2.text_input("🔍 ASIN", "")
 
-        cur.execute("""
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_schema = 'spapi' AND table_name = 'inventory_unified'
-            ORDER BY ordinal_position
-        """)
-        cols_info = cur.fetchall()
-        cur.close()
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("📊 Рядків", f"{total_rows:,}")
-        col2.metric("📋 Колонок", len(cols_info))
-        col3.metric("🗄️ Таблиця", "spapi.inventory_unified")
-
-        st.markdown("---")
-
-        # Фільтри
-        c1, c2, c3 = st.columns([2, 2, 1])
-        search_sku  = c1.text_input("🔍 Пошук по SKU", "")
-        search_asin = c2.text_input("🔍 Пошук по ASIN", "")
-        limit       = c3.selectbox("Рядків", [100, 500, 1000, 5000], index=0)
-
-        # SQL з фільтрами
-        where = []
+        where = ["snapshot_date = (SELECT MAX(snapshot_date) FROM spapi.inventory_unified)"]
         params = []
         if search_sku:
-            where.append("sku ILIKE %s")
-            params.append(f"%{search_sku}%")
+            where.append("sku ILIKE %s"); params.append(f"%{search_sku}%")
         if search_asin:
-            where.append("asin ILIKE %s")
-            params.append(f"%{search_asin}%")
+            where.append("asin ILIKE %s"); params.append(f"%{search_asin}%")
+        wc = "WHERE " + " AND ".join(where)
 
-        where_clause = "WHERE " + " AND ".join(where) if where else ""
-        sql = f"SELECT * FROM spapi.inventory_unified {where_clause} ORDER BY snapshot_date DESC LIMIT %s"
-        params.append(limit)
-
-        df = _pd.read_sql(sql, conn, params=params)
+        df_all = _pd.read_sql(f"SELECT * FROM spapi.inventory_unified {wc} LIMIT 5000", conn, params=params)
         conn.close()
 
-        st.caption(f"Показано {len(df):,} з {total_rows:,} рядків")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.caption(f"📅 Snapshot: {df_all['snapshot_date'].iloc[0] if not df_all.empty else '—'} | {len(df_all):,} SKU")
 
-        # Кнопка завантаження
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "⬇️ Завантажити CSV",
-            csv,
-            "inventory_unified.csv",
-            "text/csv"
-        )
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 Summary", "⚠️ Risk", "💰 Storage Costs", "🔄 Restock"])
 
-        # Інфо по колонках
-        with st.expander("📋 Всі колонки таблиці"):
-            cols_df = _pd.DataFrame(cols_info, columns=["Колонка", "Тип даних"])
-            st.dataframe(cols_df, use_container_width=True, hide_index=True)
+        # ── TAB 1: SUMMARY ──
+        with tab1:
+            cols_summary = [c for c in [
+                "sku","asin","product_name","afn_total_quantity",
+                "afn_fulfillable_quantity","afn_unsellable_quantity",
+                "your_price","sales_last_30_days","days_of_supply",
+                "recommended_replenishment_qty","recommended_action"
+            ] if c in df_all.columns]
+            df_s = df_all[cols_summary].copy() if cols_summary else df_all
+            # Метрики
+            m1,m2,m3,m4 = st.columns(4)
+            m1.metric("📦 Всього SKU", f"{len(df_s):,}")
+            if "afn_fulfillable_quantity" in df_s.columns:
+                m2.metric("✅ Fulfillable", f"{df_s['afn_fulfillable_quantity'].sum():,.0f}")
+            if "afn_unsellable_quantity" in df_s.columns:
+                m3.metric("❌ Unsellable", f"{df_s['afn_unsellable_quantity'].sum():,.0f}")
+            if "sales_last_30_days" in df_s.columns:
+                m4.metric("🛒 Продажі 30д", f"{df_s['sales_last_30_days'].sum():,.0f}")
+            st.dataframe(df_s, use_container_width=True, hide_index=True)
+            st.download_button("⬇️ CSV", df_s.to_csv(index=False).encode(), "inventory_summary.csv", "text/csv")
+
+        # ── TAB 2: RISK ──
+        with tab2:
+            cols_risk = [c for c in [
+                "sku","asin","product_name","afn_fulfillable_quantity",
+                "days_of_supply","stranded_reason","afn_unsellable_quantity",
+                "sales_last_30_days","recommended_action"
+            ] if c in df_all.columns]
+            df_r = df_all[cols_risk].copy() if cols_risk else df_all
+            # Фільтр ризиків
+            risk_filter = st.selectbox("Показати:", ["Всі", "Out-of-stock < 14д", "Stranded", "Unsellable > 0"])
+            if risk_filter == "Out-of-stock < 14д" and "days_of_supply" in df_r.columns:
+                df_r = df_r[df_r["days_of_supply"].fillna(999) < 14]
+            elif risk_filter == "Stranded" and "stranded_reason" in df_r.columns:
+                df_r = df_r[df_r["stranded_reason"].notna() & (df_r["stranded_reason"] != "")]
+            elif risk_filter == "Unsellable > 0" and "afn_unsellable_quantity" in df_r.columns:
+                df_r = df_r[df_r["afn_unsellable_quantity"].fillna(0) > 0]
+            st.caption(f"{len(df_r):,} SKU")
+            st.dataframe(df_r, use_container_width=True, hide_index=True)
+            st.download_button("⬇️ CSV", df_r.to_csv(index=False).encode(), "inventory_risk.csv", "text/csv")
+
+        # ── TAB 3: STORAGE COSTS ──
+        with tab3:
+            cols_stor = [c for c in [
+                "sku","asin","product_name","afn_total_quantity",
+                "inv_age_0_to_90_days","inv_age_91_to_180_days",
+                "inv_age_181_to_270_days","inv_age_271_to_365_days",
+                "inv_age_365_plus_days","estimated_storage_cost_next_month",
+                "your_price"
+            ] if c in df_all.columns]
+            df_st = df_all[cols_stor].copy() if cols_stor else df_all
+            if "estimated_storage_cost_next_month" in df_st.columns:
+                total_cost = df_st["estimated_storage_cost_next_month"].sum()
+                st.metric("💰 Загальна вартість зберігання (наст. міс.)", f"${total_cost:,.2f}")
+            st.dataframe(df_st.sort_values("estimated_storage_cost_next_month", ascending=False) if "estimated_storage_cost_next_month" in df_st.columns else df_st,
+                        use_container_width=True, hide_index=True)
+            st.download_button("⬇️ CSV", df_st.to_csv(index=False).encode(), "inventory_storage.csv", "text/csv")
+
+        # ── TAB 4: RESTOCK ──
+        with tab4:
+            cols_rest = [c for c in [
+                "sku","asin","product_name","afn_fulfillable_quantity",
+                "days_of_supply","recommended_replenishment_qty",
+                "sales_last_7_days","sales_last_30_days",
+                "sell_through","recommended_action"
+            ] if c in df_all.columns]
+            df_rs = df_all[cols_rest].copy() if cols_rest else df_all
+            only_restock = st.checkbox("Тільки ті що треба поповнити", value=True)
+            if only_restock and "recommended_replenishment_qty" in df_rs.columns:
+                df_rs = df_rs[df_rs["recommended_replenishment_qty"].fillna(0) > 0]
+            if "days_of_supply" in df_rs.columns:
+                df_rs = df_rs.sort_values("days_of_supply")
+            st.caption(f"{len(df_rs):,} SKU потребують поповнення")
+            st.dataframe(df_rs, use_container_width=True, hide_index=True)
+            st.download_button("⬇️ CSV", df_rs.to_csv(index=False).encode(), "inventory_restock.csv", "text/csv")
 
     except Exception as e:
         st.error(f"Помилка: {e}")
