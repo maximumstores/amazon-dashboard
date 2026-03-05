@@ -9,7 +9,6 @@ import queue
 import time
 import plotly.express as px
 import plotly.graph_objects as go
-from sklearn.linear_model import LinearRegression
 import numpy as np
 import datetime as dt
 from dotenv import load_dotenv
@@ -2236,6 +2235,142 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 
 
 
+
+
+
+def show_inventory_unified():
+    st.markdown("### 📦 Склад (Inventory) — spapi.inventory_unified")
+    st.caption("Всі колонки з таблиці spapi.inventory_unified")
+
+    import psycopg2, pandas as _pd
+    try:
+        conn = psycopg2.connect(os.environ.get("DATABASE_URL", ""))
+
+        # Рядків і колонок
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM spapi.inventory_unified")
+        total_rows = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = 'spapi' AND table_name = 'inventory_unified'
+            ORDER BY ordinal_position
+        """)
+        cols_info = cur.fetchall()
+        cur.close()
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("📊 Рядків", f"{total_rows:,}")
+        col2.metric("📋 Колонок", len(cols_info))
+        col3.metric("🗄️ Таблиця", "spapi.inventory_unified")
+
+        st.markdown("---")
+
+        # Фільтри
+        c1, c2, c3 = st.columns([2, 2, 1])
+        search_sku  = c1.text_input("🔍 Пошук по SKU", "")
+        search_asin = c2.text_input("🔍 Пошук по ASIN", "")
+        limit       = c3.selectbox("Рядків", [100, 500, 1000, 5000], index=0)
+
+        # SQL з фільтрами
+        where = []
+        params = []
+        if search_sku:
+            where.append("sku ILIKE %s")
+            params.append(f"%{search_sku}%")
+        if search_asin:
+            where.append("asin ILIKE %s")
+            params.append(f"%{search_asin}%")
+
+        where_clause = "WHERE " + " AND ".join(where) if where else ""
+        sql = f"SELECT * FROM spapi.inventory_unified {where_clause} ORDER BY snapshot_date DESC LIMIT %s"
+        params.append(limit)
+
+        df = _pd.read_sql(sql, conn, params=params)
+        conn.close()
+
+        st.caption(f"Показано {len(df):,} з {total_rows:,} рядків")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+        # Кнопка завантаження
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            "⬇️ Завантажити CSV",
+            csv,
+            "inventory_unified.csv",
+            "text/csv"
+        )
+
+        # Інфо по колонках
+        with st.expander("📋 Всі колонки таблиці"):
+            cols_df = _pd.DataFrame(cols_info, columns=["Колонка", "Тип даних"])
+            st.dataframe(cols_df, use_container_width=True, hide_index=True)
+
+    except Exception as e:
+        st.error(f"Помилка: {e}")
+
+def show_etl_status():
+    st.markdown("### 📊 ETL Status — стан завантажувачів")
+    st.caption("Актуальні дані з БД")
+
+    import psycopg2, datetime as _dt
+    try:
+        conn = psycopg2.connect(os.environ.get("DATABASE_URL", ""))
+        cur = conn.cursor()
+
+        def q(sql):
+            try:
+                cur.execute(sql)
+                r = cur.fetchone()
+                return (r[0], r[1]) if r else (0, None)
+            except Exception:
+                conn.rollback()
+                return (0, None)
+
+        sql_settlements = 'SELECT COUNT(*), MAX(TO_DATE("Posted Date", \'DD.MM.YYYY\')) FROM settlements WHERE "Posted Date" != \'\''
+        sql_orders      = 'SELECT COUNT(*), MAX(CAST("Order Date" AS TIMESTAMP)) FROM orders'
+        sql_returns     = 'SELECT COUNT(*), MAX(CAST("Return Date" AS TIMESTAMP)) FROM returns'
+        sql_fba         = 'SELECT COUNT(*), MAX(created_at) FROM fba_inventory'
+        sql_st          = "SELECT COUNT(*), MAX(CAST(report_date AS DATE)) FROM spapi.sales_traffic WHERE report_date != ''"
+        sql_rev         = 'SELECT COUNT(*), MAX(created_at) FROM amazon_reviews'
+
+        modules = [
+            ("📦 FBA Inventory",   "fba_inventory",       q(sql_fba),         "3× / день"),
+            ("🏦 Settlements",     "settlements",         q(sql_settlements), "3× / день"),
+            ("🛒 Orders",          "orders",              q(sql_orders),      "2× / день"),
+            ("📦 Returns",         "returns",             q(sql_returns),     "1× / день"),
+            ("📈 Sales & Traffic", "spapi.sales_traffic", q(sql_st),          "2× / день"),
+            ("⭐ Reviews",         "amazon_reviews",      q(sql_rev),         "за запитом"),
+            ("📣 Advertising",     "advertising",         (0, None),          "—"),
+        ]
+        cur.close()
+        conn.close()
+    except Exception as e:
+        st.error(f"DB помилка: {e}")
+        return
+
+    now = _dt.datetime.utcnow().date()
+    data = []
+    for name, table, (cnt, last), freq in modules:
+        if cnt and cnt > 0:
+            try:
+                last_date = last.date() if hasattr(last, 'date') else _dt.date.fromisoformat(str(last)[:10])
+                delta = (now - last_date).days
+                age = "сьогодні" if delta == 0 else f"{delta}д тому"
+                status = "✅ OK" if delta <= 1 else "⚠️ Застарів"
+            except Exception:
+                age = str(last)[:10] if last else "—"
+                status = "✅ OK"
+            data.append({"Модуль": name, "Таблиця": table, "Рядків": f"{cnt:,}",
+                         "Останнє оновлення": age, "Частота": freq, "Статус": status})
+        else:
+            data.append({"Модуль": name, "Таблиця": table, "Рядків": "—",
+                         "Останнє оновлення": "—", "Частота": freq, "Статус": "⏳ Немає даних"})
+
+    import pandas as _pd
+    st.dataframe(_pd.DataFrame(data), use_container_width=True, hide_index=True)
+
 def show_about():
     st.markdown("""
 <style>
@@ -2326,6 +2461,36 @@ def show_about():
 - **AI**: Google Gemini  
 - **Deploy**: Streamlit Cloud  
 """)
+
+    # ETL Status Table
+    st.markdown("---")
+    st.markdown("### 📊 Статус ETL модулів")
+    st.markdown("""
+<style>
+.etl-table { width:100%; border-collapse:collapse; font-size:13px; margin-bottom:24px; }
+.etl-table th { background:var(--ab-card); color:var(--ab-muted); font-weight:600;
+    text-transform:uppercase; font-size:11px; letter-spacing:1px;
+    padding:10px 14px; border-bottom:2px solid var(--ab-border); text-align:left; }
+.etl-table td { padding:10px 14px; border-bottom:1px solid var(--ab-border); color:var(--ab-text); }
+.etl-table tr:hover td { background:var(--ab-bg); }
+.badge { display:inline-block; padding:2px 10px; border-radius:20px; font-size:11px; font-weight:700; }
+.badge-ok  { background:#dcfce7; color:#166534; }
+.badge-wip { background:#fef9c3; color:#854d0e; }
+.badge-no  { background:#fee2e2; color:#991b1b; }
+</style>
+<table class="etl-table">
+  <tr>
+    <th>Модуль</th><th>Таблиця</th><th>Оновлення</th><th>Рядків</th><th>Статус</th>
+  </tr>
+  <tr><td>📦 FBA Inventory</td><td><code>fba_inventory</code></td><td>3× / день</td><td>~19,000</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
+  <tr><td>🏦 Settlements</td><td><code>settlements</code></td><td>3× / день</td><td>~1,534,000</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
+  <tr><td>🛒 Orders</td><td><code>orders</code></td><td>2× / день</td><td>~24,600</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
+  <tr><td>📦 Returns</td><td><code>returns</code></td><td>1× / день</td><td>~4,200</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
+  <tr><td>📈 Sales & Traffic</td><td><code>spapi.sales_traffic</code></td><td>2× / день</td><td>~22,500</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
+  <tr><td>⭐ Reviews</td><td><code>amazon_reviews</code></td><td>за запитом</td><td>~2,600</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
+  <tr><td>📣 Advertising</td><td><code>advertising</code></td><td>—</td><td>—</td><td><span class="badge badge-wip">⏳ В розробці</span></td></tr>
+</table>
+""", unsafe_allow_html=True)
 
     st.markdown("---")
     st.caption(t["about_footer"])
@@ -2811,7 +2976,10 @@ def show_ai_forecast(df, t):
     sd = df[df['SKU']==target_sku].copy().sort_values('created_at')
     sd['date_ordinal'] = sd['created_at'].map(dt.datetime.toordinal)
     if len(sd)>=3:
-        model = LinearRegression().fit(sd[['date_ordinal']], sd['Available'])
+        # LinearRegression замінено на numpy (без sklearn)
+        import numpy as _np
+        _coeffs = _np.polyfit(sd['date_ordinal'], sd['Available'], 1)
+        model = type('M', (), {'predict': lambda self, X: _np.polyval(_coeffs, [x[0] for x in X])})()
         last  = sd['created_at'].max()
         fd    = [last+dt.timedelta(days=x) for x in range(1,forecast_days+1)]
         fo    = np.array([d.toordinal() for d in fd]).reshape(-1,1)
@@ -3256,7 +3424,7 @@ all_nav = [
     "🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
     "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
     "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast",
-    "📋 FBA Inventory Table","🕷 Scraper Reviews",
+    "📋 FBA Inventory Table","🕷 Scraper Reviews","📊 ETL Status","📦 Склад (Inventory)",
 ]
 # Адмін бачить все + адмінку
 if user["role"] == "admin":
@@ -3287,6 +3455,8 @@ elif report_choice == "🧠 AI Forecast":              show_ai_forecast(df, t)
 elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filtered, t, selected_date)
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 elif report_choice == "👑 User Management":          show_admin_panel()
+elif report_choice == "📊 ETL Status":               show_etl_status()
+elif report_choice == "📦 Склад (Inventory)":        show_inventory_unified()
 elif report_choice == "ℹ️ Про додаток":              show_about()
 
 st.sidebar.markdown("---")
