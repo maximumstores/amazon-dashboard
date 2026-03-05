@@ -2260,6 +2260,20 @@ def show_inventory_unified():
         df_all = _pd.read_sql(f"SELECT * FROM spapi.inventory_unified {wc} LIMIT 5000", conn, params=params)
         conn.close()
 
+        # Конвертуємо числові колонки з TEXT → numeric
+        _num_cols = [
+            "afn_total_quantity","afn_fulfillable_quantity","afn_unsellable_quantity",
+            "afn_reserved_quantity","days_of_supply","recommended_replenishment_qty",
+            "sales_last_7_days","sales_last_30_days","sales_last_60_days","sales_last_90_days",
+            "your_price","estimated_storage_cost_next_month","sell_through",
+            "inv_age_0_to_90_days","inv_age_91_to_180_days","inv_age_181_to_270_days",
+            "inv_age_271_to_365_days","inv_age_365_plus_days","available",
+            "units_shipped_t7","units_shipped_t30","units_shipped_t60","units_shipped_t90",
+        ]
+        for _c in _num_cols:
+            if _c in df_all.columns:
+                df_all[_c] = _pd.to_numeric(df_all[_c], errors="coerce")
+
         st.caption(f"📅 Snapshot: {df_all['snapshot_date'].iloc[0] if not df_all.empty else '—'} | {len(df_all):,} SKU")
 
         tab1, tab2, tab3, tab4 = st.tabs(["📋 Summary", "⚠️ Risk", "💰 Storage Costs", "🔄 Restock"])
