@@ -2281,13 +2281,13 @@ def show_inventory_unified():
             cur2.execute("""
                 SELECT
                     COUNT(*),
-                    SUM(CAST(NULLIF(afn_fulfillable_quantity,'') AS FLOAT)),
-                    SUM(CAST(NULLIF(afn_unsellable_quantity,'') AS FLOAT)),
+                    SUM(CASE WHEN afn_fulfillable_quantity ~ '^[0-9]+\.?[0-9]*$' THEN CAST(afn_fulfillable_quantity AS FLOAT) ELSE 0 END),
+                    SUM(CASE WHEN afn_unsellable_quantity ~ '^[0-9]+\.?[0-9]*$' THEN CAST(afn_unsellable_quantity AS FLOAT) ELSE 0 END),
                     COUNT(CASE WHEN COALESCE(
-                        CAST(NULLIF(days_of_supply,'') AS FLOAT),
-                        CAST(NULLIF(days_of_supply_at_amazon_fulfillment_network,'') AS FLOAT)
+                        CASE WHEN days_of_supply ~ '^[0-9]+\.?[0-9]*$' THEN CAST(days_of_supply AS FLOAT) ELSE NULL END,
+                        CASE WHEN days_of_supply_at_amazon_fulfillment_network ~ '^[0-9]+\.?[0-9]*$' THEN CAST(days_of_supply_at_amazon_fulfillment_network AS FLOAT) ELSE NULL END
                     ) < 14 THEN 1 END),
-                    COUNT(CASE WHEN CAST(NULLIF(recommended_replenishment_qty,'') AS FLOAT) > 0 THEN 1 END)
+                    COUNT(CASE WHEN recommended_replenishment_qty ~ '^[0-9]+\.?[0-9]*$' AND CAST(recommended_replenishment_qty AS FLOAT) > 0 THEN 1 END)
                 FROM spapi.inventory_unified
                 WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM spapi.inventory_unified)
             """)
