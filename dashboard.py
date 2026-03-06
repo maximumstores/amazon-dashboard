@@ -2257,6 +2257,7 @@ def show_inventory_unified():
                     COUNT(*) FILTER (WHERE days_of_supply < 14)                 AS low_stock,
                     COUNT(*) FILTER (WHERE recommended_replenishment_qty > 0)   AS need_restock,
                     COUNT(*) FILTER (WHERE stranded_reason IS NOT NULL)         AS stranded,
+                    COALESCE(SUM(sales_last_30_days), 0)                        AS sales_30d,
                     MAX(snapshot_date)                                          AS snapshot_date
                 FROM spapi.inventory_summary
             """), _ec).iloc[0]
@@ -2266,7 +2267,8 @@ def show_inventory_unified():
         unsellable   = int(_kpi['unsellable'])
         low_stock    = int(_kpi['low_stock'])
         need_restock = int(_kpi['need_restock'])
-        stranded     = int(_kpi['stranded'])
+        stranded      = int(_kpi['stranded'])
+        sales_30d     = float(_kpi['sales_30d'])
         snapshot_date = str(_kpi['snapshot_date'])[:10]
 
     except Exception as e:
