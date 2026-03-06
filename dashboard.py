@@ -2274,7 +2274,20 @@ def show_inventory_unified():
             if _c in df_all.columns:
                 df_all[_c] = _pd.to_numeric(df_all[_c], errors="coerce")
 
-        st.caption(f"📅 Snapshot: {df_all['snapshot_date'].iloc[0] if not df_all.empty else '—'} | {len(df_all):,} SKU")
+        snapshot_date = df_all['snapshot_date'].iloc[0] if not df_all.empty else '—'
+
+        # KPI карточки
+        low_stock   = int((df_all['days_of_supply'].fillna(999) < 14).sum()) if 'days_of_supply' in df_all.columns else 0
+        stranded    = int(df_all['stranded_reason'].notna().sum()) if 'stranded_reason' in df_all.columns else 0
+        need_restock= int((df_all['recommended_replenishment_qty'].fillna(0) > 0).sum()) if 'recommended_replenishment_qty' in df_all.columns else 0
+
+        k1,k2,k3,k4 = st.columns(4)
+        k1.metric("📦 Total SKU",      f"{len(df_all):,}")
+        k2.metric("⚠️ Low Stock <14д", f"{low_stock:,}",  delta=f"-{low_stock}" if low_stock else None, delta_color="inverse")
+        k3.metric("🔒 Stranded",       f"{stranded:,}",   delta=f"-{stranded}"  if stranded  else None, delta_color="inverse")
+        k4.metric("🔄 Need Restock",   f"{need_restock:,}")
+        st.caption(f"📅 Snapshot: {snapshot_date}")
+        st.markdown("---")
 
         tab1, tab2, tab3, tab4 = st.tabs(["📋 Summary", "⚠️ Risk", "💰 Storage Costs", "🔄 Restock"])
 
