@@ -2272,6 +2272,31 @@ def show_inventory_unified():
 
         snapshot_date = df_all['snapshot_date'].iloc[0] if not df_all.empty else '—'
 
+        # ── KPI з БД напряму ──
+        try:
+            conn2 = psycopg2.connect(os.environ.get("DATABASE_URL", ""))
+            cur2 = conn2.cursor()
+            cur2.execute("""
+                SELECT
+                    COUNT(*),
+                    SUM(CAST(NULLIF(afn_fulfillable_quantity,'') AS FLOAT)),
+                    SUM(CAST(NULLIF(afn_unsellable_quantity,'') AS FLOAT)),
+                    COUNT(CASE WHEN CAST(NULLIF(days_of_supply_at_amazon_fulfillment_network,'') AS FLOAT) < 14 THEN 1 END),
+                    COUNT(CASE WHEN CAST(NULLIF(recommended_ship_in_quantity,'') AS FLOAT) > 0 THEN 1 END)
+                FROM spapi.inventory_unified
+                WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM spapi.inventory_unified)
+            """)
+            _k = cur2.fetchone()
+            cur2.close(); conn2.close()
+            total_sku    = int(_k[0] or 0)
+            fulfillable  = int(_k[1] or 0)
+            unsellable   = int(_k[2] or 0)
+            low_stock    = int(_k[3] or 0)
+            need_restock = int(_k[4] or 0)
+        except Exception as _e:
+            total_sku = len(df_all); fulfillable = unsellable = low_stock = need_restock = 0
+        stranded = int(df_all['stranded_reason'].notna().sum()) if 'stranded_reason' in df_all.columns else 0
+
         # ── KPI ──
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("📦 Total SKU",      f"{total_sku:,}")
