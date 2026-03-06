@@ -2245,10 +2245,12 @@ def show_inventory_unified():
         conn = psycopg2.connect(os.environ.get("DATABASE_URL", ""))
 
         # Завантажуємо без фільтрів для KPI
-        df_all = _pd.read_sql(
-            "SELECT * FROM spapi.inventory_unified WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM spapi.inventory_unified) LIMIT 5000",
-            conn
-        )
+        from sqlalchemy import create_engine as _ce, text as _text
+        _engine = _ce(os.environ.get("DATABASE_URL", "").replace("postgres://","postgresql://"))
+        with _engine.connect() as _ec:
+            df_all = _pd.read_sql(_text(
+                "SELECT * FROM spapi.inventory_unified WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM spapi.inventory_unified) LIMIT 5000"
+            ), _ec)
 
         # Конвертуємо числові колонки з TEXT → numeric
         _num_cols = [
@@ -2297,6 +2299,7 @@ def show_inventory_unified():
             low_stock    = int(_k[3] or 0)
             need_restock = int(_k[4] or 0)
         except Exception as _e:
+            st.warning(f"KPI query error: {_e}")
             total_sku = len(df_all); fulfillable = unsellable = low_stock = need_restock = 0
         stranded = int(df_all['stranded_reason'].notna().sum()) if 'stranded_reason' in df_all.columns else 0
 
