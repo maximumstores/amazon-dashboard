@@ -2252,13 +2252,19 @@ def show_inventory_unified():
 
         # Конвертуємо числові колонки з TEXT → numeric
         _num_cols = [
+            "available","fulfillable_qty","unfulfillable_qty","unfulfillable_quantity",
             "afn_total_quantity","afn_fulfillable_quantity","afn_unsellable_quantity",
-            "afn_reserved_quantity","days_of_supply","recommended_replenishment_qty",
+            "afn_reserved_quantity","total_reserved_quantity","reserved_quantity",
+            "inbound_quantity","pending_removal_quantity","recommended_removal_quantity",
+            "recommended_ship_in_quantity","estimated_excess_quantity",
+            "days_of_supply","days_of_supply_at_amazon_fulfillment_network",
+            "recommended_replenishment_qty",
             "sales_last_7_days","sales_last_30_days","sales_last_60_days","sales_last_90_days",
             "your_price","estimated_storage_cost_next_month","sell_through",
             "inv_age_0_to_90_days","inv_age_91_to_180_days","inv_age_181_to_270_days",
-            "inv_age_271_to_365_days","inv_age_365_plus_days","available",
+            "inv_age_271_to_365_days","inv_age_365_plus_days","quantity",
             "units_shipped_t7","units_shipped_t30","units_shipped_t60","units_shipped_t90",
+            "average_quantity_customer_orders","average_quantity_on_hand",
         ]
         for _c in _num_cols:
             if _c in df_all.columns:
@@ -2267,9 +2273,11 @@ def show_inventory_unified():
         snapshot_date = df_all['snapshot_date'].iloc[0] if not df_all.empty else '—'
 
         # ── KPI ──
-        low_stock    = int((df_all['days_of_supply'].fillna(999) < 14).sum()) if 'days_of_supply' in df_all.columns else 0
-        stranded     = int(df_all['stranded_reason'].notna().sum())            if 'stranded_reason' in df_all.columns else 0
-        need_restock = int((df_all['recommended_replenishment_qty'].fillna(0) > 0).sum()) if 'recommended_replenishment_qty' in df_all.columns else 0
+        _dos_col = 'days_of_supply' if 'days_of_supply' in df_all.columns else 'days_of_supply_at_amazon_fulfillment_network'
+        low_stock    = int((df_all[_dos_col].fillna(999) < 14).sum()) if _dos_col in df_all.columns else 0
+        stranded     = int(df_all['stranded_reason'].notna().sum())   if 'stranded_reason' in df_all.columns else 0
+        _rest_col    = 'recommended_ship_in_quantity' if 'recommended_ship_in_quantity' in df_all.columns else 'recommended_replenishment_qty'
+        need_restock = int((df_all[_rest_col].fillna(0) > 0).sum())  if _rest_col in df_all.columns else 0
 
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("📦 Total SKU",     f"{len(df_all):,}")
@@ -2297,21 +2305,22 @@ def show_inventory_unified():
         # ── TAB 1: SUMMARY ──
         with tab1:
             cols_summary = [c for c in [
-                "sku","asin","product_name","afn_total_quantity",
-                "afn_fulfillable_quantity","afn_unsellable_quantity",
-                "your_price","sales_last_30_days","days_of_supply",
-                "recommended_replenishment_qty","recommended_action"
+                "sku","asin","product_name",
+                "available","fulfillable_qty","unfulfillable_quantity",
+                "your_price","sales_last_30_days","units_shipped_t30",
+                "days_of_supply","days_of_supply_at_amazon_fulfillment_network",
+                "recommended_ship_in_quantity","recommended_action"
             ] if c in df_all.columns]
             df_s = df_all[cols_summary].copy() if cols_summary else df_all
             # Метрики
             m1,m2,m3,m4 = st.columns(4)
             m1.metric("📦 Всього SKU", f"{len(df_s):,}")
-            if "afn_fulfillable_quantity" in df_s.columns:
-                m2.metric("✅ Fulfillable", f"{df_s['afn_fulfillable_quantity'].sum():,.0f}")
-            if "afn_unsellable_quantity" in df_s.columns:
-                m3.metric("❌ Unsellable", f"{df_s['afn_unsellable_quantity'].sum():,.0f}")
-            if "sales_last_30_days" in df_s.columns:
-                m4.metric("🛒 Продажі 30д", f"{df_s['sales_last_30_days'].sum():,.0f}")
+            _ful = next((c for c in ["fulfillable_qty","afn_fulfillable_quantity","available"] if c in df_s.columns), None)
+            _unf = next((c for c in ["unfulfillable_quantity","unfulfillable_qty","afn_unsellable_quantity"] if c in df_s.columns), None)
+            _s30 = next((c for c in ["sales_last_30_days","units_shipped_t30"] if c in df_s.columns), None)
+            if _ful: m2.metric("✅ Fulfillable", f"{df_s[_ful].sum():,.0f}")
+            if _unf: m3.metric("❌ Unsellable",  f"{df_s[_unf].sum():,.0f}")
+            if _s30: m4.metric("🛒 Продажі 30д", f"{df_s[_s30].sum():,.0f}")
             st.dataframe(df_s, use_container_width=True, hide_index=True)
             st.download_button("⬇️ CSV", df_s.to_csv(index=False).encode(), "inventory_summary.csv", "text/csv")
 
