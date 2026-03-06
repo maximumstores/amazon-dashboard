@@ -2244,21 +2244,11 @@ def show_inventory_unified():
     try:
         conn = psycopg2.connect(os.environ.get("DATABASE_URL", ""))
 
-        # Фільтри вгорі
-        c1, c2 = st.columns([3, 3])
-        search_sku  = c1.text_input("🔍 SKU", "")
-        search_asin = c2.text_input("🔍 ASIN", "")
-
-        where = ["snapshot_date = (SELECT MAX(snapshot_date) FROM spapi.inventory_unified)"]
-        params = []
-        if search_sku:
-            where.append("sku ILIKE %s"); params.append(f"%{search_sku}%")
-        if search_asin:
-            where.append("asin ILIKE %s"); params.append(f"%{search_asin}%")
-        wc = "WHERE " + " AND ".join(where)
-
-        df_all = _pd.read_sql(f"SELECT * FROM spapi.inventory_unified {wc} LIMIT 5000", conn, params=params)
-        conn.close()
+        # Завантажуємо без фільтрів для KPI
+        df_all = _pd.read_sql(
+            "SELECT * FROM spapi.inventory_unified WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM spapi.inventory_unified) LIMIT 5000",
+            conn
+        )
 
         # Конвертуємо числові колонки з TEXT → numeric
         _num_cols = [
@@ -2276,18 +2266,31 @@ def show_inventory_unified():
 
         snapshot_date = df_all['snapshot_date'].iloc[0] if not df_all.empty else '—'
 
-        # KPI карточки
-        low_stock   = int((df_all['days_of_supply'].fillna(999) < 14).sum()) if 'days_of_supply' in df_all.columns else 0
-        stranded    = int(df_all['stranded_reason'].notna().sum()) if 'stranded_reason' in df_all.columns else 0
-        need_restock= int((df_all['recommended_replenishment_qty'].fillna(0) > 0).sum()) if 'recommended_replenishment_qty' in df_all.columns else 0
+        # ── KPI ──
+        low_stock    = int((df_all['days_of_supply'].fillna(999) < 14).sum()) if 'days_of_supply' in df_all.columns else 0
+        stranded     = int(df_all['stranded_reason'].notna().sum())            if 'stranded_reason' in df_all.columns else 0
+        need_restock = int((df_all['recommended_replenishment_qty'].fillna(0) > 0).sum()) if 'recommended_replenishment_qty' in df_all.columns else 0
 
-        k1,k2,k3,k4 = st.columns(4)
-        k1.metric("📦 Total SKU",      f"{len(df_all):,}")
-        k2.metric("⚠️ Low Stock <14д", f"{low_stock:,}",  delta=f"-{low_stock}" if low_stock else None, delta_color="inverse")
-        k3.metric("🔒 Stranded",       f"{stranded:,}",   delta=f"-{stranded}"  if stranded  else None, delta_color="inverse")
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("📦 Total SKU",     f"{len(df_all):,}")
+        k2.metric("⚠️ Low Stock <14d", f"{low_stock:,}")
+        k3.metric("🔒 Stranded",       f"{stranded:,}")
         k4.metric("🔄 Need Restock",   f"{need_restock:,}")
+
+        # ── Фільтри ──
+        c1, c2 = st.columns([3, 3])
+        search_sku  = c1.text_input("🔍 SKU", "")
+        search_asin = c2.text_input("🔍 ASIN", "")
         st.caption(f"📅 Snapshot: {snapshot_date}")
         st.markdown("---")
+
+        conn.close()
+
+        # Застосовуємо фільтри до df_all
+        if search_sku:
+            df_all = df_all[df_all['sku'].str.contains(search_sku, case=False, na=False)]
+        if search_asin:
+            df_all = df_all[df_all['asin'].str.contains(search_asin, case=False, na=False)]
 
         tab1, tab2, tab3, tab4 = st.tabs(["📋 Summary", "⚠️ Risk", "💰 Storage Costs", "🔄 Restock"])
 
