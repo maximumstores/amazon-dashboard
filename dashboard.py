@@ -2273,17 +2273,11 @@ def show_inventory_unified():
         snapshot_date = df_all['snapshot_date'].iloc[0] if not df_all.empty else '—'
 
         # ── KPI ──
-        _dos_col = 'days_of_supply' if 'days_of_supply' in df_all.columns else 'days_of_supply_at_amazon_fulfillment_network'
-        low_stock    = int((df_all[_dos_col].fillna(999) < 14).sum()) if _dos_col in df_all.columns else 0
-        stranded     = int(df_all['stranded_reason'].notna().sum())   if 'stranded_reason' in df_all.columns else 0
-        _rest_col    = 'recommended_ship_in_quantity' if 'recommended_ship_in_quantity' in df_all.columns else 'recommended_replenishment_qty'
-        need_restock = int((df_all[_rest_col].fillna(0) > 0).sum())  if _rest_col in df_all.columns else 0
-
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("📦 Total SKU",     f"{len(df_all):,}")
+        k1.metric("📦 Total SKU",      f"{total_sku:,}")
         k2.metric("⚠️ Low Stock <14d", f"{low_stock:,}")
-        k3.metric("🔒 Stranded",       f"{stranded:,}")
-        k4.metric("🔄 Need Restock",   f"{need_restock:,}")
+        k3.metric("🔒 Stranded",        f"{stranded:,}")
+        k4.metric("🔄 Need Restock",    f"{need_restock:,}")
 
         # ── Фільтри ──
         c1, c2 = st.columns([3, 3])
@@ -2315,11 +2309,9 @@ def show_inventory_unified():
             # Метрики
             m1,m2,m3,m4 = st.columns(4)
             m1.metric("📦 Всього SKU", f"{len(df_s):,}")
-            _ful = next((c for c in ["afn_fulfillable_quantity","available"] if c in df_s.columns), None)
-            _unf = next((c for c in ["afn_unsellable_quantity","unfulfillable_quantity","unfulfillable_qty"] if c in df_s.columns), None)
             _s30 = next((c for c in ["sales_last_30_days","units_shipped_t30"] if c in df_s.columns), None)
-            if _ful: m2.metric("✅ Fulfillable", f"{df_s[_ful].sum():,.0f}")
-            if _unf: m3.metric("❌ Unsellable",  f"{df_s[_unf].sum():,.0f}")
+            m2.metric("✅ Fulfillable",  f"{fulfillable:,}")
+            m3.metric("❌ Unsellable",   f"{unsellable:,}")
             if _s30: m4.metric("🛒 Продажі 30д", f"{df_s[_s30].sum():,.0f}")
             st.dataframe(df_s, use_container_width=True, hide_index=True)
             st.download_button("⬇️ CSV", df_s.to_csv(index=False).encode(), "inventory_summary.csv", "text/csv")
