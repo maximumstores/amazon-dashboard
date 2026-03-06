@@ -2328,7 +2328,7 @@ def show_inventory_unified():
         m1.metric("📦 SKU на екрані", f"{len(df):,}")
         m2.metric("✅ Fulfillable",    f"{fulfillable:,}")
         m3.metric("❌ Unsellable",     f"{unsellable:,}")
-        m4.metric("🛒 Продажі 30д",   f"{df['sales_last_30_days'].sum():,.0f}" if 'sales_last_30_days' in df.columns else "—")
+        m4.metric("🛒 Продажі 30д (всі)", f"{sales_30d:,.0f}")
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
         st.download_button("⬇️ CSV", df[cols].to_csv(index=False).encode(), "summary.csv", "text/csv")
 
