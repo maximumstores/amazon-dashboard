@@ -2306,7 +2306,7 @@ def show_inventory_unified():
         with tab1:
             cols_summary = [c for c in [
                 "sku","asin","product_name",
-                "available","fulfillable_qty","unfulfillable_quantity",
+                "available","afn_fulfillable_quantity","afn_total_quantity","afn_unsellable_quantity",
                 "your_price","sales_last_30_days","units_shipped_t30",
                 "days_of_supply","days_of_supply_at_amazon_fulfillment_network",
                 "recommended_ship_in_quantity","recommended_action"
@@ -2315,8 +2315,8 @@ def show_inventory_unified():
             # Метрики
             m1,m2,m3,m4 = st.columns(4)
             m1.metric("📦 Всього SKU", f"{len(df_s):,}")
-            _ful = next((c for c in ["fulfillable_qty","afn_fulfillable_quantity","available"] if c in df_s.columns), None)
-            _unf = next((c for c in ["unfulfillable_quantity","unfulfillable_qty","afn_unsellable_quantity"] if c in df_s.columns), None)
+            _ful = next((c for c in ["afn_fulfillable_quantity","available"] if c in df_s.columns), None)
+            _unf = next((c for c in ["afn_unsellable_quantity","unfulfillable_quantity","unfulfillable_qty"] if c in df_s.columns), None)
             _s30 = next((c for c in ["sales_last_30_days","units_shipped_t30"] if c in df_s.columns), None)
             if _ful: m2.metric("✅ Fulfillable", f"{df_s[_ful].sum():,.0f}")
             if _unf: m3.metric("❌ Unsellable",  f"{df_s[_unf].sum():,.0f}")
