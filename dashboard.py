@@ -2241,169 +2241,134 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 def show_inventory_unified():
     st.markdown("### 📦 Склад (Inventory)")
     import psycopg2, pandas as _pd
+    from sqlalchemy import create_engine as _ce, text as _text
+
+    _db_url = os.environ.get("DATABASE_URL", "").replace("postgres://", "postgresql://")
+    _engine = _ce(_db_url)
+
     try:
-        conn = psycopg2.connect(os.environ.get("DATABASE_URL", ""))
-
-        # Завантажуємо без фільтрів для KPI
-        from sqlalchemy import create_engine as _ce, text as _text
-        _engine = _ce(os.environ.get("DATABASE_URL", "").replace("postgres://","postgresql://"))
+        # ── KPI з вітрини (без LIMIT) ──
         with _engine.connect() as _ec:
-            df_all = _pd.read_sql(_text(
-                "SELECT * FROM spapi.inventory_unified WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM spapi.inventory_unified) LIMIT 5000"
-            ), _ec)
-
-        # Конвертуємо числові колонки з TEXT → numeric
-        _num_cols = [
-            "available","fulfillable_qty","unfulfillable_qty","unfulfillable_quantity",
-            "afn_total_quantity","afn_fulfillable_quantity","afn_unsellable_quantity",
-            "afn_reserved_quantity","total_reserved_quantity","reserved_quantity",
-            "inbound_quantity","pending_removal_quantity","recommended_removal_quantity",
-            "recommended_ship_in_quantity","estimated_excess_quantity",
-            "days_of_supply","days_of_supply_at_amazon_fulfillment_network",
-            "recommended_replenishment_qty",
-            "sales_last_7_days","sales_last_30_days","sales_last_60_days","sales_last_90_days",
-            "your_price","estimated_storage_cost_next_month","sell_through",
-            "inv_age_0_to_90_days","inv_age_91_to_180_days","inv_age_181_to_270_days",
-            "inv_age_271_to_365_days","inv_age_365_plus_days","quantity",
-            "units_shipped_t7","units_shipped_t30","units_shipped_t60","units_shipped_t90",
-            "average_quantity_customer_orders","average_quantity_on_hand",
-        ]
-        for _c in _num_cols:
-            if _c in df_all.columns:
-                df_all[_c] = _pd.to_numeric(df_all[_c], errors="coerce")
-
-        snapshot_date = df_all['snapshot_date'].iloc[0] if not df_all.empty else '—'
-
-        # ── KPI з БД напряму ──
-        try:
-            conn2 = psycopg2.connect(os.environ.get("DATABASE_URL", ""))
-            cur2 = conn2.cursor()
-            cur2.execute("""
+            _kpi = _pd.read_sql(_text("""
                 SELECT
-                    COUNT(*),
-                    SUM(CASE WHEN afn_fulfillable_quantity ~ '^[0-9]+\.?[0-9]*$' THEN CAST(afn_fulfillable_quantity AS FLOAT) ELSE 0 END),
-                    SUM(CASE WHEN afn_unsellable_quantity ~ '^[0-9]+\.?[0-9]*$' THEN CAST(afn_unsellable_quantity AS FLOAT) ELSE 0 END),
-                    COUNT(CASE WHEN COALESCE(
-                        CASE WHEN days_of_supply ~ '^[0-9]+\.?[0-9]*$' THEN CAST(days_of_supply AS FLOAT) ELSE NULL END,
-                        CASE WHEN days_of_supply_at_amazon_fulfillment_network ~ '^[0-9]+\.?[0-9]*$' THEN CAST(days_of_supply_at_amazon_fulfillment_network AS FLOAT) ELSE NULL END
-                    ) < 14 THEN 1 END),
-                    COUNT(CASE WHEN recommended_replenishment_qty ~ '^[0-9]+\.?[0-9]*$' AND CAST(recommended_replenishment_qty AS FLOAT) > 0 THEN 1 END)
-                FROM spapi.inventory_unified
-                WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM spapi.inventory_unified)
-            """)
-            _k = cur2.fetchone()
-            cur2.close(); conn2.close()
-            total_sku    = int(_k[0] or 0)
-            fulfillable  = int(_k[1] or 0)
-            unsellable   = int(_k[2] or 0)
-            low_stock    = int(_k[3] or 0)
-            need_restock = int(_k[4] or 0)
-        except Exception as _e:
-            st.warning(f"KPI query error: {_e}")
-            total_sku = len(df_all); fulfillable = unsellable = low_stock = need_restock = 0
-        stranded = int(df_all['stranded_reason'].notna().sum()) if 'stranded_reason' in df_all.columns else 0
+                    COUNT(*)                                                    AS total_sku,
+                    COALESCE(SUM(afn_fulfillable_quantity), 0)                  AS fulfillable,
+                    COALESCE(SUM(afn_unsellable_quantity), 0)                   AS unsellable,
+                    COUNT(*) FILTER (WHERE days_of_supply < 14)                 AS low_stock,
+                    COUNT(*) FILTER (WHERE recommended_replenishment_qty > 0)   AS need_restock,
+                    COUNT(*) FILTER (WHERE stranded_reason IS NOT NULL)         AS stranded,
+                    MAX(snapshot_date)                                          AS snapshot_date
+                FROM spapi.inventory_summary
+            """), _ec).iloc[0]
 
-        # ── KPI ──
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("📦 Total SKU",      f"{total_sku:,}")
-        k2.metric("⚠️ Low Stock <14d", f"{low_stock:,}")
-        k3.metric("🔒 Stranded",        f"{stranded:,}")
-        k4.metric("🔄 Need Restock",    f"{need_restock:,}")
-
-        # ── Фільтри ──
-        c1, c2 = st.columns([3, 3])
-        search_sku  = c1.text_input("🔍 SKU", "")
-        search_asin = c2.text_input("🔍 ASIN", "")
-        st.caption(f"📅 Snapshot: {snapshot_date}")
-        st.markdown("---")
-
-        conn.close()
-
-        # Застосовуємо фільтри до df_all
-        if search_sku:
-            df_all = df_all[df_all['sku'].str.contains(search_sku, case=False, na=False)]
-        if search_asin:
-            df_all = df_all[df_all['asin'].str.contains(search_asin, case=False, na=False)]
-
-        tab1, tab2, tab3, tab4 = st.tabs(["📋 Summary", "⚠️ Risk", "💰 Storage Costs", "🔄 Restock"])
-
-        # ── TAB 1: SUMMARY ──
-        with tab1:
-            cols_summary = [c for c in [
-                "sku","asin","product_name",
-                "available","afn_fulfillable_quantity","afn_total_quantity","afn_unsellable_quantity",
-                "your_price","sales_last_30_days","units_shipped_t30",
-                "days_of_supply","days_of_supply_at_amazon_fulfillment_network",
-                "recommended_ship_in_quantity","recommended_action"
-            ] if c in df_all.columns]
-            df_s = df_all[cols_summary].copy() if cols_summary else df_all
-            # Метрики
-            m1,m2,m3,m4 = st.columns(4)
-            m1.metric("📦 Всього SKU", f"{len(df_s):,}")
-            _s30 = next((c for c in ["sales_last_30_days","units_shipped_t30"] if c in df_s.columns), None)
-            m2.metric("✅ Fulfillable",  f"{fulfillable:,}")
-            m3.metric("❌ Unsellable",   f"{unsellable:,}")
-            if _s30: m4.metric("🛒 Продажі 30д", f"{df_s[_s30].sum():,.0f}")
-            st.dataframe(df_s, use_container_width=True, hide_index=True)
-            st.download_button("⬇️ CSV", df_s.to_csv(index=False).encode(), "inventory_summary.csv", "text/csv")
-
-        # ── TAB 2: RISK ──
-        with tab2:
-            cols_risk = [c for c in [
-                "sku","asin","product_name","afn_fulfillable_quantity",
-                "days_of_supply","stranded_reason","afn_unsellable_quantity",
-                "sales_last_30_days","recommended_action"
-            ] if c in df_all.columns]
-            df_r = df_all[cols_risk].copy() if cols_risk else df_all
-            # Фільтр ризиків
-            risk_filter = st.selectbox("Показати:", ["Всі", "Out-of-stock < 14д", "Stranded", "Unsellable > 0"])
-            if risk_filter == "Out-of-stock < 14д" and "days_of_supply" in df_r.columns:
-                df_r = df_r[df_r["days_of_supply"].fillna(999) < 14]
-            elif risk_filter == "Stranded" and "stranded_reason" in df_r.columns:
-                df_r = df_r[df_r["stranded_reason"].notna() & (df_r["stranded_reason"] != "")]
-            elif risk_filter == "Unsellable > 0" and "afn_unsellable_quantity" in df_r.columns:
-                df_r = df_r[df_r["afn_unsellable_quantity"].fillna(0) > 0]
-            st.caption(f"{len(df_r):,} SKU")
-            st.dataframe(df_r, use_container_width=True, hide_index=True)
-            st.download_button("⬇️ CSV", df_r.to_csv(index=False).encode(), "inventory_risk.csv", "text/csv")
-
-        # ── TAB 3: STORAGE COSTS ──
-        with tab3:
-            cols_stor = [c for c in [
-                "sku","asin","product_name","afn_total_quantity",
-                "inv_age_0_to_90_days","inv_age_91_to_180_days",
-                "inv_age_181_to_270_days","inv_age_271_to_365_days",
-                "inv_age_365_plus_days","estimated_storage_cost_next_month",
-                "your_price"
-            ] if c in df_all.columns]
-            df_st = df_all[cols_stor].copy() if cols_stor else df_all
-            if "estimated_storage_cost_next_month" in df_st.columns:
-                total_cost = df_st["estimated_storage_cost_next_month"].sum()
-                st.metric("💰 Загальна вартість зберігання (наст. міс.)", f"${total_cost:,.2f}")
-            st.dataframe(df_st.sort_values("estimated_storage_cost_next_month", ascending=False) if "estimated_storage_cost_next_month" in df_st.columns else df_st,
-                        use_container_width=True, hide_index=True)
-            st.download_button("⬇️ CSV", df_st.to_csv(index=False).encode(), "inventory_storage.csv", "text/csv")
-
-        # ── TAB 4: RESTOCK ──
-        with tab4:
-            cols_rest = [c for c in [
-                "sku","asin","product_name","afn_fulfillable_quantity",
-                "days_of_supply","recommended_replenishment_qty",
-                "sales_last_7_days","sales_last_30_days",
-                "sell_through","recommended_action"
-            ] if c in df_all.columns]
-            df_rs = df_all[cols_rest].copy() if cols_rest else df_all
-            only_restock = st.checkbox("Тільки ті що треба поповнити", value=True)
-            if only_restock and "recommended_replenishment_qty" in df_rs.columns:
-                df_rs = df_rs[df_rs["recommended_replenishment_qty"].fillna(0) > 0]
-            if "days_of_supply" in df_rs.columns:
-                df_rs = df_rs.sort_values("days_of_supply")
-            st.caption(f"{len(df_rs):,} SKU потребують поповнення")
-            st.dataframe(df_rs, use_container_width=True, hide_index=True)
-            st.download_button("⬇️ CSV", df_rs.to_csv(index=False).encode(), "inventory_restock.csv", "text/csv")
+        total_sku    = int(_kpi['total_sku'])
+        fulfillable  = int(_kpi['fulfillable'])
+        unsellable   = int(_kpi['unsellable'])
+        low_stock    = int(_kpi['low_stock'])
+        need_restock = int(_kpi['need_restock'])
+        stranded     = int(_kpi['stranded'])
+        snapshot_date = str(_kpi['snapshot_date'])[:10]
 
     except Exception as e:
-        st.error(f"Помилка: {e}")
+        st.error(f"Помилка вітрини: {e}")
+        st.info("Спочатку запусти `create_inventory_summary.sql` в БД")
+        return
+
+    # ── KPI ──
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("📦 Total SKU",       f"{total_sku:,}")
+    k2.metric("⚠️ Low Stock <14d",  f"{low_stock:,}")
+    k3.metric("🔒 Stranded",         f"{stranded:,}")
+    k4.metric("🔄 Need Restock",     f"{need_restock:,}")
+
+    # ── Фільтри ──
+    c1, c2 = st.columns(2)
+    search_sku  = c1.text_input("🔍 SKU", "")
+    search_asin = c2.text_input("🔍 ASIN", "")
+    st.caption(f"📅 Snapshot: {snapshot_date}")
+    st.markdown("---")
+
+    # ── Завантажуємо вітрину з фільтрами ──
+    where = ["1=1"]
+    params = {}
+    if search_sku:
+        where.append("sku ILIKE :sku"); params['sku'] = f"%{search_sku}%"
+    if search_asin:
+        where.append("asin ILIKE :asin"); params['asin'] = f"%{search_asin}%"
+
+    wc = " AND ".join(where)
+    with _engine.connect() as _ec:
+        df = _pd.read_sql(_text(f"""
+            SELECT sku, asin, product_name, your_price,
+                   available, afn_fulfillable_quantity, afn_unsellable_quantity,
+                   afn_total_quantity, inbound_quantity, reserved_quantity,
+                   days_of_supply, sales_last_30_days, sales_last_7_days,
+                   recommended_replenishment_qty, recommended_ship_in_qty,
+                   recommended_action, storage_cost_next_month,
+                   age_0_90, age_91_180, age_181_270, age_271_365,
+                   sell_through, stranded_reason, snapshot_date
+            FROM spapi.inventory_summary
+            WHERE {wc}
+            ORDER BY days_of_supply ASC NULLS LAST
+            LIMIT 500
+        """), _ec, params=params)
+
+    st.caption(f"Показано {len(df):,} з {total_sku:,} SKU (max 500 на екран)")
+
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Summary", "⚠️ Risk", "💰 Storage Costs", "🔄 Restock"])
+
+    # ── TAB 1: SUMMARY ──
+    with tab1:
+        cols = [c for c in ["sku","asin","product_name","your_price",
+                "available","afn_fulfillable_quantity","afn_unsellable_quantity",
+                "days_of_supply","sales_last_30_days","recommended_action"] if c in df.columns]
+        m1,m2,m3,m4 = st.columns(4)
+        m1.metric("📦 SKU на екрані", f"{len(df):,}")
+        m2.metric("✅ Fulfillable",    f"{fulfillable:,}")
+        m3.metric("❌ Unsellable",     f"{unsellable:,}")
+        m4.metric("🛒 Продажі 30д",   f"{df['sales_last_30_days'].sum():,.0f}" if 'sales_last_30_days' in df.columns else "—")
+        st.dataframe(df[cols], use_container_width=True, hide_index=True)
+        st.download_button("⬇️ CSV", df[cols].to_csv(index=False).encode(), "summary.csv", "text/csv")
+
+    # ── TAB 2: RISK ──
+    with tab2:
+        risk_filter = st.selectbox("Фільтр:", ["Всі", "Low Stock <14д", "Stranded", "Unsellable > 0"])
+        df_r = df.copy()
+        if risk_filter == "Low Stock <14д":
+            df_r = df_r[df_r['days_of_supply'].fillna(999) < 14]
+        elif risk_filter == "Stranded":
+            df_r = df_r[df_r['stranded_reason'].notna()]
+        elif risk_filter == "Unsellable > 0":
+            df_r = df_r[df_r['afn_unsellable_quantity'].fillna(0) > 0]
+        cols_r = [c for c in ["sku","asin","product_name","afn_fulfillable_quantity",
+                  "afn_unsellable_quantity","days_of_supply","stranded_reason","recommended_action"] if c in df_r.columns]
+        st.caption(f"{len(df_r):,} SKU")
+        st.dataframe(df_r[cols_r], use_container_width=True, hide_index=True)
+        st.download_button("⬇️ CSV", df_r[cols_r].to_csv(index=False).encode(), "risk.csv", "text/csv")
+
+    # ── TAB 3: STORAGE COSTS ──
+    with tab3:
+        if 'storage_cost_next_month' in df.columns:
+            st.metric("💰 Загальна вартість зберігання", f"${df['storage_cost_next_month'].sum():,.2f}")
+        cols_s = [c for c in ["sku","asin","product_name","age_0_90","age_91_180",
+                  "age_181_270","age_271_365","storage_cost_next_month","your_price"] if c in df.columns]
+        df_s = df[cols_s].sort_values("storage_cost_next_month", ascending=False) if 'storage_cost_next_month' in df.columns else df[cols_s]
+        st.dataframe(df_s, use_container_width=True, hide_index=True)
+        st.download_button("⬇️ CSV", df_s.to_csv(index=False).encode(), "storage.csv", "text/csv")
+
+    # ── TAB 4: RESTOCK ──
+    with tab4:
+        only_restock = st.checkbox("Тільки ті що треба поповнити", value=True)
+        df_rs = df.copy()
+        if only_restock:
+            df_rs = df_rs[df_rs['recommended_replenishment_qty'].fillna(0) > 0]
+        cols_rs = [c for c in ["sku","asin","product_name","available","afn_fulfillable_quantity",
+                   "days_of_supply","recommended_replenishment_qty","recommended_ship_in_qty",
+                   "sales_last_30_days","sell_through"] if c in df_rs.columns]
+        df_rs = df_rs[cols_rs].sort_values("days_of_supply") if 'days_of_supply' in df_rs.columns else df_rs[cols_rs]
+        st.caption(f"{len(df_rs):,} SKU потребують поповнення")
+        st.dataframe(df_rs, use_container_width=True, hide_index=True)
+        st.download_button("⬇️ CSV", df_rs.to_csv(index=False).encode(), "restock.csv", "text/csv")
 
 def show_etl_status():
     st.markdown("### 📊 ETL Status — стан завантажувачів")
