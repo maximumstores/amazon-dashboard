@@ -3178,14 +3178,15 @@ def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, ap
     except Exception as e:
         log_q.put(f"❌ DB error: {e}"); progress_q.put({"done": True}); return
 
+    apify_token = apify_token or os.getenv("APIFY_TOKEN", "")
     endpoint = (
-        f"https://api.apify.com/v2/acts/junglee~amazon-reviews-scraper"
+        "https://api.apify.com/v2/acts/junglee~amazon-reviews-scraper"
         f"/run-sync-get-dataset-items?token={apify_token}"
     )
     cycle = 0
     while not stop_event.is_set():
         cycle += 1
-        total_steps = len(urls) * 5
+        total_steps = len(urls)
         step = 0
         cycle_total = 0
 
@@ -3202,35 +3203,35 @@ def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, ap
             log_q.put(f"{flag}  {asin}  ·  amazon.{domain}  (цикл #{cycle})")
             log_q.put(f"{'='*50}")
 
+            step += 1
+            pct = int(step / total_steps * 100)
             url_new = 0
-            for star_num, star_text in STARS_MAP.items():
-                if stop_event.is_set(): break
-                step += 1
-                pct = int(step / total_steps * 100)
-                log_q.put(f"  ⏳ {star_num}★ — збираємо (max {max_per_star})...")
-                progress_q.put({"pct": pct, "label": f"Цикл #{cycle} · {asin} · {star_num}★"})
-                payload = {
-                    "productUrls": [{"url": url}],
-                    "filterByRatings": [star_text],
-                    "maxReviews": max_per_star,
-                    "sort": "recent",
-                }
-                try:
-                    res = requests.post(endpoint, json=payload, timeout=360)
-                    if res.status_code in (200, 201):
-                        data = res.json()
-                        if data:
-                            ins = _scr_save(data, asin, domain)
-                            url_new   += ins
-                            cycle_total += ins
-                            log_q.put(f"  ✅ {star_num}★: отримано {len(data)}, нових: {ins}")
-                        else:
-                            log_q.put(f"  ⚠️ {star_num}★: відгуків не знайдено")
+
+            log_q.put(f"  ⏳ Запит всіх відгуків (max {max_per_star * 5})...")
+            progress_q.put({"pct": pct, "label": f"Цикл #{cycle} · {asin}"})
+
+            payload = {
+                "productUrls": [{"url": url}],
+                "maxReviews":  max_per_star * 5,
+                "sort":        "recent",
+            }
+            try:
+                res = requests.post(endpoint, json=payload, timeout=360)
+                if res.status_code in (200, 201):
+                    data = res.json()
+                    if data:
+                        ins = _scr_save(data, asin, domain)
+                        url_new     += ins
+                        cycle_total += ins
+                        log_q.put(f"  ✅ Отримано {len(data)}, нових: {ins}")
                     else:
-                        log_q.put(f"  ❌ {star_num}★: HTTP {res.status_code}")
-                except Exception as e:
-                    log_q.put(f"  ❌ {star_num}★: {e}")
-                time.sleep(1.5)
+                        log_q.put(f"  ⚠️ Відгуків не знайдено")
+                else:
+                    try: err = res.json()
+                    except: err = res.text[:200]
+                    log_q.put(f"  ❌ HTTP {res.status_code} → {err}")
+            except Exception as e:
+                log_q.put(f"  ❌ {e}")
 
             in_db = _scr_count(asin, domain)
             log_q.put(f"🎯 {asin}/{domain}: +{url_new} нових · в БД: {in_db}")
