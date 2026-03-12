@@ -3171,7 +3171,6 @@ def _scr_parse_url(url):
     m = re.search(r"([A-Z0-9]{10})", p.path)
     return domain, (m.group(1) if m else "UNKNOWN")
 
-
 def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, apify_token):
     try:
         _scr_ensure_table()
@@ -3197,6 +3196,8 @@ def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, ap
 
         for url in urls:
             if stop_event.is_set(): break
+            if not url.startswith("http"):
+                url = "https://" + url
             domain, asin = _scr_parse_url(url)
             flag = DOMAIN_FLAGS.get(domain, "🌍")
             log_q.put(f"\n{'='*50}")
