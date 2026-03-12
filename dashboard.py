@@ -1310,7 +1310,6 @@ def show_asin_links_table(df, has_domain):
 
     return None, None
 
-
 def show_reviews(t):
     df_all = load_reviews()
     if df_all.empty:
@@ -1343,7 +1342,6 @@ def show_reviews(t):
     default_asin_idx = 0
     if jumped_asin and jumped_asin in asins:
         default_asin_idx = asin_options.index(jumped_asin)
-        # Видаляємо старий ключ щоб index спрацював
         st.session_state.pop('rev_asin', None)
 
     sel_raw = st.sidebar.selectbox("📦 ASIN:", asin_options, index=default_asin_idx, key="rev_asin")
@@ -1380,7 +1378,6 @@ def show_reviews(t):
     asin_label    = selected_asin if selected_asin else t["all_asins"]
     country_label = ", ".join([DOMAIN_LABELS.get(d, d) for d in selected_domains]) if selected_domains else t["all_countries"]
 
-    # ── Кнопка назад — одразу перед заголовком ──
     if selected_asin is not None:
         if st.button(t["rev_back"], key="back_top", type="secondary"):
             st.session_state.pop("rev_asin", None)
@@ -1403,18 +1400,18 @@ def show_reviews(t):
     verified_pct = df['is_verified'].mean() * 100 if 'is_verified' in df.columns and total_revs > 0 else 0
     neg_count    = int((df['rating'] <= 2).sum())
     pos_count    = int((df['rating'] >= 4).sum())
-    total_asins = df['asin'].nunique() if 'asin' in df.columns else 0
+    total_asins  = df['asin'].nunique() if 'asin' in df.columns else 0
     total_asins_db = df_all['asin'].nunique() if 'asin' in df_all.columns else 0
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric(t["total_reviews"],     f"{total_revs:,}")
-    c2.metric(t["rev_asins_in_filter"],  f"{total_asins:,}",
+    c1.metric(t["total_reviews"],      f"{total_revs:,}")
+    c2.metric(t["rev_asins_in_filter"], f"{total_asins:,}",
               delta=f"з {total_asins_db} в базі" if total_asins != total_asins_db else None,
               delta_color="off")
-    c3.metric(t["avg_review_rating"], f"{avg_rating:.2f} ⭐")
-    c4.metric(t["verified_pct"],      f"{verified_pct:.1f}%")
-    c5.metric("🔴 Негативних (1-2★)", f"{neg_count:,}")
-    c6.metric("🟢 Позитивних (4-5★)", f"{pos_count:,}")
+    c3.metric(t["avg_review_rating"],  f"{avg_rating:.2f} ⭐")
+    c4.metric(t["verified_pct"],       f"{verified_pct:.1f}%")
+    c5.metric("🔴 Негативних (1-2★)",  f"{neg_count:,}")
+    c6.metric("🟢 Позитивних (4-5★)",  f"{pos_count:,}")
 
     st.markdown("---")
     show_global_insights(df_all if selected_asin is None else df, has_domain)
@@ -1694,7 +1691,7 @@ def show_reviews(t):
     insights_reviews(df, asin=selected_asin)
 
     # ── AI Chat ──
-    neg_examples = df[df['rating'] <= 2][['asin','domain','rating','title','content']].head(10).to_string() if not df.empty else ""
+    neg_examples = df[df['rating'] <= 2][['asin', 'domain', 'rating', 'title', 'content']].head(10).to_string() if not df.empty else ""
     ctx_rev = f"""Amazon Reviews аналіз:
 - Всього відгуків: {len(df)} | Середній рейтинг: {df['rating'].mean():.2f}★
 - Негативних (1-2★): {int((df['rating']<=2).sum())} | Позитивних (4-5★): {int((df['rating']>=4).sum())}
@@ -1713,8 +1710,10 @@ def show_reviews(t):
 
     display_cols = ['review_date', 'asin', 'domain', 'rating', 'title', 'content', 'product_attributes', 'author', 'is_verified']
 
-    # ── Фільтри над таблицею ──
-    fa, fb, fc = st.columns([2, 2, 1])
+    # ════════════════════════════════════════════
+    # ── МУЛЬТИСЕЛЕКТ ASINів над таблицею ──
+    # ════════════════════════════════════════════
+    fa, fb, fc = st.columns([3, 2, 1])
 
     with fb:
         if has_domain:
@@ -1728,25 +1727,80 @@ def show_reviews(t):
 
     with fa:
         if 'asin' in df.columns:
-            df_for_asin = df[df['domain'] == dl_domain] if dl_domain else df
-            asin_opts = sorted(df_for_asin['asin'].dropna().unique().tolist())
-            dl_asins = ["✅ " + t.get("all_asins", "All")] + asin_opts
-            dl_asin = st.selectbox("📦 ASIN:", dl_asins, key="dl_asin_filter")
+            df_for_dl = df[df['domain'] == dl_domain] if dl_domain else df
+            asin_opts = sorted(df_for_dl['asin'].dropna().unique().tolist())
+            dl_asins_selected = st.multiselect(
+                "📦 ASIN (мультивибір, до 15):",
+                options=asin_opts,
+                default=[],
+                max_selections=15,
+                placeholder="Всі ASINи — або вибери до 15",
+                key="dl_asin_multi"
+            )
         else:
-            dl_asin = None
+            dl_asins_selected = []
 
     # ── Застосовуємо фільтри ──
     df_dl = df.copy()
     if dl_domain:
         df_dl = df_dl[df_dl['domain'] == dl_domain]
-    if dl_asin and not dl_asin.startswith("✅"):
-        df_dl = df_dl[df_dl['asin'] == dl_asin]
+    if dl_asins_selected:
+        df_dl = df_dl[df_dl['asin'].isin(dl_asins_selected)]
 
     with fc:
         st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
-        st.caption(f"📊 {len(df_dl)} відгуків")
+        # Показуємо кількість + скільки ASINів вибрано
+        n_asins_info = f"{len(dl_asins_selected)} ASIN" if dl_asins_selected else "всі"
+        st.caption(f"📊 {len(df_dl)} відгуків ({n_asins_info})")
 
-    # ── Таблиця реагує на фільтри ──
+    # ── Якщо вибрано кілька ASINів — показуємо міні-порівняння ──
+    if dl_asins_selected and len(dl_asins_selected) > 1 and 'asin' in df_dl.columns:
+        with st.expander(f"📊 Порівняння вибраних {len(dl_asins_selected)} ASINів", expanded=True):
+            cmp = df_dl.groupby('asin').agg(
+                Відгуків=('rating', 'count'),
+                Рейтинг=('rating', 'mean'),
+                Neg=('rating', lambda x: (x <= 2).sum()),
+                Pos=('rating', lambda x: (x >= 4).sum()),
+            ).reset_index()
+            cmp['Neg %'] = (cmp['Neg'] / cmp['Відгуків'] * 100).round(1)
+            cmp['Pos %'] = (cmp['Pos'] / cmp['Відгуків'] * 100).round(1)
+            cmp = cmp.sort_values('Рейтинг', ascending=False)
+
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                colors_cmp = ['#F44336' if r < 4.0 else '#FFC107' if r < 4.4 else '#4CAF50' for r in cmp['Рейтинг']]
+                fig_cmp = go.Figure(go.Bar(
+                    x=cmp['Рейтинг'], y=cmp['asin'], orientation='h',
+                    marker_color=colors_cmp,
+                    text=[f"{r:.2f}★" for r in cmp['Рейтинг']],
+                    textposition='outside'
+                ))
+                fig_cmp.add_vline(x=4.0, line_dash="dash", line_color="orange")
+                fig_cmp.update_layout(height=max(250, len(cmp) * 40), xaxis_range=[1, 5.5],
+                                      title="⭐ Рейтинг", margin=dict(l=5, r=50, t=30, b=10))
+                st.plotly_chart(fig_cmp, width="stretch")
+
+            with col_c2:
+                neg_colors_cmp = ['#F44336' if v > 20 else '#FFC107' if v > 10 else '#4CAF50' for v in cmp['Neg %']]
+                fig_neg = go.Figure(go.Bar(
+                    x=cmp['Neg %'], y=cmp['asin'], orientation='h',
+                    marker_color=neg_colors_cmp,
+                    text=[f"{v:.1f}%" for v in cmp['Neg %']],
+                    textposition='outside'
+                ))
+                fig_neg.update_layout(height=max(250, len(cmp) * 40),
+                                      title="🔴 % Негативних", margin=dict(l=5, r=50, t=30, b=10))
+                st.plotly_chart(fig_neg, width="stretch")
+
+            st.dataframe(
+                cmp[['asin', 'Відгуків', 'Рейтинг', 'Neg %', 'Pos %']].style
+                    .format({'Рейтинг': '{:.2f}', 'Neg %': '{:.1f}%', 'Pos %': '{:.1f}%'})
+                    .background_gradient(subset=['Рейтинг'], cmap='RdYlGn')
+                    .background_gradient(subset=['Neg %'], cmap='RdYlGn_r'),
+                use_container_width=True, hide_index=True
+            )
+
+    # ── Таблиця відгуків ──
     df_table = balanced_reviews(df_dl, max_per_star=100).sort_values('rating', ascending=True)
     available_cols = [c for c in display_cols if c in df_table.columns]
     dl_cols = [c for c in display_cols if c in df_dl.columns]
@@ -1759,15 +1813,16 @@ def show_reviews(t):
 
     # ── Кнопки скачування ──
     col1, col2 = st.columns(2)
+    dl_label = "_".join(dl_asins_selected) if dl_asins_selected else asin_label
     with col1:
         st.download_button(t["rev_dl_balanced"],
             df_table[available_cols].to_csv(index=False).encode('utf-8'),
-            f"reviews_balanced_{asin_label}.csv", "text/csv")
+            f"reviews_balanced_{dl_label}.csv", "text/csv")
         st.caption(t["rev_dl_balanced_hint"])
     with col2:
         st.download_button(t["rev_dl_all"],
             df_all[dl_cols].to_csv(index=False).encode('utf-8'),
-            f"reviews_full_{asin_label}.csv", "text/csv")
+            f"reviews_full_{dl_label}.csv", "text/csv")
         st.caption(t["rev_dl_all_hint"])
 
 
