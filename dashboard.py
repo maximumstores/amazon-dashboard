@@ -2068,6 +2068,21 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
                 sql_query
             )
 
+        # Fix lowercase column refs для orders/returns/fba_inventory
+        # o.asin → o."ASIN", o.quantity → o."Quantity" etc.
+        _lower_fixes = [
+            (r'([a-zA-Z_]\w*)\.asin(?!")',       r'\1."ASIN"'),
+            (r'([a-zA-Z_]\w*)\.quantity(?!")',    r'\1."Quantity"'),
+            (r'([a-zA-Z_]\w*)\.item_price(?!")', r'\1."Item Price"'),
+            (r'([a-zA-Z_]\w*)\.price(?!")',       r'\1."Price"'),
+            (r'([a-zA-Z_]\w*)\.sku(?!")',         r'\1."SKU"'),
+            (r'([a-zA-Z_]\w*)\.fnsku(?!")',       r'\1."FNSKU"'),
+            (r'([a-zA-Z_]\w*)\.available(?!")',   r'\1."Available"'),
+            (r'([a-zA-Z_]\w*)\.velocity(?!")',    r'\1."Velocity"'),
+        ]
+        for _pat, _rep in _lower_fixes:
+            sql_query = _re.sub(_pat, _rep, sql_query)
+
         # Auto-cast "Order Date" TEXT → TIMESTAMP
         sql_query = _re.sub(
             r'"Order Date"\s*(>=|<=|>|<|=|<>)\s*',
@@ -2141,15 +2156,13 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
         # SQL упав → fallback на контекст
         err_msg = str(e)
         try:
-            fallback_prompt = f"""Ти — Amazon FBA асистент. SQL запит не спрацював.
-Відповідай на основі контексту.
+            fallback_prompt = f"""Ти — Amazon FBA асистент. Коротко відповідай на питання.
 
-Контекст: {context[:1000]}
+Контекст: {context[:800]}
 Питання: {question}
-SQL помилка: {err_msg[:200]}
 
-Дай корисну відповідь або поясни чому дані недоступні.
-Відповідай мовою питання (UA/RU/EN)."""
+Відповідай КОРОТКО (3-5 речень max), мовою питання (UA/RU/EN).
+Не пояснюй SQL помилки — просто дай корисну відповідь по суті."""
             fallback_resp = model.generate_content(fallback_prompt)
             return sql_query, None, fallback_resp.text + f"\n\n*⚠️ SQL помилка: {err_msg[:100]}*"
         except Exception as e2:
