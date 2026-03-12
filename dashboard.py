@@ -1309,7 +1309,6 @@ def show_asin_links_table(df, has_domain):
             return chosen, row['_domain']
 
     return None, None
-
 def show_reviews(t):
     df_all = load_reviews()
     if df_all.empty:
@@ -1730,11 +1729,10 @@ def show_reviews(t):
             df_for_dl = df[df['domain'] == dl_domain] if dl_domain else df
             asin_opts = sorted(df_for_dl['asin'].dropna().unique().tolist())
             dl_asins_selected = st.multiselect(
-                "📦 ASIN (мультивибір, до 15):",
+                "📦 ASIN (мультивибір):",
                 options=asin_opts,
                 default=[],
-                max_selections=15,
-                placeholder="Всі ASINи — або вибери до 15",
+                placeholder="Всі ASINи — або вибери скільки завгодно",
                 key="dl_asin_multi"
             )
         else:
