@@ -1999,14 +1999,13 @@ def get_db_schema():
 """
     return schema
 
-
 def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: str):
-    """3-кроковий AI pipeline: SQL → PostgreSQL → Аналіз."""
+    """3-кроковий AI pipeline: SQL → PostgreSQL → Аналіз. + Chat fallback для розмовних питань."""
 
     model = genai.GenerativeModel(gemini_model)
     schema = get_db_schema()
 
-    # ── КРОК 1: Генеруємо SQL ──
+    # ── КРОК 1: Вирішуємо — потрібен SQL чи ні ──
     sql_prompt = f"""Ти — SQL експерт. Напиши PostgreSQL запит для відповіді на питання.
 
 {schema}
@@ -2018,17 +2017,33 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
 - Використовуй реальні назви таблиць і колонок зі схеми
 - Обмежуй результат LIMIT 50
 - Для дат використовуй CURRENT_DATE
-- Якщо питання не потребує SQL або незрозуміле — відповідай: NO_SQL
+- Якщо питання НЕ потребує SQL (привітання, подяка, розмова, незрозуміле) — відповідай рівно: NO_SQL
 
-Відповідай ТІЛЬКИ SQL кодом без пояснень, без ```sql```, просто чистий SQL."""
+Відповідай ТІЛЬКИ SQL кодом без пояснень, без ```sql```, просто чистий SQL.
+Або рівно NO_SQL якщо SQL не потрібен."""
 
     sql_resp = model.generate_content(sql_prompt)
     sql_query = sql_resp.text.strip().replace("```sql", "").replace("```", "").strip()
 
+    # ── Якщо SQL не потрібен → відповідаємо як ChatGPT з контекстом ──
     if sql_query.upper().startswith("NO_SQL") or len(sql_query) < 10:
-        return None, None, None
+        chat_prompt = f"""Ти — AI асистент для Amazon FBA бізнесу MR.EQUIPP LIMITED.
+Відповідай на повідомлення користувача природно і корисно.
 
-    # Безпека — тільки SELECT
+Контекст поточних даних розділу:
+{context[:1500]}
+
+Повідомлення: {question}
+
+ПРАВИЛА:
+- Відповідай на тій мові на якій написане повідомлення (UA / RU / EN)
+- Якщо питання про бізнес/дані — використовуй контекст вище
+- Якщо просто розмова — відповідай як дружній асистент
+- Коротко і по суті"""
+        chat_resp = model.generate_content(chat_prompt)
+        return None, None, chat_resp.text
+
+    # ── Безпека — тільки SELECT ──
     first_word = sql_query.split()[0].upper() if sql_query.split() else ""
     if first_word not in ("SELECT", "WITH"):
         return sql_query, None, "⚠️ Небезпечний запит заблоковано"
@@ -2036,31 +2051,31 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
     # ── КРОК 2: Виконуємо SQL ──
     try:
         import re as _re
-        # 1. Unicode → ASCII оператори (codepoint + literal)
-        # Unicode → ASCII: encode/decode trick catches ANY unicode variant
         import unicodedata as _ud
-        _uc_map = {'≥':'>=','≤':'<=','≠':'!=','—':'--','–':'-',
-                   '−':'-','·':'*','’':"'",'‘':"'"}
+
+        # Unicode → ASCII оператори
+        _uc_map = {'≥': '>=', '≤': '<=', '≠': '!=', '—': '--', '–': '-',
+                   '−': '-', '·': '*', '\u2018': "'", '\u2019': "'"}
         for _uc, _ac in _uc_map.items():
             sql_query = sql_query.replace(_uc, _ac)
-        # Fix unquoted column refs: alias.SKU → alias."SKU" (case-sensitive columns)
-        import re as _re
-        _cols_upper = ['SKU','ASIN','FNSKU']
+
+        # Fix unquoted column refs: alias.SKU → alias."SKU"
+        _cols_upper = ['SKU', 'ASIN', 'FNSKU']
         for _col in _cols_upper:
-            # alias.SKU → alias."SKU" but not alias."SKU" already
             sql_query = _re.sub(
                 rf'([a-zA-Z_]\w*)\.{_col}(?![\w"])',
                 rf'\1."{_col}"',
                 sql_query
             )
-        # Auto-cast "Order Date" TEXT → TIMESTAMP перед порівнянням
-        import re as _re2
-        sql_query = _re2.sub(
+
+        # Auto-cast "Order Date" TEXT → TIMESTAMP
+        sql_query = _re.sub(
             r'"Order Date"\s*(>=|<=|>|<|=|<>)\s*',
             lambda m: f'CAST("Order Date" AS TIMESTAMP) {m.group(1)} ',
             sql_query
         )
-        # Auto-cast report_date (TEXT) перед порівнянням
+
+        # Auto-cast report_date
         def _fix_rd(m):
             return f'CAST(report_date AS DATE) {m.group(1)}'
         sql_query = _re.sub(
@@ -2068,6 +2083,7 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
             _fix_rd,
             sql_query
         )
+
         # Фільтруємо порожні report_date в sales_traffic
         if 'spapi.sales_traffic' in sql_query:
             sql_query = _re.sub(
@@ -2075,37 +2091,27 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
                 r"\1report_date != '' AND report_date IS NOT NULL AND ",
                 sql_query
             )
-        # 3. Auto-fix NULLIF для відомих TEXT колонок — з будь-яким аліасом або без
-        # Regex: CAST([alias.]"Column" AS TYPE) → CAST(NULLIF([alias.]"Column", '') AS TYPE)
+
+        # Auto-fix NULLIF для TEXT колонок з аліасом
         for _col, _type in [
-            ('"Available"','INT'),('"Available"','FLOAT'),
-            ('"Price"','FLOAT'),('"Velocity"','FLOAT'),
-            ('"Days of Supply"','FLOAT'),('"Days of Supply"','INT'),
-            ('"Quantity"','INT'),('"Item Price"','FLOAT'),
-            ('"Item Tax"','FLOAT'),('"Amount"','FLOAT'),
-            ('"Spend"','FLOAT'),('"Sales"','FLOAT'),
-            ('"ACOS"','FLOAT'),('"ROAS"','FLOAT'),
+            ('"Available"', 'INT'), ('"Available"', 'FLOAT'),
+            ('"Price"', 'FLOAT'), ('"Velocity"', 'FLOAT'),
+            ('"Days of Supply"', 'FLOAT'), ('"Days of Supply"', 'INT'),
+            ('"Quantity"', 'INT'), ('"Item Price"', 'FLOAT'),
+            ('"Item Tax"', 'FLOAT'), ('"Amount"', 'FLOAT'),
+            ('"Spend"', 'FLOAT'), ('"Sales"', 'FLOAT'),
+            ('"ACOS"', 'FLOAT'), ('"ROAS"', 'FLOAT'),
         ]:
-            # З аліасом: CAST(alias."Col" AS TYPE) → CAST(NULLIF(alias."Col",'') AS TYPE)
             sql_query = _re.sub(
                 rf'CAST\(([a-zA-Z_]\w*\.)?{_re.escape(_col)}\s+AS\s+{_type}\)',
                 lambda m, c=_col, t=_type: f"CAST(NULLIF({m.group(1) or ''}{c}, '') AS {t})",
                 sql_query
             )
-        # (legacy pairs below kept for safety)
-        # 2.5 Захист від ділення на нуль — NULLIF для знаменника
-        # LAG(..., 1, 0) / LAG(...) → може бути 0, замінюємо на NULLIF
-        sql_query = _re.sub(
-            r'\)\s*/\s*LAG\(',
-            r') / NULLIF(LAG(',
-            sql_query
-        )
-        sql_query = _re.sub(
-            r'NULLIF\(LAG\(([^)]+)\)\)',
-            r'NULLIF(LAG(), 0)',
-            sql_query
-        )
-        # 3. Simple string replace для TEXT колонок — без regex lambda
+
+        # Захист від ділення на нуль через LAG
+        sql_query = _re.sub(r'\)\s*/\s*LAG\(', r') / NULLIF(LAG(', sql_query)
+
+        # Simple string replace для TEXT колонок
         _nullif_pairs = [
             ('"Available"', 'FLOAT'), ('"Available"', 'INT'),
             ('"Price"', 'FLOAT'), ('"Velocity"', 'FLOAT'),
@@ -2122,14 +2128,32 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
             _old = f'CAST({_col} AS {_type})'
             _new = f"CAST(NULLIF({_col}, '') AS {_type})"
             sql_query = sql_query.replace(_old, _new)
+
         engine = get_engine()
         import pandas as _pd
         with engine.connect() as _conn:
             df_result = _pd.read_sql(text(sql_query), _conn)
+
         if df_result.empty:
             return sql_query, df_result, None
+
     except Exception as e:
-        return sql_query, None, f"SQL помилка: {e}"
+        # SQL упав → fallback на контекст
+        err_msg = str(e)
+        try:
+            fallback_prompt = f"""Ти — Amazon FBA асистент. SQL запит не спрацював.
+Відповідай на основі контексту.
+
+Контекст: {context[:1000]}
+Питання: {question}
+SQL помилка: {err_msg[:200]}
+
+Дай корисну відповідь або поясни чому дані недоступні.
+Відповідай мовою питання (UA/RU/EN)."""
+            fallback_resp = model.generate_content(fallback_prompt)
+            return sql_query, None, fallback_resp.text + f"\n\n*⚠️ SQL помилка: {err_msg[:100]}*"
+        except Exception as e2:
+            return sql_query, None, f"SQL помилка: {err_msg}\nFallback помилка: {e2}"
 
     # ── КРОК 3: AI аналізує результат ──
     result_str = df_result.to_string(index=False, max_rows=30)
@@ -2145,7 +2169,8 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
 {context[:500]}
 
 Дай конкретну, actionable відповідь з числами з результату.
-Стисло, по суті. Виділяй ключові числа жирним (**число**)."""
+Стисло, по суті. Виділяй ключові числа жирним (**число**).
+Відповідай мовою питання (UA/RU/EN)."""
 
     analysis_resp = model.generate_content(analysis_prompt)
     return sql_query, df_result, analysis_resp.text
