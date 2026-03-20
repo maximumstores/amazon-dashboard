@@ -3088,7 +3088,6 @@ main_nav = [
     "🏠 Overview",
     "📈 Sales & Traffic",
     "💰 Фінанси (Settlements)",
-    "💰 Inventory Value (CFO)",
     "🛒 Orders Analytics",
     "📦 Склад (Inventory)",
     "⭐ Amazon Reviews",
@@ -3144,7 +3143,6 @@ report_choice = st.session_state.report_choice
 if   report_choice == "🏠 Overview":                show_overview(df_filtered, t, selected_date)
 elif report_choice == "📈 Sales & Traffic":          show_sales_traffic(t)
 elif report_choice == "💰 Фінанси (Settlements)":   show_settlements(t)
-elif report_choice == "💰 Inventory Value (CFO)":   show_inventory_finance(df_filtered, t)
 elif report_choice == "🛒 Orders Analytics":         show_orders(t)
 elif report_choice == "📦 Склад (Inventory)":        show_inventory_unified()
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
