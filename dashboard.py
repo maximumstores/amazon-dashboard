@@ -621,17 +621,15 @@ def load_reviews():
 # ============================================
 
 def insight_card(emoji, title, text, color=""):
-    # color map: старі темні кольори → нові акцентні для border
     color_to_border = {
-        "#0d2b1e": "#22c55e",   # зелений
+        "#0d2b1e": "#22c55e",
         "#1a2b1e": "#22c55e",
-        "#2b2400": "#f59e0b",   # жовтий
-        "#2b0d0d": "#ef4444",   # червоний
-        "#1a1a2e": "#6366f1",   # синій
+        "#2b2400": "#f59e0b",
+        "#2b0d0d": "#ef4444",
+        "#1a1a2e": "#6366f1",
         "#1e293b": "#4472C4",
     }
     border_color = color_to_border.get(color, "#4472C4")
-    # Визначаємо колір фону і тексту через CSS змінні — адаптивно
     st.markdown(
         f'<div style="border-left:4px solid {border_color};border-radius:6px;'
         f'padding:12px 16px;margin-bottom:8px;'
@@ -1189,7 +1187,6 @@ def show_asin_links_table(df, has_domain):
         st.info("Немає даних про ASINи.")
         return None, None
 
-    # Визначаємо колонку дати
     date_col = None
     for c in ['review_date', 'scraped_at', 'created_at', 'date']:
         if c in df.columns:
@@ -1238,7 +1235,6 @@ def show_asin_links_table(df, has_domain):
 
     table_df['Rating'] = table_df['Rating'].round(2)
 
-    # Форматуємо дату
     if 'Остання дата' in table_df.columns:
         table_df['Остання дата'] = pd.to_datetime(table_df['Остання дата'], errors='coerce').dt.strftime('%Y-%m-%d')
 
@@ -1258,7 +1254,6 @@ def show_asin_links_table(df, has_domain):
 
     st.caption(t["rev_select_hint"])
 
-    # ── Фільтр по країнах + вибір ASIN ──
     sel_col, country_col = st.columns([2, 2])
 
     with country_col:
@@ -1268,7 +1263,6 @@ def show_asin_links_table(df, has_domain):
                 DOMAIN_LABELS.get(d, d) for d in all_domains
             ]
             sel_domain = st.selectbox("🌍 Країна:", domain_options, key="asin_jump_domain")
-            # Filter table by selected domain
             if sel_domain != domain_options[0]:
                 chosen_domain = all_domains[domain_options.index(sel_domain) - 1]
                 filtered_for_select = table_df[table_df['_domain'] == chosen_domain]
@@ -1282,7 +1276,6 @@ def show_asin_links_table(df, has_domain):
     asin_list = filtered_for_select['ASIN'].unique().tolist()
 
     with sel_col:
-        # Add country flag to each ASIN option
         def asin_label(asin):
             rows = filtered_for_select[filtered_for_select['ASIN'] == asin]
             if not rows.empty and '_domain' in rows.columns:
@@ -1309,6 +1302,8 @@ def show_asin_links_table(df, has_domain):
             return chosen, row['_domain']
 
     return None, None
+
+
 def show_reviews(t):
     df_all = load_reviews()
     if df_all.empty:
@@ -1649,7 +1644,7 @@ def show_reviews(t):
                     width="stretch"
                 )
             else:
-                st.success("🎉 Всі варіанти мають рейтинг ≥ 4.0")
+                st.success("🎉 Всі варіанти мають рейтинг >= 4.0")
 
         st.markdown("---")
         st.markdown(t["rev_star_dist"])
@@ -1689,7 +1684,6 @@ def show_reviews(t):
 
     insights_reviews(df, asin=selected_asin)
 
-    # ── AI Chat ──
     neg_examples = df[df['rating'] <= 2][['asin', 'domain', 'rating', 'title', 'content']].head(10).to_string() if not df.empty else ""
     ctx_rev = f"""Amazon Reviews аналіз:
 - Всього відгуків: {len(df)} | Середній рейтинг: {df['rating'].mean():.2f}★
@@ -1709,9 +1703,6 @@ def show_reviews(t):
 
     display_cols = ['review_date', 'asin', 'domain', 'rating', 'title', 'content', 'product_attributes', 'author', 'is_verified']
 
-    # ════════════════════════════════════════════
-    # ── МУЛЬТИСЕЛЕКТ ASINів над таблицею ──
-    # ════════════════════════════════════════════
     fa, fb, fc = st.columns([3, 2, 1])
 
     with fb:
@@ -1738,7 +1729,6 @@ def show_reviews(t):
         else:
             dl_asins_selected = []
 
-    # ── Застосовуємо фільтри ──
     df_dl = df.copy()
     if dl_domain:
         df_dl = df_dl[df_dl['domain'] == dl_domain]
@@ -1747,11 +1737,9 @@ def show_reviews(t):
 
     with fc:
         st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
-        # Показуємо кількість + скільки ASINів вибрано
         n_asins_info = f"{len(dl_asins_selected)} ASIN" if dl_asins_selected else "всі"
         st.caption(f"📊 {len(df_dl)} відгуків ({n_asins_info})")
 
-    # ── Якщо вибрано кілька ASINів — показуємо міні-порівняння ──
     if dl_asins_selected and len(dl_asins_selected) > 1 and 'asin' in df_dl.columns:
         with st.expander(f"📊 Порівняння вибраних {len(dl_asins_selected)} ASINів", expanded=True):
             cmp = df_dl.groupby('asin').agg(
@@ -1798,7 +1786,6 @@ def show_reviews(t):
                 use_container_width=True, hide_index=True
             )
 
-    # ── Таблиця відгуків ──
     df_table = balanced_reviews(df_dl, max_per_star=100).sort_values('rating', ascending=True)
     available_cols = [c for c in display_cols if c in df_table.columns]
     dl_cols = [c for c in display_cols if c in df_dl.columns]
@@ -1809,7 +1796,6 @@ def show_reviews(t):
     summary_str  = " | ".join([f"{s}★: {c}" for s, c in star_summary.items()])
     st.caption(t["rev_shown"].format(n=len(df_table), total=len(df_dl)) + f" · {summary_str}")
 
-    # ── Кнопки скачування ──
     col1, col2 = st.columns(2)
     dl_label = "_".join(dl_asins_selected) if dl_asins_selected else asin_label
     with col1:
@@ -1825,16 +1811,10 @@ def show_reviews(t):
 
 
 # ============================================
-# OTHER REPORT FUNCTIONS
+# AI CHAT
 # ============================================
 
-
-# ════════════════════════════════════════════
-# AI CHAT BLOCK — вставляється в кожен розділ
-# ════════════════════════════════════════════
-
 def get_db_schema():
-    """Повертає реальну схему БД для SQL генерації."""
     schema = """
 РЕАЛЬНІ ТАБЛИЦІ В БАЗІ ДАНИХ PostgreSQL (використовуй ТОЧНО ці назви):
 
@@ -1858,154 +1838,39 @@ def get_db_schema():
    - total_order_items → CAST(total_order_items AS FLOAT)
    - session_percentage → CAST(session_percentage AS FLOAT)
 
-   Правильний приклад:
-   SELECT child_asin,
-          SUM(CAST(ordered_product_sales AS FLOAT)) AS revenue,
-          SUM(CAST(units_ordered AS FLOAT)) AS units,
-          AVG(CAST(buy_box_percentage AS FLOAT)) AS avg_bb
-   FROM spapi.sales_traffic
-   WHERE report_date >= CURRENT_DATE-30
-   GROUP BY child_asin
-
 2. amazon_reviews — відгуки покупців
-   Колонки (точні назви):
-   - id, asin (TEXT), domain (TEXT), rating (INT 1-5)
-   - title (TEXT), content (TEXT), author (TEXT)
-   - review_date (DATE), is_verified (BOOL)
-   - product_attributes (TEXT), scraped_at (TIMESTAMP)
+   Колонки: id, asin, domain, rating (INT 1-5), title, content, author,
+   review_date (DATE), is_verified (BOOL), product_attributes, scraped_at
 
 3. settlements — фінансові розрахунки Amazon
-   Колонки (ТОЧНІ назви з лоадера v2.6, всі в подвійних лапках):
-   - "Settlement ID" (TEXT)
-   - "Settlement Start Date" (TEXT), "Settlement End Date" (TEXT)
-   - "Deposit Date" (TEXT)
-   - "Total Amount" (TEXT) — загальна сума виплати
-   - "Currency" (TEXT) — 'USD', 'EUR', 'GBP' etc
-   - "Transaction Type" (TEXT) — 'Order', 'Refund', 'other-transaction' etc
-   - "Order ID" (TEXT)
-   - "SKU" (TEXT)
-   - "Description" (TEXT)
-   - "Quantity" (TEXT)
-   - "Marketplace" (TEXT)
-   - "Amount Type" (TEXT) — тип суми
-   - "Amount Description" (TEXT)
-   - "Amount" (TEXT) — ⚠️ TEXT! Кастуй: CAST("Amount" AS FLOAT). Від'ємне = витрати
-   - "Fulfillment ID" (TEXT)
-   - "Posted Date" (TEXT) — формат DD.MM.YYYY (31.12.2025)! Кастуй: TO_DATE("Posted Date", 'DD.MM.YYYY')
-   - "Posted Date Time" (TEXT) — з часом
-   ⚠️ ASIN колонки НЕ ІСНУЄ в settlements!
-   Приклад: SELECT SUM(CAST("Amount" AS FLOAT)) FROM settlements WHERE "Transaction Type"='Order'
+   Колонки з подвійними лапками: "Settlement ID", "Posted Date" (DD.MM.YYYY),
+   "Transaction Type", "Order ID", "SKU", "Amount" (TEXT→CAST AS FLOAT),
+   "Currency", "Quantity", "Marketplace"
 
-4. fba_inventory — FBA Inventory (два лоадери пишуть в одну таблицю!)
-   created_at (TIMESTAMP) — час запису, використовуй для фільтрації останнього знімку
+4. fba_inventory — FBA Inventory
+   Група А (великі літери, лапки): "SKU","ASIN","Available","Price","Velocity",
+   "Days of Supply","Store Name","Market Place"
+   ⚠️ "Stock Value" НЕ існує — рахуй: CAST("Available" AS FLOAT)*CAST("Price" AS FLOAT)
 
-   ГРУПА А — колонки від amazon_fba_inventory_loader.py v3.0 (назви з великої, в лапках):
-   - "SKU" (TEXT), "ASIN" (TEXT), "FNSKU" (TEXT)
-   - "Product Name" (TEXT), "Store Name" (TEXT), "Market Place" (TEXT)
-   - "Available" (TEXT) — доступно, кастуй: CAST("Available" AS INT)
-   - "Price" (TEXT) — ціна, кастуй: CAST("Price" AS FLOAT)
-   - "Velocity" (TEXT) — продажів/день, кастуй: CAST("Velocity" AS FLOAT)
-   - "Inbound" (TEXT), "Total Quantity" (TEXT), "FBA Reserved Quantity" (TEXT)
-   - "Units Shipped Last 7 Days" (TEXT), "Units Shipped Last 30 Days" (TEXT)
-   - "Days of Supply" (TEXT)
-   - "Upto 90 Days", "91 to 180 Days", "181 to 270 Days", "271 to 365 Days", "More than 365 Days" (TEXT) — вік запасів
-   ⚠️ "Stock Value" НЕ існує в БД — рахуй: CAST("Available" AS FLOAT) * CAST("Price" AS FLOAT)
+5. returns — повернення. Колонки: "Order ID","Return Date","SKU","ASIN",
+   "Quantity","Reason","Status","Customer Comments"
 
-   ГРУПА Б — колонки від inventory_planning_loader.py v1.0 (назви lowercase):
-   - snapshot_date (DATE), sku (TEXT), asin (TEXT)
-   - available (BIGINT), your_price (DOUBLE PRECISION)
-   - units_shipped_t7/t30/t60/t90 (BIGINT)
-   - days_of_supply (BIGINT), sell_through (DOUBLE PRECISION)
-   - inv_age_0_to_90_days, inv_age_91_to_180_days etc (BIGINT)
-   - estimated_storage_cost_next_month (DOUBLE PRECISION)
-   - recommended_action (TEXT)
-
-   ВИКОРИСТОВУЙ ГРУПУ А для більшості запитів (оперативні дані):
-   -- Останній знімок:
-   SELECT "SKU","ASIN","Available","Price","Velocity","Days of Supply",
-          CAST("Available" AS FLOAT)*CAST("Price" AS FLOAT) AS stock_value
-   FROM fba_inventory
-   WHERE created_at >= NOW() - INTERVAL '24 hours'
-     AND "Available" IS NOT NULL AND "SKU" IS NOT NULL
-   ORDER BY stock_value DESC
-
-5. returns — повернення FBA (лоадер v1.0, TRUNCATE при кожному завантаженні)
-   ⚠️ Всі колонки TEXT! TRUNCATE при кожному завантаженні.
-   Колонки (ТОЧНІ назви з лоадера):
-   - "Order ID" (TEXT), "Order Date" (TEXT), "Return Date" (TEXT)
-   - "SKU" (TEXT), "ASIN" (TEXT), "FNSKU" (TEXT), "Product Name" (TEXT)
-   - "Quantity" (TEXT) — кастуй: CAST("Quantity" AS INT)
-   - "Fulfillment Center" (TEXT)
-   - "Detailed Disposition" (TEXT) — 'SELLABLE', 'DAMAGED', 'CUSTOMER_DAMAGED' etc
-   - "Reason" (TEXT) — причина повернення: 'CUSTOMER_RETURN', 'DEFECTIVE' etc
-   - "Status" (TEXT)
-   - "License Plate Number" (TEXT)
-   - "Customer Comments" (TEXT) — коментар покупця
-   ⚠️ "Return Value" НЕ існує в БД — це обчислюється в Python через join з orders!
-   ⚠️ "ASIN" колонка є, але може бути порожньою — краще фільтрувати по "SKU"
-   Приклад: SELECT "SKU", COUNT(*) as cnt, SUM(CAST("Quantity" AS INT)) as units FROM returns GROUP BY "SKU" ORDER BY units DESC LIMIT 20
-   Приклад топ причин: SELECT "Reason", COUNT(*) FROM returns GROUP BY "Reason" ORDER BY 2 DESC
-
-6. orders — замовлення (лоадер v1.1, TRUNCATE при кожному завантаженні)
-   ⚠️ Всі колонки TEXT! CAST при числових операціях.
-   Колонки (ТОЧНІ назви з лоадера):
-   - "Order ID" (TEXT) — amazon-order-id
-   - "Order Date" (TEXT) — purchase-date, кастуй: CAST("Order Date" AS TIMESTAMP)
-   - "SKU" (TEXT), "ASIN" (TEXT), "Product Name" (TEXT)
-   - "Quantity" (TEXT) — кастуй: CAST("Quantity" AS INT)
-   - "Item Price" (TEXT) — кастуй: CAST("Item Price" AS FLOAT)
-   - "Item Tax" (TEXT) — кастуй: CAST("Item Tax" AS FLOAT)
-   - "Shipping Price" (TEXT) — кастуй: CAST("Shipping Price" AS FLOAT)
-   - "Order Status" (TEXT) — 'Shipped', 'Pending', 'Cancelled' etc
-   - "Fulfillment Channel" (TEXT) — 'AFN' (FBA) або 'MFN' (FBM)
-   - "Ship City" (TEXT), "Ship State" (TEXT), "Ship Country" (TEXT)
-   ⚠️ НЕ існує колонка "Price" або "Currency" або "Status" — тільки "Item Price" і "Order Status"!
-   Приклад: SELECT "SKU", SUM(CAST("Quantity" AS INT)) as units, SUM(CAST("Item Price" AS FLOAT)) as revenue FROM orders GROUP BY "SKU" ORDER BY revenue DESC LIMIT 20
-
-7. advertising — Amazon Advertising (⚠️ ТАБЛИЦЯ ЩЕ НЕ ІСНУЄ в БД! Не використовуй поки що) (Sponsored Products кампанії)
-   ⚠️ Всі колонки TEXT! TRUNCATE при кожному завантаженні (тільки поточні дані).
-   Колонки (ТОЧНІ назви):
-   - "Campaign ID" (TEXT), "Campaign Name" (TEXT), "Campaign Status" (TEXT)
-   - "Impressions" (TEXT) — кастуй: CAST("Impressions" AS INT)
-   - "Clicks" (TEXT) — кастуй: CAST("Clicks" AS INT)
-   - "CTR" (TEXT) — % кліків, кастуй: CAST("CTR" AS FLOAT)
-   - "Spend" (TEXT) — витрати $, кастуй: CAST("Spend" AS FLOAT)
-   - "CPC" (TEXT) — cost per click, кастуй: CAST("CPC" AS FLOAT)
-   - "Orders" (TEXT) — кастуй: CAST("Orders" AS INT)
-   - "Sales" (TEXT) — продажі $, кастуй: CAST("Sales" AS FLOAT)
-   - "ACOS" (TEXT) — % витрат від продажів, кастуй: CAST("ACOS" AS FLOAT)
-   - "ROAS" (TEXT) — return on ad spend, кастуй: CAST("ROAS" AS FLOAT)
-   Приклад: SELECT "Campaign Name", CAST("Spend" AS FLOAT) as spend, CAST("ACOS" AS FLOAT) as acos FROM advertising ORDER BY spend DESC LIMIT 10
-
-8. ai_chat_history — історія AI чату
-   Колонки: id, session_id, username, section, role, message, created_at
-
-КРИТИЧНІ ПРАВИЛА ПРО ТИПИ ДАНИХ:
-- НІКОЛИ не використовуй unicode символи ≥ ≤ ≠ — в SQL! Тільки ASCII: >= <= != --
-- При розрахунку % зростання ЗАВЖДИ використовуй NULLIF щоб уникнути ділення на нуль:
-  ПРАВИЛЬНО: (new - old) / NULLIF(old, 0) * 100
-  НЕПРАВИЛЬНО: (new - old) / old * 100
-- При використанні LAG з дефолтом 0: LAG(col, 1, 0) може бути 0 → використовуй NULLIF(LAG(col,1,0), 0)
-- buy_box_percentage, unit_session_percentage — TEXT, завжди: CAST(колонка AS FLOAT)
-- Якщо бачиш помилку "function avg(text)" — додай CAST(... AS FLOAT)
-- Числові агрегації на TEXT колонках завжди потребують CAST
+6. orders — замовлення. Колонки: "Order ID","Order Date","SKU","ASIN",
+   "Quantity","Item Price","Order Status","Ship Country"
 
 КРИТИЧНІ ПРАВИЛА:
-- spapi.sales_traffic: завжди пиши FROM spapi.sales_traffic (не просто sales_traffic)
-- spapi.sales_traffic: ASIN це child_asin, дата це report_date
-- settlements, returns, orders, fba_inventory: колонки з великої літери брати в подвійні лапки "Column Name"
-- Завжди LIMIT 50
-- Тільки SELECT/WITH запити
+- spapi.sales_traffic: завжди FROM spapi.sales_traffic
+- Завжди LIMIT 50, тільки SELECT/WITH
+- Колонки з великої літери — в подвійних лапках
+- NULLIF для уникнення ділення на нуль
 """
     return schema
 
-def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: str):
-    """3-кроковий AI pipeline: SQL → PostgreSQL → Аналіз. + Chat fallback для розмовних питань."""
 
+def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: str):
     model = genai.GenerativeModel(gemini_model)
     schema = get_db_schema()
 
-    # ── КРОК 1: Вирішуємо — потрібен SQL чи ні ──
     sql_prompt = f"""Ти — SQL експерт. Напиши PostgreSQL запит для відповіді на питання.
 
 {schema}
@@ -2013,11 +1878,11 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
 ПИТАННЯ: {question}
 
 ПРАВИЛА:
-- Тільки SELECT запити (ніяких INSERT/UPDATE/DELETE)
+- Тільки SELECT запити
 - Використовуй реальні назви таблиць і колонок зі схеми
-- Обмежуй результат LIMIT 50
+- LIMIT 50
 - Для дат використовуй CURRENT_DATE
-- Якщо питання НЕ потребує SQL (привітання, подяка, розмова, незрозуміле) — відповідай рівно: NO_SQL
+- Якщо питання НЕ потребує SQL — відповідай рівно: NO_SQL
 
 Відповідай ТІЛЬКИ SQL кодом без пояснень, без ```sql```, просто чистий SQL.
 Або рівно NO_SQL якщо SQL не потрібен."""
@@ -2025,81 +1890,24 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
     sql_resp = model.generate_content(sql_prompt)
     sql_query = sql_resp.text.strip().replace("```sql", "").replace("```", "").strip()
 
-    # ── Якщо SQL не потрібен → відповідаємо як ChatGPT з контекстом ──
     if sql_query.upper().startswith("NO_SQL") or len(sql_query) < 10:
         chat_prompt = f"""Ти — AI асистент для Amazon FBA бізнесу MR.EQUIPP LIMITED.
-Відповідай на повідомлення користувача природно і корисно.
-
-Контекст поточних даних розділу:
-{context[:1500]}
-
+Контекст: {context[:1500]}
 Повідомлення: {question}
-
-ПРАВИЛА:
-- Відповідай на тій мові на якій написане повідомлення (UA / RU / EN)
-- Якщо питання про бізнес/дані — використовуй контекст вище
-- Якщо просто розмова — відповідай як дружній асистент
-- Коротко і по суті"""
+Відповідай на тій мові на якій написане повідомлення (UA/RU/EN). Коротко і по суті."""
         chat_resp = model.generate_content(chat_prompt)
         return None, None, chat_resp.text
 
-    # ── Безпека — тільки SELECT ──
     first_word = sql_query.split()[0].upper() if sql_query.split() else ""
     if first_word not in ("SELECT", "WITH"):
         return sql_query, None, "⚠️ Небезпечний запит заблоковано"
 
-    # ── КРОК 2: Виконуємо SQL ──
     try:
         import re as _re
-        import unicodedata as _ud
-
-        # Unicode → ASCII оператори
-        _uc_map = {'≥': '>=', '≤': '<=', '≠': '!=', '—': '--', '–': '-',
-                   '−': '-', '·': '*', '\u2018': "'", '\u2019': "'"}
+        _uc_map = {'≥': '>=', '≤': '<=', '≠': '!=', '—': '--', '–': '-', '−': '-'}
         for _uc, _ac in _uc_map.items():
             sql_query = sql_query.replace(_uc, _ac)
 
-        # Fix unquoted column refs: alias.SKU → alias."SKU"
-        _cols_upper = ['SKU', 'ASIN', 'FNSKU']
-        for _col in _cols_upper:
-            sql_query = _re.sub(
-                rf'([a-zA-Z_]\w*)\.{_col}(?![\w"])',
-                rf'\1."{_col}"',
-                sql_query
-            )
-
-        # Fix lowercase column refs для orders/returns/fba_inventory
-        # o.asin → o."ASIN", o.quantity → o."Quantity" etc.
-        _lower_fixes = [
-            (r'([a-zA-Z_]\w*)\.asin(?!")',       r'\1."ASIN"'),
-            (r'([a-zA-Z_]\w*)\.quantity(?!")',    r'\1."Quantity"'),
-            (r'([a-zA-Z_]\w*)\.item_price(?!")', r'\1."Item Price"'),
-            (r'([a-zA-Z_]\w*)\.price(?!")',       r'\1."Price"'),
-            (r'([a-zA-Z_]\w*)\.sku(?!")',         r'\1."SKU"'),
-            (r'([a-zA-Z_]\w*)\.fnsku(?!")',       r'\1."FNSKU"'),
-            (r'([a-zA-Z_]\w*)\.available(?!")',   r'\1."Available"'),
-            (r'([a-zA-Z_]\w*)\.velocity(?!")',    r'\1."Velocity"'),
-        ]
-        for _pat, _rep in _lower_fixes:
-            sql_query = _re.sub(_pat, _rep, sql_query)
-
-        # Auto-cast "Order Date" TEXT → TIMESTAMP
-        sql_query = _re.sub(
-            r'"Order Date"\s*(>=|<=|>|<|=|<>)\s*',
-            lambda m: f'CAST("Order Date" AS TIMESTAMP) {m.group(1)} ',
-            sql_query
-        )
-
-        # Auto-cast report_date
-        def _fix_rd(m):
-            return f'CAST(report_date AS DATE) {m.group(1)}'
-        sql_query = _re.sub(
-            r'(?<![A-Za-z_])report_date\s*(>=|<=|>|<|=|<>)',
-            _fix_rd,
-            sql_query
-        )
-
-        # Фільтруємо порожні report_date в sales_traffic
         if 'spapi.sales_traffic' in sql_query:
             sql_query = _re.sub(
                 r'(FROM spapi\.sales_traffic\s+WHERE\s)',
@@ -2107,37 +1915,11 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
                 sql_query
             )
 
-        # Auto-fix NULLIF для TEXT колонок з аліасом
-        for _col, _type in [
-            ('"Available"', 'INT'), ('"Available"', 'FLOAT'),
-            ('"Price"', 'FLOAT'), ('"Velocity"', 'FLOAT'),
-            ('"Days of Supply"', 'FLOAT'), ('"Days of Supply"', 'INT'),
-            ('"Quantity"', 'INT'), ('"Item Price"', 'FLOAT'),
-            ('"Item Tax"', 'FLOAT'), ('"Amount"', 'FLOAT'),
-            ('"Spend"', 'FLOAT'), ('"Sales"', 'FLOAT'),
-            ('"ACOS"', 'FLOAT'), ('"ROAS"', 'FLOAT'),
-        ]:
-            sql_query = _re.sub(
-                rf'CAST\(([a-zA-Z_]\w*\.)?{_re.escape(_col)}\s+AS\s+{_type}\)',
-                lambda m, c=_col, t=_type: f"CAST(NULLIF({m.group(1) or ''}{c}, '') AS {t})",
-                sql_query
-            )
-
-        # Захист від ділення на нуль через LAG
-        sql_query = _re.sub(r'\)\s*/\s*LAG\(', r') / NULLIF(LAG(', sql_query)
-
-        # Simple string replace для TEXT колонок
         _nullif_pairs = [
             ('"Available"', 'FLOAT'), ('"Available"', 'INT'),
             ('"Price"', 'FLOAT'), ('"Velocity"', 'FLOAT'),
-            ('"Days of Supply"', 'FLOAT'), ('"Days of Supply"', 'INT'),
             ('"Quantity"', 'INT'), ('"Item Price"', 'FLOAT'),
-            ('"Item Tax"', 'FLOAT'), ('"Shipping Price"', 'FLOAT'),
-            ('"Total Amount"', 'FLOAT'), ('"Amount"', 'FLOAT'),
-            ('"Impressions"', 'INT'), ('"Clicks"', 'INT'),
-            ('"Spend"', 'FLOAT'), ('"Sales"', 'FLOAT'),
-            ('"ACOS"', 'FLOAT'), ('"ROAS"', 'FLOAT'),
-            ('"CTR"', 'FLOAT'), ('"CPC"', 'FLOAT'), ('"Orders"', 'INT'),
+            ('"Amount"', 'FLOAT'),
         ]
         for _col, _type in _nullif_pairs:
             _old = f'CAST({_col} AS {_type})'
@@ -2153,36 +1935,22 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
             return sql_query, df_result, None
 
     except Exception as e:
-        # SQL упав → fallback на контекст
         err_msg = str(e)
         try:
-            fallback_prompt = f"""Ти — Amazon FBA асистент. Коротко відповідай на питання.
-
-Контекст: {context[:800]}
+            fallback_prompt = f"""Amazon FBA асистент. Контекст: {context[:800]}
 Питання: {question}
-
-Відповідай КОРОТКО (3-5 речень max), мовою питання (UA/RU/EN).
-Не пояснюй SQL помилки — просто дай корисну відповідь по суті."""
+Відповідай КОРОТКО (3-5 речень), мовою питання."""
             fallback_resp = model.generate_content(fallback_prompt)
             return sql_query, None, fallback_resp.text + f"\n\n*⚠️ SQL помилка: {err_msg[:100]}*"
         except Exception as e2:
-            return sql_query, None, f"SQL помилка: {err_msg}\nFallback помилка: {e2}"
+            return sql_query, None, f"SQL помилка: {err_msg}\nFallback: {e2}"
 
-    # ── КРОК 3: AI аналізує результат ──
     result_str = df_result.to_string(index=False, max_rows=30)
-
-    analysis_prompt = f"""Ти — експерт з Amazon FBA бізнесу.
-
-Питання користувача: {question}
-
-Результат SQL запиту:
-{result_str}
-
-Додатковий контекст розділу:
-{context[:500]}
-
-Дай конкретну, actionable відповідь з числами з результату.
-Стисло, по суті. Виділяй ключові числа жирним (**число**).
+    analysis_prompt = f"""Amazon FBA експерт.
+Питання: {question}
+Результат SQL: {result_str}
+Контекст: {context[:500]}
+Дай конкретну actionable відповідь з числами. Виділяй ключові числа **жирним**.
 Відповідай мовою питання (UA/RU/EN)."""
 
     analysis_resp = model.generate_content(analysis_prompt)
@@ -2190,11 +1958,9 @@ def run_ai_sql_pipeline(question: str, section_key: str, gemini_model, context: 
 
 
 def show_ai_chat(context: str, preset_questions: list, section_key: str):
-    """AI-чат з 3-кроковим SQL pipeline і пам'яттю в БД."""
     st.markdown("---")
     st.markdown("### 🤖 AI Інсайти")
 
-    # ── Ключ Gemini ──
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     if not gemini_key:
         gemini_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else ""
@@ -2205,17 +1971,14 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
         st.warning("pip install google-generativeai")
         return
 
-    # ── Ротація ключів для збільшення квоти ──
     gemini_key2 = os.environ.get("GEMINI_API_KEY_2", "")
     if not gemini_key2 and hasattr(st, "secrets"):
         gemini_key2 = st.secrets.get("GEMINI_API_KEY_2", "")
 
     if gemini_key2:
-        # Ротація по лічильнику запитів
         if "gemini_key_counter" not in st.session_state:
             st.session_state["gemini_key_counter"] = 0
         st.session_state["gemini_key_counter"] += 1
-        # Чергуємо ключі кожен запит
         active_key = gemini_key if st.session_state["gemini_key_counter"] % 2 == 0 else gemini_key2
     else:
         active_key = gemini_key
@@ -2225,7 +1988,6 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
     if not gemini_model:
         gemini_model = st.secrets.get("GEMINI_MODEL", "gemini-1.5-flash") if hasattr(st, "secrets") else "gemini-1.5-flash"
 
-    # ── ID сесії ──
     if "ai_session_id" not in st.session_state:
         import uuid, datetime as _dt
         _user = st.session_state.get("user", {})
@@ -2234,13 +1996,11 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
         st.session_state["ai_session_id"] = f"{_uid}_{_date}_{str(uuid.uuid4())[:6]}"
     session_id = st.session_state["ai_session_id"]
 
-    # ── Завантажуємо історію ──
     hist_key = f"ai_history_{section_key}"
     if hist_key not in st.session_state:
         st.session_state[hist_key] = load_chat_history(session_id, section_key)
     history = st.session_state[hist_key]
 
-    # ── Показуємо попередні повідомлення ──
     if history:
         for msg in history[-10:]:
             if msg["role"] == "user":
@@ -2260,14 +2020,12 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
                 pass
             st.rerun()
 
-    # ── Швидкі кнопки ──
     ai_cols = st.columns(len(preset_questions))
     auto_q = None
     for i, (col, q) in enumerate(zip(ai_cols, preset_questions)):
         if col.button(q, key=f"ai_btn_{section_key}_{i}", use_container_width=True):
             auto_q = q
 
-    # ── Поле вводу ──
     user_q = st.chat_input("💬 Питання про ваші дані...", key=f"ai_input_{section_key}")
     final_q = auto_q or user_q
 
@@ -2298,24 +2056,13 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
         if analysis and not analysis.startswith("SQL помилка"):
             answer_md = analysis
         elif df_result is not None and df_result.empty:
-            answer_md = "📭 Запит виконався, але даних не знайдено по цьому питанню."
-        elif analysis and analysis.startswith("SQL помилка"):
-            # Fallback — відповідаємо на основі контексту
-            with st.spinner("🤖 AI аналізує контекст..."):
-                try:
-                    m = genai.GenerativeModel(gemini_model)
-                    fallback_prompt = "Amazon FBA експерт. Дані: " + context[:1000] + "\nПитання: " + final_q + "\nВідповідь:"
-                    r = m.generate_content(fallback_prompt)
-                    answer_md = r.text + "\n\n*⚠️ SQL не спрацював: " + str(analysis) + "*"
-                except Exception as e2:
-                    answer_md = f"Помилка: {e2}"
+            answer_md = "📭 Запит виконався, але даних не знайдено."
         else:
             answer_md = "Не вдалось отримати відповідь."
 
         with st.chat_message("assistant"):
             st.markdown(answer_md)
 
-        # ── Зберігаємо ──
         history.append({"role": "user", "content": final_q})
         history.append({"role": "assistant", "content": answer_md})
         st.session_state[hist_key] = history
@@ -2325,9 +2072,9 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
         save_chat_message(session_id, username, section_key, "assistant", answer_md)
 
 
-
-
-
+# ============================================
+# INVENTORY UNIFIED
+# ============================================
 
 def show_inventory_unified():
     st.markdown("### 📦 Склад (Inventory)")
@@ -2338,7 +2085,6 @@ def show_inventory_unified():
     _engine = _ce(_db_url)
 
     try:
-        # ── KPI з вітрини (без LIMIT) ──
         with _engine.connect() as _ec:
             _kpi = _pd.read_sql(_text("""
                 SELECT
@@ -2358,8 +2104,8 @@ def show_inventory_unified():
         unsellable   = int(_kpi['unsellable'])
         low_stock    = int(_kpi['low_stock'])
         need_restock = int(_kpi['need_restock'])
-        stranded      = int(_kpi['stranded'])
-        sales_30d     = float(_kpi['sales_30d'])
+        stranded     = int(_kpi['stranded'])
+        sales_30d    = float(_kpi['sales_30d'])
         snapshot_date = str(_kpi['snapshot_date'])[:10]
 
     except Exception as e:
@@ -2367,21 +2113,18 @@ def show_inventory_unified():
         st.info("Спочатку запусти `create_inventory_summary.sql` в БД")
         return
 
-    # ── KPI ──
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("📦 Total SKU",       f"{total_sku:,}")
     k2.metric("⚠️ Low Stock <14d",  f"{low_stock:,}")
-    k3.metric("🔒 Stranded",         f"{stranded:,}")
-    k4.metric("🔄 Need Restock",     f"{need_restock:,}")
+    k3.metric("🔒 Stranded",        f"{stranded:,}")
+    k4.metric("🔄 Need Restock",    f"{need_restock:,}")
 
-    # ── Фільтри ──
     c1, c2 = st.columns(2)
     search_sku  = c1.text_input("🔍 SKU", "")
     search_asin = c2.text_input("🔍 ASIN", "")
     st.caption(f"📅 Snapshot: {snapshot_date}")
     st.markdown("---")
 
-    # ── Завантажуємо вітрину з фільтрами ──
     where = ["1=1"]
     params = {}
     if search_sku:
@@ -2410,7 +2153,6 @@ def show_inventory_unified():
 
     tab1, tab2, tab3, tab4 = st.tabs(["📋 Summary", "⚠️ Risk", "💰 Storage Costs", "🔄 Restock"])
 
-    # ── TAB 1: SUMMARY ──
     with tab1:
         cols = [c for c in ["sku","asin","product_name","your_price",
                 "available","afn_fulfillable_quantity","afn_unsellable_quantity",
@@ -2419,11 +2161,10 @@ def show_inventory_unified():
         m1.metric("📦 SKU на екрані", f"{len(df):,}")
         m2.metric("✅ Fulfillable",    f"{fulfillable:,}")
         m3.metric("❌ Unsellable",     f"{unsellable:,}")
-        m4.metric("🛒 Продажі 30д (всі)", f"{sales_30d:,.0f}")
+        m4.metric("🛒 Продажі 30д",   f"{sales_30d:,.0f}")
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
         st.download_button("⬇️ CSV", df[cols].to_csv(index=False).encode(), "summary.csv", "text/csv")
 
-    # ── TAB 2: RISK ──
     with tab2:
         risk_filter = st.selectbox("Фільтр:", ["Всі", "Low Stock <14д", "Stranded", "Unsellable > 0"])
         df_r = df.copy()
@@ -2439,7 +2180,6 @@ def show_inventory_unified():
         st.dataframe(df_r[cols_r], use_container_width=True, hide_index=True)
         st.download_button("⬇️ CSV", df_r[cols_r].to_csv(index=False).encode(), "risk.csv", "text/csv")
 
-    # ── TAB 3: STORAGE COSTS ──
     with tab3:
         if 'storage_cost_next_month' in df.columns:
             st.metric("💰 Загальна вартість зберігання", f"${df['storage_cost_next_month'].sum():,.2f}")
@@ -2449,7 +2189,6 @@ def show_inventory_unified():
         st.dataframe(df_s, use_container_width=True, hide_index=True)
         st.download_button("⬇️ CSV", df_s.to_csv(index=False).encode(), "storage.csv", "text/csv")
 
-    # ── TAB 4: RESTOCK ──
     with tab4:
         only_restock = st.checkbox("Тільки ті що треба поповнити", value=True)
         df_rs = df.copy()
@@ -2462,6 +2201,7 @@ def show_inventory_unified():
         st.caption(f"{len(df_rs):,} SKU потребують поповнення")
         st.dataframe(df_rs, use_container_width=True, hide_index=True)
         st.download_button("⬇️ CSV", df_rs.to_csv(index=False).encode(), "restock.csv", "text/csv")
+
 
 def show_etl_status():
     st.markdown("### 📊 ETL Status — стан завантажувачів")
@@ -2524,17 +2264,13 @@ def show_etl_status():
     import pandas as _pd
     st.dataframe(_pd.DataFrame(data), use_container_width=True, hide_index=True)
 
+
 def show_about():
     st.markdown("""
 <style>
-/* Адаптивні кольори для світлої і темної теми */
 :root {
-  --ab-bg: #f8fafc;
-  --ab-border: #e2e8f0;
-  --ab-text: #1e293b;
-  --ab-muted: #64748b;
-  --ab-accent: #d97706;
-  --ab-card: #ffffff;
+  --ab-bg: #f8fafc; --ab-border: #e2e8f0; --ab-text: #1e293b;
+  --ab-muted: #64748b; --ab-accent: #d97706; --ab-card: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   :root { --ab-bg:#0f1218; --ab-border:#1e2330; --ab-text:#e2e8f0; --ab-muted:#64748b; --ab-accent:#e8b84b; --ab-card:#161b24; }
@@ -2542,7 +2278,6 @@ def show_about():
 [data-theme="dark"] {
   --ab-bg:#0f1218; --ab-border:#1e2330; --ab-text:#e2e8f0; --ab-muted:#64748b; --ab-accent:#e8b84b; --ab-card:#161b24;
 }
-
 .about-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--ab-border); border:1px solid var(--ab-border); margin:24px 0; }
 .about-stat { background:var(--ab-card); padding:20px; text-align:center; }
 .about-stat-num { font-size:28px; font-weight:800; color:var(--ab-accent); font-family:monospace; }
@@ -2562,7 +2297,6 @@ def show_about():
     st.caption(t["about_caption"])
     st.markdown("---")
 
-    # Stats
     st.markdown("""
 <div class="about-grid">
   <div class="about-stat"><div class="about-stat-num">30+</div><div class="about-stat-lbl">Типів звітів</div></div>
@@ -2571,7 +2305,6 @@ def show_about():
   <div class="about-stat"><div class="about-stat-num">3</div><div class="about-stat-lbl">Мови інтерфейсу</div></div>
 </div>""", unsafe_allow_html=True)
 
-    # Modules
     st.markdown(t["about_modules"])
     st.markdown("""
 <div class="module-grid">
@@ -2583,7 +2316,6 @@ def show_about():
   <div class="mod" style="--c:#f97316"><div class="mod-icon">🤖</div><div class="mod-name">AI Insights</div><div class="mod-desc">Gemini AI з контекстом реальних даних у кожному розділі</div></div>
 </div>""", unsafe_allow_html=True)
 
-    # Pipeline
     st.markdown(t["about_pipeline"])
     st.markdown("""
 <div class="pipe">
@@ -2599,51 +2331,20 @@ def show_about():
     with col1:
         st.markdown(t["about_features"])
         st.markdown("""
-- Ролева авторизація: admin / user з правами по звітах  
-- Мультимовність: 🇺🇦 UA / 🇺🇸 EN / 🌍 RU  
-- Фільтри ASIN × Країна у всіх розділах  
-- CSV-експорт: balanced вибірка або повний дамп БД  
-- Дата останнього збору відгуків по кожному ASIN  
+- Ролева авторизація: admin / user з правами по звітах
+- Мультимовність: 🇺🇦 UA / 🇺🇸 EN / 🌍 RU
+- Фільтри ASIN × Країна у всіх розділах
+- CSV-експорт: balanced вибірка або повний дамп БД
 """)
     with col2:
         st.markdown(t["about_stack"])
         st.markdown("""
-- **Backend**: Python, PostgreSQL, SQLAlchemy  
-- **Frontend**: Streamlit, Plotly  
-- **APIs**: Amazon SP-API, Advertising API, Apify  
-- **AI**: Google Gemini  
-- **Deploy**: Streamlit Cloud  
+- **Backend**: Python, PostgreSQL, SQLAlchemy
+- **Frontend**: Streamlit, Plotly
+- **APIs**: Amazon SP-API, Advertising API, Apify
+- **AI**: Google Gemini
+- **Deploy**: Streamlit Cloud
 """)
-
-    # ETL Status Table
-    st.markdown("---")
-    st.markdown("### 📊 Статус ETL модулів")
-    st.markdown("""
-<style>
-.etl-table { width:100%; border-collapse:collapse; font-size:13px; margin-bottom:24px; }
-.etl-table th { background:var(--ab-card); color:var(--ab-muted); font-weight:600;
-    text-transform:uppercase; font-size:11px; letter-spacing:1px;
-    padding:10px 14px; border-bottom:2px solid var(--ab-border); text-align:left; }
-.etl-table td { padding:10px 14px; border-bottom:1px solid var(--ab-border); color:var(--ab-text); }
-.etl-table tr:hover td { background:var(--ab-bg); }
-.badge { display:inline-block; padding:2px 10px; border-radius:20px; font-size:11px; font-weight:700; }
-.badge-ok  { background:#dcfce7; color:#166534; }
-.badge-wip { background:#fef9c3; color:#854d0e; }
-.badge-no  { background:#fee2e2; color:#991b1b; }
-</style>
-<table class="etl-table">
-  <tr>
-    <th>Модуль</th><th>Таблиця</th><th>Оновлення</th><th>Рядків</th><th>Статус</th>
-  </tr>
-  <tr><td>📦 FBA Inventory</td><td><code>fba_inventory</code></td><td>3× / день</td><td>~19,000</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
-  <tr><td>🏦 Settlements</td><td><code>settlements</code></td><td>3× / день</td><td>~1,534,000</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
-  <tr><td>🛒 Orders</td><td><code>orders</code></td><td>2× / день</td><td>~24,600</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
-  <tr><td>📦 Returns</td><td><code>returns</code></td><td>1× / день</td><td>~4,200</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
-  <tr><td>📈 Sales & Traffic</td><td><code>spapi.sales_traffic</code></td><td>2× / день</td><td>~22,500</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
-  <tr><td>⭐ Reviews</td><td><code>amazon_reviews</code></td><td>за запитом</td><td>~2,600</td><td><span class="badge badge-ok">✅ Активний</span></td></tr>
-  <tr><td>📣 Advertising</td><td><code>advertising</code></td><td>—</td><td>—</td><td><span class="badge badge-wip">⏳ В розробці</span></td></tr>
-</table>
-""", unsafe_allow_html=True)
 
     st.markdown("---")
     st.caption(t["about_footer"])
@@ -2653,21 +2354,16 @@ def show_overview(df_filtered, t, selected_date):
     st.markdown(f"### {t['ov_title']}")
     st.caption(f"📅 {selected_date}")
 
-    # ── Завантажуємо додаткові дані ──
-    df_st       = load_sales_traffic()
-    df_settle   = load_settlements()
-    df_reviews  = load_reviews()
+    df_st     = load_sales_traffic()
+    df_settle = load_settlements()
+    df_reviews = load_reviews()
 
-    import datetime as _dt
-
-    # ═══════════════════════════════════════════
-    # БЛОК 1 — 🚨 ЩО ГОРИТЬ
-    # ═══════════════════════════════════════════
+    # ═══ БЛОК 1 — 🚨 ЩО ГОРИТЬ ═══
     st.markdown("### 🚨 Що потребує уваги прямо зараз")
 
     alerts = []
+    critical = pd.DataFrame()
 
-    # Out-of-stock ризик
     if not df_filtered.empty and 'Velocity' in df_filtered.columns and 'Available' in df_filtered.columns:
         df_risk = df_filtered[df_filtered['Velocity'] > 0].copy()
         df_risk['days_left'] = (df_risk['Available'] / df_risk['Velocity']).round(0)
@@ -2678,7 +2374,6 @@ def show_overview(df_filtered, t, selected_date):
         if not warning.empty:
             alerts.append(("🟡", f"{len(warning)} SKU залишилось 14–30 днів", "warning", warning))
 
-    # Buy Box < 80%
     if not df_st.empty:
         last_30 = df_st[df_st['report_date'] >= (df_st['report_date'].max() - pd.Timedelta(days=30))]
         asin_col = 'child_asin' if 'child_asin' in last_30.columns else last_30.columns[0]
@@ -2687,7 +2382,6 @@ def show_overview(df_filtered, t, selected_date):
         if not low_bb.empty:
             alerts.append(("🟠", f"{len(low_bb)} ASIN з Buy Box < 80%", "warning", None))
 
-    # Погані відгуки
     if not df_reviews.empty and 'rating' in df_reviews.columns:
         bad_rev = df_reviews[df_reviews['rating'] <= 2]
         last_7d = pd.Timestamp.now() - pd.Timedelta(days=7)
@@ -2713,21 +2407,17 @@ def show_overview(df_filtered, t, selected_date):
     else:
         st.success("✅ Все в нормі — критичних проблем не виявлено")
 
-    # ═══════════════════════════════════════════
-    # БЛОК 2 — 💰 ГРОШІ
-    # ═══════════════════════════════════════════
+    # ═══ БЛОК 2 — 💰 ГРОШІ ═══
     st.markdown("---")
     st.markdown("### 💰 Фінанси — поточний стан")
 
     c1,c2,c3,c4,c5 = st.columns(5)
 
-    # Склад
     stock_val = df_filtered['Stock Value'].sum() if 'Stock Value' in df_filtered.columns else 0
     total_units = int(df_filtered['Available'].sum()) if 'Available' in df_filtered.columns else 0
     c1.metric("💰 Вартість складу", f"${stock_val:,.0f}")
     c2.metric("📦 Штук на складі", f"{total_units:,}")
 
-    # Settlements цей місяць vs минулий
     if not df_settle.empty and 'Amount' in df_settle.columns and 'Posted Date' in df_settle.columns:
         df_settle['Posted Date'] = pd.to_datetime(df_settle['Posted Date'], errors='coerce')
         now = pd.Timestamp.now()
@@ -2744,7 +2434,7 @@ def show_overview(df_filtered, t, selected_date):
     else:
         c3.metric("🏦 Payout", "—")
 
-    # Продажі 30д
+    rev_cur = 0
     if not df_st.empty:
         last_30_sales = df_st[df_st['report_date'] >= (df_st['report_date'].max() - pd.Timedelta(days=30))]
         prev_30_sales = df_st[
@@ -2760,70 +2450,42 @@ def show_overview(df_filtered, t, selected_date):
         c4.metric("📈 Дохід 30д", "—")
         c5.metric("🛒 Одиниць 30д", "—")
 
-    # ═══════════════════════════════════════════
-    # БЛОК 3 — 📈 ТРЕНД + HEALTH TABLE
-    # ═══════════════════════════════════════════
+    # ═══ БЛОК 3 — 📈 ТРЕНД ═══
     st.markdown("---")
-    col_left, col_right = st.columns([3, 2])
+    st.markdown("### 📈 Тренд продажів — 60 днів")
+    if not df_st.empty:
+        daily = df_st.groupby(df_st['report_date'].dt.date).agg(
+            Revenue=('ordered_product_sales','sum'),
+            Units=('units_ordered','sum')
+        ).reset_index().tail(60)
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=daily['report_date'], y=daily['Revenue'],
+            name='Revenue $', marker_color='#4f8ef7', opacity=0.8
+        ))
+        fig.add_trace(go.Scatter(
+            x=daily['report_date'], y=daily['Units'],
+            name='Units', mode='lines', line=dict(color='#f0a500', width=2),
+            yaxis='y2'
+        ))
+        fig.update_layout(
+            height=300, margin=dict(l=0,r=0,t=10,b=0),
+            yaxis=dict(title='Revenue $', showgrid=True, gridcolor='rgba(128,128,128,0.1)'),
+            yaxis2=dict(title='Units', overlaying='y', side='right', showgrid=False),
+            legend=dict(orientation='h', y=1.1),
+            plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Немає даних Sales & Traffic")
 
-    with col_left:
-        st.markdown("### 📈 Тренд продажів — 60 днів")
-        if not df_st.empty:
-            daily = df_st.groupby(df_st['report_date'].dt.date).agg(
-                Revenue=('ordered_product_sales','sum'),
-                Units=('units_ordered','sum')
-            ).reset_index().tail(60)
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                x=daily['report_date'], y=daily['Revenue'],
-                name='Revenue $', marker_color='#4f8ef7', opacity=0.8
-            ))
-            fig.add_trace(go.Scatter(
-                x=daily['report_date'], y=daily['Units'],
-                name='Units', mode='lines', line=dict(color='#f0a500', width=2),
-                yaxis='y2'
-            ))
-            fig.update_layout(
-                height=280, margin=dict(l=0,r=0,t=10,b=0),
-                yaxis=dict(title='Revenue $', showgrid=True, gridcolor='rgba(128,128,128,0.1)'),
-                yaxis2=dict(title='Units', overlaying='y', side='right', showgrid=False),
-                legend=dict(orientation='h', y=1.1),
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)'
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Немає даних Sales & Traffic")
-
-    with col_right:
-        st.markdown("### 🏥 SKU Health Check")
-        if not df_filtered.empty and 'Velocity' in df_filtered.columns:
-            df_health = df_filtered[df_filtered['Velocity'] > 0].copy()
-            df_health['days_left'] = (df_health['Available'] / df_health['Velocity']).round(0).astype(int)
-            df_health = df_health.nlargest(12, 'Available')[['SKU','Available','days_left']]
-            def health_icon(d):
-                if d < 14:   return "🔴"
-                elif d < 30: return "🟡"
-                else:        return "✅"
-            df_health['Status'] = df_health['days_left'].apply(health_icon)
-            df_health.columns = ['SKU','Залишок','Днів','⚡']
-            st.dataframe(df_health, use_container_width=True, height=280, hide_index=True)
-        else:
-            st.info("Немає даних інвентаря")
-
-    # ═══════════════════════════════════════════
-    # AI CHAT
-    # ═══════════════════════════════════════════
-    # Збираємо контекст для AI
-    _stock_str = f"${stock_val:,.0f}" if stock_val else "н/д"
+    # ═══ AI CHAT ═══
     _alerts_str = "; ".join([a[1] for a in alerts]) if alerts else "критичних проблем немає"
-    _rev_str = f"${rev_cur:,.0f} ({rev_delta:+.1f}%)" if not df_st.empty else "н/д"
-
-    ctx_overview = f"""CEO Overview — стан бізнесу:
-- Вартість складу: {_stock_str} | Штук: {total_units:,}
-- Дохід 30д: {_rev_str}
+    ctx_overview = f"""CEO Overview:
+- Вартість складу: ${stock_val:,.0f} | Штук: {total_units:,}
+- Дохід 30д: ${rev_cur:,.0f}
 - Алерти: {_alerts_str}
 - SKU всього: {len(df_filtered)}
-- SKU з ризиком out-of-stock <14д: {len(critical) if 'critical' in dir() and not critical.empty else 0}
 """
     show_ai_chat(ctx_overview, [
         "Загальний стан бізнесу — що найтерміновіше виправити?",
@@ -2902,12 +2564,7 @@ def show_sales_traffic(t):
     csv = as_.to_csv(index=False).encode('utf-8')
     st.download_button(t["st_download"], csv, "sales_traffic.csv","text/csv")
     insights_sales_traffic(df_filtered, as_)
-
-    # ── AI Chat ──
-    ctx = f"""Sales & Traffic за обраний період:
-- Сесії: {ts:,} | Перегляди: {tpv:,} | Замовлення: {tu:,}
-- Дохід: ${tr:,.2f} | Конверсія: {ac:.2f}% | Buy Box: {ab:.1f}%
-- Топ ASIN за доходом: {as_.nlargest(3,'Revenue')[['ASIN','Revenue','Conv %']].to_string()}"""
+    ctx = f"""Sales & Traffic: Сесії {ts:,} | Дохід ${tr:,.2f} | Конверсія {ac:.2f}% | Buy Box {ab:.1f}%"""
     show_ai_chat(ctx, [
         "Який ASIN виріс найбільше за останні 7 днів?",
         "Які ASIN мають Buy Box нижче 80%?",
@@ -2961,12 +2618,7 @@ def show_settlements(t):
     disp = ['Posted Date','Transaction Type','Order ID','Amount','Currency','Description']
     st.dataframe(df_f[[c for c in disp if c in df_f.columns]].sort_values('Posted Date',ascending=False).head(100),width="stretch")
     insights_settlements(df_f)
-
-    # ── AI Chat ──
-    ctx_set = f"""Settlement фінанси:
-- Net Payout: {sym}{net:,.2f} | Gross Sales: {sym}{gross:,.2f}
-- Refunds: {sym}{refunds:,.2f} | Fees: {sym}{fees:,.2f}
-- Валюта: {sel_cur} | Комісія: {abs(fees)/gross*100:.1f}% від продажів"""
+    ctx_set = f"""Settlements: Net ${net:,.2f} | Gross ${gross:,.2f} | Refunds ${refunds:,.2f} | Fees ${fees:,.2f}"""
     show_ai_chat(ctx_set, [
         "Який місяць приніс найбільший net payout за рік?",
         "Яка частка рефандів від gross sales по місяцях?",
@@ -3052,13 +2704,7 @@ def show_returns(t=None):
     st.dataframe(df_f[[c for c in dc if c in df_f.columns]].sort_values('Return Date',ascending=False).head(100).style.format({'Price':'${:.2f}','Return Value':'${:.2f}'}),width="stretch")
     st.download_button(t["ret_download"],df_f.to_csv(index=False).encode('utf-8'),"returns.csv","text/csv")
     insights_returns(df_f, rr)
-
-    # ── AI Chat ──
-    top_ret = df_f['SKU'].value_counts().head(5).to_string() if not df_f.empty else ""
-    ctx_ret = f"""Returns аналіз:
-- Всього повернень: {len(df_f)} | Return Rate: {rr:.1f}%
-- Вартість повернень: ${df_f['Return Value'].sum():,.2f}
-- Топ SKU за поверненнями: {top_ret}"""
+    ctx_ret = f"""Returns: {len(df_f)} повернень | Rate {rr:.1f}% | Вартість ${df_f['Return Value'].sum():,.2f}"""
     show_ai_chat(ctx_ret, [
         "Які SKU мають найбільше повернень за 30 днів?",
         "Які топ-3 причини повернень по всіх SKU?",
@@ -3082,76 +2728,6 @@ def show_inventory_finance(df_filtered, t):
     dt_ = df_filtered[['SKU','Product Name','Available','Price','Stock Value']].sort_values('Stock Value',ascending=False).head(10)
     st.dataframe(dt_.style.format({'Price':"${:.2f}",'Stock Value':"${:,.2f}"}),width="stretch")
     insights_inventory(df_filtered)
-
-
-def show_aging(df_filtered, t):
-    if df_filtered.empty: st.warning("No data"); return
-    age_cols = ['Upto 90 Days','91 to 180 Days','181 to 270 Days','271 to 365 Days','More than 365 Days']
-    valid    = [c for c in age_cols if c in df_filtered.columns]
-    if not valid: st.warning("Aging data not available."); return
-    da = df_filtered[valid].copy()
-    for c in valid: da[c] = pd.to_numeric(da[c],errors='coerce').fillna(0)
-    if da.sum().sum()==0: st.info("All inventory is fresh"); return
-    as_ = da.sum().reset_index(); as_.columns=['Age Group','Units']; as_ = as_[as_['Units']>0]
-    col1,col2 = st.columns(2)
-    with col1:
-        st.subheader(t["chart_age"])
-        fig = px.pie(as_,values='Units',names='Age Group',hole=0.4); fig.update_layout(height=400)
-        st.plotly_chart(fig, width="stretch")
-    with col2:
-        st.subheader(t["chart_velocity"])
-        if all(c in df_filtered.columns for c in ['Available','Velocity','Stock Value']):
-            ds = df_filtered[(df_filtered['Available']>0)&(df_filtered['Velocity']>=0)&(df_filtered['Stock Value']>0)].copy()
-            if not ds.empty:
-                fig = px.scatter(ds,x='Available',y='Velocity',size='Stock Value',color='Store Name' if 'Store Name' in ds.columns else None,hover_name='SKU',log_x=True)
-                fig.update_layout(height=400); st.plotly_chart(fig, width="stretch")
-
-    # ── AI Chat ──
-    slow = df_filtered[df_filtered['Velocity'] < 0.1][['SKU','Available','Stock Value']].head(5).to_string() if 'Velocity' in df_filtered.columns else ""
-    _stock_val = df_filtered['Stock Value'].sum() if 'Stock Value' in df_filtered.columns else 0
-    ctx_aging = f"""Inventory Health:
-- SKU всього: {len(df_filtered)} | Загальна вартість: ${_stock_val:,.0f}
-- Повільні SKU (Velocity<0.1): {slow}"""
-    show_ai_chat(ctx_aging, [
-        "Які SKU мають залишок більше 90 днів продажів?",
-        "Топ 5 SKU де заморожено найбільше коштів",
-        "Які SKU закінчаться за 14 днів при поточному темпі?",
-    ], "aging")
-
-
-def show_ai_forecast(df, t):
-    st.markdown("### Select SKU for Forecast")
-    skus = sorted([s for s in df['SKU'].unique() if s is not None and str(s).strip() != ''])
-    if not skus: st.info("No SKU available"); return
-    col1,col2 = st.columns([2,1])
-    target_sku    = col1.selectbox(t["ai_select"],skus)
-    forecast_days = col2.slider(t["ai_days"],7,90,30)
-    sd = df[df['SKU']==target_sku].copy().sort_values('created_at')
-    sd['date_ordinal'] = sd['created_at'].map(dt.datetime.toordinal)
-    if len(sd)>=3:
-        # LinearRegression замінено на numpy (без sklearn)
-        import numpy as _np
-        _coeffs = _np.polyfit(sd['date_ordinal'], sd['Available'], 1)
-        model = type('M', (), {'predict': lambda self, X: _np.polyval(_coeffs, [x[0] for x in X])})()
-        last  = sd['created_at'].max()
-        fd    = [last+dt.timedelta(days=x) for x in range(1,forecast_days+1)]
-        fo    = np.array([d.toordinal() for d in fd]).reshape(-1,1)
-        preds = [max(0,int(p)) for p in model.predict(fo)]
-        df_fc = pd.DataFrame({'date':fd,'Predicted':preds})
-        so    = df_fc[df_fc['Predicted']==0]
-        if not so.empty: st.error(f"{t['ai_result_date']} **{so.iloc[0]['date'].date()}**")
-        else:             st.success(t['ai_ok'])
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=sd['created_at'],y=sd['Available'],name='Historical'))
-        fig.add_trace(go.Scatter(x=df_fc['date'],y=df_fc['Predicted'],name='Forecast',line=dict(dash='dash',color='red')))
-        st.plotly_chart(fig, width="stretch")
-    else: st.warning(t["ai_error"])
-
-
-def show_data_table(df_filtered, t, selected_date):
-    st.markdown("### 📊 FBA Inventory Dataset")
-    st.download_button("📥 Download CSV",df_filtered.to_csv(index=False).encode('utf-8'),"fba_inventory.csv","text/csv")
-    st.dataframe(df_filtered, width="stretch", height=600)
 
 
 def show_orders(t=None):
@@ -3180,10 +2756,7 @@ def show_orders(t=None):
             sc = df_f['Order Status'].value_counts().reset_index(); sc.columns=['Status','Count']
             fig3 = px.pie(sc,values='Count',names='Status',hole=0.4); st.plotly_chart(fig3, width="stretch")
     insights_orders(df_f)
-
-    # ── AI Chat ──
-    top_skus = df_f.groupby('SKU')['quantity'].sum().nlargest(5).to_string() if 'SKU' in df_f.columns and 'quantity' in df_f.columns else ""
-    ctx_ord = f"""Orders аналіз: замовлень {len(df_f)}. Топ SKU: {top_skus}"""
+    ctx_ord = f"""Orders: {df_f['Order ID'].nunique()} замовлень | Revenue ${df_f['Total Price'].sum():,.2f}"""
     show_ai_chat(ctx_ord, [
         "Топ 5 SKU за кількістю замовлень за останні 30 днів",
         "Порівняй обсяг замовлень: цей тиждень vs минулий",
@@ -3192,7 +2765,7 @@ def show_orders(t=None):
 
 
 # ============================================
-# 🕷 SCRAPER MANAGER — SIMPLIFIED
+# SCRAPER MANAGER
 # ============================================
 
 APIFY_TOKEN_DEFAULT = os.getenv("APIFY_TOKEN", "")
@@ -3384,7 +2957,6 @@ def show_scraper_manager():
 
     st.markdown("## 🕷 Scraper Reviews")
 
-    # ── Статус ──
     if st.session_state.scr_running:
         st.info(f"🔄 {st.session_state.scr_label or 'Збір в процесі...'}")
     elif st.session_state.scr_done:
@@ -3393,7 +2965,6 @@ def show_scraper_manager():
     st.progress(st.session_state.scr_pct, text=st.session_state.scr_label or " ")
     st.markdown("---")
 
-    # ── Форма ──
     urls_input = st.text_area(
         "🔗 Посилання Amazon (по одному на рядок):",
         height=180,
@@ -3406,7 +2977,7 @@ def show_scraper_manager():
         key="scr_urls_input"
     )
 
-    max_per_star = 100  # Amazon limit
+    max_per_star = 100
     c2, c3 = st.columns([3, 1])
     with c2:
         loop_mode = st.toggle(
@@ -3450,8 +3021,6 @@ def show_scraper_manager():
                 st.rerun()
 
     st.markdown("---")
-
-    # ── Логи ──
     st.markdown("### 📜 Логи")
     logs = st.session_state.scr_logs
     if logs:
@@ -3502,7 +3071,6 @@ def show_scraper_manager():
           Логи з'являться після запуску...
         </div>""", unsafe_allow_html=True)
 
-    # Auto-refresh поки іде
     if st.session_state.scr_running:
         time.sleep(2)
         st.rerun()
@@ -3518,7 +3086,6 @@ from auth import (
     show_admin_panel, ALL_REPORTS
 )
 
-# ── Init DB tables on first run ──
 try:
     ensure_tables()
     create_admin_if_not_exists()
@@ -3526,15 +3093,12 @@ except Exception as e:
     st.error(f"DB init error: {e}")
     st.stop()
 
-# ── Not logged in → show login form ──
 if "user" not in st.session_state or not st.session_state.user:
     show_login()
     st.stop()
 
-# ── Logged in ──
 user = st.session_state.user
 
-# Sidebar: user info + logout
 st.sidebar.markdown(f"""
 <div style="background:#1e1e2e;border-radius:8px;padding:10px 14px;margin-bottom:8px">
   <div style="font-size:14px;font-weight:700;color:#fff">{user['name'] or user['email']}</div>
@@ -3574,47 +3138,88 @@ if not df.empty:
 else:
     df_filtered = pd.DataFrame(); selected_date = None
 
+# ── NAVIGATION ──
 st.sidebar.markdown("---")
 st.sidebar.header("📊 Reports")
 
-# Формуємо список доступних звітів для цього юзера
-all_nav = [
-    "🏠 Overview","📈 Sales & Traffic","🏦 Settlements (Payouts)",
-    "💰 Inventory Value (CFO)","🛒 Orders Analytics","📦 Returns Analytics",
-    "⭐ Amazon Reviews","🐢 Inventory Health (Aging)","🧠 AI Forecast",
-    "📋 FBA Inventory Table","🕷 Scraper Reviews","📊 ETL Status","📦 Склад (Inventory)",
+# ── Основні звіти ──
+main_nav = [
+    "🏠 Overview",
+    "📈 Sales & Traffic",
+    "🏦 Settlements (Payouts)",
+    "💰 Inventory Value (CFO)",
+    "🛒 Orders Analytics",
+    "📦 Склад (Inventory)",
+    "⭐ Amazon Reviews",
 ]
-# Адмін бачить все + адмінку
+
+# ── Інструменти ──
+tools_nav = [
+    "📊 ETL Status",
+    "🕷 Scraper Reviews",
+    "ℹ️ Про додаток",
+]
+
 if user["role"] == "admin":
-    report_options = all_nav + ["👑 User Management", "ℹ️ Про додаток"]
+    tools_nav_full = ["👑 User Management"] + tools_nav
 else:
-    report_options = [r for r in all_nav if can_view(r)] + ["ℹ️ Про додаток"]
+    tools_nav_full = tools_nav
+
+# Фільтруємо по правах
+if user["role"] != "admin":
+    main_nav = [r for r in main_nav if can_view(r)]
+    tools_nav_full = [r for r in tools_nav_full if can_view(r)]
+
+report_options = main_nav + tools_nav_full
 
 if not report_options:
-    st.warning("У вас немає доступу до жодного розділу. Зверніться до адміністратора.")
+    st.warning("У вас немає доступу до жодного розділу.")
     st.stop()
 
 if st.session_state.report_choice not in report_options:
     st.session_state.report_choice = report_options[0]
 
-current_index = report_options.index(st.session_state.report_choice)
-report_choice = st.sidebar.radio("Select Report:", report_options, index=current_index)
-st.session_state.report_choice = report_choice
+# ── Два окремих radio блоки ──
+st.sidebar.markdown("**📊 Звіти**")
+main_choice = st.sidebar.radio(
+    "main_nav_radio",
+    main_nav,
+    index=main_nav.index(st.session_state.report_choice) if st.session_state.report_choice in main_nav else 0,
+    label_visibility="collapsed",
+    key="main_nav"
+)
 
+st.sidebar.markdown("**🔧 Інструменти**")
+tools_choice = st.sidebar.radio(
+    "tools_nav_radio",
+    tools_nav_full,
+    index=tools_nav_full.index(st.session_state.report_choice) if st.session_state.report_choice in tools_nav_full else 0,
+    label_visibility="collapsed",
+    key="tools_nav"
+)
+
+# Визначаємо активний вибір (який змінився останнім)
+if st.session_state.get("_last_main") != main_choice and main_choice != st.session_state.report_choice:
+    st.session_state.report_choice = main_choice
+elif st.session_state.get("_last_tools") != tools_choice and tools_choice != st.session_state.report_choice:
+    st.session_state.report_choice = tools_choice
+
+st.session_state["_last_main"]  = main_choice
+st.session_state["_last_tools"] = tools_choice
+
+report_choice = st.session_state.report_choice
+
+# ── ROUTING ──
 if   report_choice == "🏠 Overview":                show_overview(df_filtered, t, selected_date)
 elif report_choice == "📈 Sales & Traffic":          show_sales_traffic(t)
 elif report_choice == "🏦 Settlements (Payouts)":   show_settlements(t)
 elif report_choice == "💰 Inventory Value (CFO)":   show_inventory_finance(df_filtered, t)
 elif report_choice == "🛒 Orders Analytics":         show_orders(t)
-elif report_choice == "📦 Returns Analytics":        show_returns(t)
+elif report_choice == "📦 Склад (Inventory)":        show_inventory_unified()
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
-elif report_choice == "🐢 Inventory Health (Aging)":show_aging(df_filtered, t)
-elif report_choice == "🧠 AI Forecast":              show_ai_forecast(df, t)
-elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filtered, t, selected_date)
+elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 elif report_choice == "👑 User Management":          show_admin_panel()
-elif report_choice == "📊 ETL Status":               show_etl_status()
-elif report_choice == "📦 Склад (Inventory)":        show_inventory_unified()
 elif report_choice == "ℹ️ Про додаток":              show_about()
 
 st.sidebar.markdown("---")
