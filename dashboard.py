@@ -2354,143 +2354,79 @@ def show_overview(df_filtered, t, selected_date):
     st.markdown(f"### {t['ov_title']}")
     st.caption(f"📅 {selected_date}")
 
-    df_st     = load_sales_traffic()
-    df_settle = load_settlements()
-    df_reviews = load_reviews()
+    if df_filtered.empty:
+        st.info("Немає даних по інвентарю. Перевір ETL або обери іншу дату.")
+        return
 
-    # ═══ БЛОК 1 — 🚨 ЩО ГОРИТЬ ═══
-    st.markdown("### 🚨 Що потребує уваги прямо зараз")
+    # ── KPI (тільки з df_filtered — вже в пам'яті, без запитів до БД) ──
+    total_sku   = len(df_filtered)
+    total_units = int(df_filtered['Available'].sum())
+    total_value = df_filtered['Stock Value'].sum()
+    avg_price   = df_filtered[df_filtered['Price'] > 0]['Price'].mean()
+    vel_30      = df_filtered['Velocity'].sum() if 'Velocity' in df_filtered.columns else 0
 
-    alerts = []
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("📦 SKU",             f"{total_sku:,}")
+    c2.metric("🔢 Штук на складі",  f"{total_units:,}")
+    c3.metric("💰 Вартість складу", f"${total_value:,.0f}")
+    c4.metric("💵 Сер. ціна",       f"${avg_price:.2f}" if not pd.isna(avg_price) else "—")
+    c5.metric("🚀 Velocity/міс",    f"{vel_30:,.0f}")
+
+    st.markdown("---")
+
+    # ── LOW STOCK ALERT ──
+    st.markdown("### 🚨 Low Stock Alert")
     critical = pd.DataFrame()
-
-    if not df_filtered.empty and 'Velocity' in df_filtered.columns and 'Available' in df_filtered.columns:
-        df_risk = df_filtered[df_filtered['Velocity'] > 0].copy()
+    if 'Velocity' in df_filtered.columns:
+        df_risk  = df_filtered[df_filtered['Velocity'] > 0].copy()
         df_risk['days_left'] = (df_risk['Available'] / df_risk['Velocity']).round(0)
         critical = df_risk[df_risk['days_left'] < 14].sort_values('days_left')
-        warning  = df_risk[(df_risk['days_left'] >= 14) & (df_risk['days_left'] < 30)].sort_values('days_left')
+        warning  = df_risk[(df_risk['days_left'] >= 14) & (df_risk['days_left'] < 30)]
         if not critical.empty:
-            alerts.append(("🔴", f"{len(critical)} SKU закінчаться за <14 днів", "critical", critical))
+            st.error(f"🔴 **{len(critical)} SKU** закінчаться за **<14 днів**")
+            cols_show = [c for c in ['SKU','Available','Velocity','days_left'] if c in critical.columns]
+            st.dataframe(critical[cols_show].head(10), use_container_width=True, hide_index=True)
         if not warning.empty:
-            alerts.append(("🟡", f"{len(warning)} SKU залишилось 14–30 днів", "warning", warning))
-
-    if not df_st.empty:
-        last_30 = df_st[df_st['report_date'] >= (df_st['report_date'].max() - pd.Timedelta(days=30))]
-        asin_col = 'child_asin' if 'child_asin' in last_30.columns else last_30.columns[0]
-        bb = last_30.groupby(asin_col)['buy_box_percentage'].mean()
-        low_bb = bb[bb < 80]
-        if not low_bb.empty:
-            alerts.append(("🟠", f"{len(low_bb)} ASIN з Buy Box < 80%", "warning", None))
-
-    if not df_reviews.empty and 'rating' in df_reviews.columns:
-        bad_rev = df_reviews[df_reviews['rating'] <= 2]
-        last_7d = pd.Timestamp.now() - pd.Timedelta(days=7)
-        if 'review_date' in df_reviews.columns:
-            recent_bad = bad_rev[pd.to_datetime(bad_rev['review_date'], errors='coerce') >= last_7d]
-            if not recent_bad.empty:
-                alerts.append(("⭐", f"{len(recent_bad)} відгуків 1-2★ за останні 7 днів", "warning", None))
-
-    if alerts:
-        for emoji, msg, severity, df_detail in alerts:
-            color = "#2b0d0d" if severity == "critical" else "#2b2000"
-            border = "#f04f5a" if severity == "critical" else "#f0a500"
-            text_color = "#ffcccc" if severity == "critical" else "#ffe0a0"
-            st.markdown(f"""
-<div style="background:{color};border-left:3px solid {border};padding:10px 16px;margin:4px 0;border-radius:3px;font-size:14px;color:{text_color}">
-{emoji} <b>{msg}</b>
-</div>""", unsafe_allow_html=True)
-            if df_detail is not None and not df_detail.empty:
-                with st.expander(f"Показати SKU ({len(df_detail)})"):
-                    show_cols = ['SKU','Available','days_left']
-                    show_cols = [c for c in show_cols if c in df_detail.columns]
-                    st.dataframe(df_detail[show_cols].head(10), use_container_width=True)
+            st.warning(f"🟡 **{len(warning)} SKU** — залишилось 14–30 днів")
+        if critical.empty and warning.empty:
+            st.success("✅ Всі SKU в нормі")
     else:
-        st.success("✅ Все в нормі — критичних проблем не виявлено")
+        st.info("Немає даних Velocity")
 
-    # ═══ БЛОК 2 — 💰 ГРОШІ ═══
     st.markdown("---")
-    st.markdown("### 💰 Фінанси — поточний стан")
 
-    c1,c2,c3,c4,c5 = st.columns(5)
+    # ── ТОП 15 SKU ──
+    st.markdown("### 📊 Топ 15 SKU за залишками")
+    top_sku  = df_filtered.nlargest(15, 'Available')
+    cols_top = [c for c in ['SKU','Product Name','Available','Price','Stock Value','Store Name'] if c in top_sku.columns]
+    st.dataframe(
+        top_sku[cols_top].style.format({'Price': '${:.2f}', 'Stock Value': '${:,.0f}'}),
+        use_container_width=True, hide_index=True
+    )
 
-    stock_val = df_filtered['Stock Value'].sum() if 'Stock Value' in df_filtered.columns else 0
-    total_units = int(df_filtered['Available'].sum()) if 'Available' in df_filtered.columns else 0
-    c1.metric("💰 Вартість складу", f"${stock_val:,.0f}")
-    c2.metric("📦 Штук на складі", f"{total_units:,}")
-
-    if not df_settle.empty and 'Amount' in df_settle.columns and 'Posted Date' in df_settle.columns:
-        df_settle['Posted Date'] = pd.to_datetime(df_settle['Posted Date'], errors='coerce')
-        now = pd.Timestamp.now()
-        this_month = df_settle[
-            (df_settle['Posted Date'].dt.month == now.month) &
-            (df_settle['Posted Date'].dt.year == now.year)
-        ]['Amount'].sum()
-        prev_month = df_settle[
-            (df_settle['Posted Date'].dt.month == (now - pd.DateOffset(months=1)).month) &
-            (df_settle['Posted Date'].dt.year == (now - pd.DateOffset(months=1)).year)
-        ]['Amount'].sum()
-        delta_pct = ((this_month - prev_month) / abs(prev_month) * 100) if prev_month != 0 else 0
-        c3.metric("🏦 Payout цей місяць", f"${this_month:,.0f}", f"{delta_pct:+.1f}% vs минулий")
-    else:
-        c3.metric("🏦 Payout", "—")
-
-    rev_cur = 0
-    if not df_st.empty:
-        last_30_sales = df_st[df_st['report_date'] >= (df_st['report_date'].max() - pd.Timedelta(days=30))]
-        prev_30_sales = df_st[
-            (df_st['report_date'] >= (df_st['report_date'].max() - pd.Timedelta(days=60))) &
-            (df_st['report_date'] < (df_st['report_date'].max() - pd.Timedelta(days=30)))
-        ]
-        rev_cur = last_30_sales['ordered_product_sales'].sum()
-        rev_prv = prev_30_sales['ordered_product_sales'].sum()
-        rev_delta = ((rev_cur - rev_prv) / abs(rev_prv) * 100) if rev_prv != 0 else 0
-        c4.metric("📈 Дохід 30д", f"${rev_cur:,.0f}", f"{rev_delta:+.1f}% vs попередні 30д")
-        c5.metric("🛒 Одиниць 30д", f"{int(last_30_sales['units_ordered'].sum()):,}")
-    else:
-        c4.metric("📈 Дохід 30д", "—")
-        c5.metric("🛒 Одиниць 30д", "—")
-
-    # ═══ БЛОК 3 — 📈 ТРЕНД ═══
     st.markdown("---")
-    st.markdown("### 📈 Тренд продажів — 60 днів")
-    if not df_st.empty:
-        daily = df_st.groupby(df_st['report_date'].dt.date).agg(
-            Revenue=('ordered_product_sales','sum'),
-            Units=('units_ordered','sum')
-        ).reset_index().tail(60)
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=daily['report_date'], y=daily['Revenue'],
-            name='Revenue $', marker_color='#4f8ef7', opacity=0.8
-        ))
-        fig.add_trace(go.Scatter(
-            x=daily['report_date'], y=daily['Units'],
-            name='Units', mode='lines', line=dict(color='#f0a500', width=2),
-            yaxis='y2'
-        ))
-        fig.update_layout(
-            height=300, margin=dict(l=0,r=0,t=10,b=0),
-            yaxis=dict(title='Revenue $', showgrid=True, gridcolor='rgba(128,128,128,0.1)'),
-            yaxis2=dict(title='Units', overlaying='y', side='right', showgrid=False),
-            legend=dict(orientation='h', y=1.1),
-            plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)'
-        )
+
+    # ── TREEMAP ──
+    st.markdown("### 💰 Де заморожені гроші?")
+    dm = df_filtered[df_filtered['Stock Value'] > 0]
+    if not dm.empty:
+        path = []
+        if 'Store Name' in dm.columns: path.append('Store Name')
+        path.append('SKU')
+        fig = px.treemap(dm, path=path, values='Stock Value',
+                         color='Stock Value', color_continuous_scale='RdYlGn_r', height=420)
+        fig.update_layout(margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Немає даних Sales & Traffic")
 
-    # ═══ AI CHAT ═══
-    _alerts_str = "; ".join([a[1] for a in alerts]) if alerts else "критичних проблем немає"
-    ctx_overview = f"""CEO Overview:
-- Вартість складу: ${stock_val:,.0f} | Штук: {total_units:,}
-- Дохід 30д: ${rev_cur:,.0f}
-- Алерти: {_alerts_str}
-- SKU всього: {len(df_filtered)}
-"""
+    # ── AI CHAT ──
+    ctx_overview = f"""Inventory Overview:
+- SKU: {total_sku} | Штук: {total_units:,} | Вартість: ${total_value:,.0f}
+- Low Stock <14д: {len(critical)} SKU
+- Дата: {selected_date}"""
     show_ai_chat(ctx_overview, [
-        "Загальний стан бізнесу — що найтерміновіше виправити?",
         "Які SKU під ризиком out-of-stock найближчі 14 днів?",
-        "Де заморожені гроші при низьких продажах?",
+        "Де найбільше заморожених грошей?",
+        "Яка загальна оборотність складу?",
     ], "overview")
 
 
