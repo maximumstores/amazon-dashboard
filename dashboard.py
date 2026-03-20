@@ -105,7 +105,7 @@ translations = {
         "chart_payout_trend": "📉 Динаміка виплат",
         "chart_fee_breakdown": "💸 Структура витрат",
         "currency_select": "💱 Валюта:",
-        "sales_traffic_title": "📈 Sales & Traffic",
+        "sales_traffic_title": "📈 Трафик (Sales & Traffic)",
         "st_sessions": "Сесії",
         "st_page_views": "Перегляди",
         "st_units": "Замовлено штук",
@@ -230,7 +230,7 @@ translations = {
         "chart_payout_trend": "📉 Payout Trend",
         "chart_fee_breakdown": "💸 Fee Breakdown",
         "currency_select": "💱 Currency:",
-        "sales_traffic_title": "📈 Sales & Traffic",
+        "sales_traffic_title": "📈 Трафик (Sales & Traffic)",
         "st_sessions": "Sessions",
         "st_page_views": "Page Views",
         "st_units": "Units Ordered",
@@ -357,7 +357,7 @@ translations = {
         "chart_payout_trend": "📉 Динамика выплат",
         "chart_fee_breakdown": "💸 Структура расходов",
         "currency_select": "💱 Валюта:",
-        "sales_traffic_title": "📈 Sales & Traffic",
+        "sales_traffic_title": "📈 Трафик (Sales & Traffic)",
         "st_sessions": "Сессии",
         "st_page_views": "Просмотры",
         "st_units": "Заказано штук",
@@ -864,7 +864,7 @@ def show_overview_insights(df_inventory):
                     return_rate  = unique_ret/total_orders*100 if total_orders > 0 else 0
                     break
 
-    tabs = st.tabs(["💰 Inventory","🏦 Settlements","📈 Sales & Traffic","🛒 Orders","📦 Returns","⭐ Reviews"])
+    tabs = st.tabs(["💰 Inventory","🏦 Settlements","📈 Трафик (Sales & Traffic)","🛒 Orders","📦 Returns","⭐ Reviews"])
 
     with tabs[0]:
         if not df_inventory.empty and 'Stock Value' in df_inventory.columns:
@@ -2233,7 +2233,7 @@ def show_etl_status():
             ("🏦 Settlements",     "settlements",         q(sql_settlements), "3× / день"),
             ("🛒 Orders",          "orders",              q(sql_orders),      "2× / день"),
             ("📦 Returns",         "returns",             q(sql_returns),     "1× / день"),
-            ("📈 Sales & Traffic", "spapi.sales_traffic", q(sql_st),          "2× / день"),
+            ("📈 Трафик (Sales & Traffic)", "spapi.sales_traffic", q(sql_st),          "2× / день"),
             ("⭐ Reviews",         "amazon_reviews",      q(sql_rev),         "за запитом"),
             ("📣 Advertising",     "advertising",         (0, None),          "—"),
         ]
@@ -3086,9 +3086,9 @@ _lbl_reports, _lbl_tools_sep = _nav_labels.get(lang, _nav_labels["UA"])
 
 main_nav = [
     "🏠 Overview",
-    "📈 Sales & Traffic",
+    "📈 Трафик (Sales & Traffic)",
     "💰 Фінанси (Settlements)",
-    "🛒 Orders Analytics",
+    "🛒 Продажи (Orders)",
     "📦 Склад (Inventory)",
     "⭐ Amazon Reviews",
 ]
@@ -3141,9 +3141,9 @@ report_choice = st.session_state.report_choice
 
 # ── ROUTING ──
 if   report_choice == "🏠 Overview":                show_overview(df_filtered, t, selected_date)
-elif report_choice == "📈 Sales & Traffic":          show_sales_traffic(t)
+elif report_choice == "📈 Трафик (Sales & Traffic)":          show_sales_traffic(t)
 elif report_choice == "💰 Фінанси (Settlements)":   show_settlements(t)
-elif report_choice == "🛒 Orders Analytics":         show_orders(t)
+elif report_choice == "🛒 Продажи (Orders)":         show_orders(t)
 elif report_choice == "📦 Склад (Inventory)":        show_inventory_unified()
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
