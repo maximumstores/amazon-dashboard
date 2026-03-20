@@ -3077,13 +3077,12 @@ else:
 # ── NAVIGATION ──
 st.sidebar.markdown("---")
 
-# Переклад заголовків nav
 _nav_labels = {
-    "UA": ("📊 Звіти", "🔧 Інструменти"),
-    "RU": ("📊 Отчёты", "🔧 Инструменты"),
-    "EN": ("📊 Reports", "🔧 Tools"),
+    "UA": ("📊 Звіти", "── Інструменти ──"),
+    "RU": ("📊 Отчёты", "── Инструменты ──"),
+    "EN": ("📊 Reports", "── Tools ──"),
 }
-_lbl_reports, _lbl_tools = _nav_labels.get(lang, _nav_labels["UA"])
+_lbl_reports, _lbl_tools_sep = _nav_labels.get(lang, _nav_labels["UA"])
 
 main_nav = [
     "🏠 Overview",
@@ -3110,46 +3109,34 @@ if user["role"] != "admin":
     main_nav       = [r for r in main_nav       if can_view(r)]
     tools_nav_full = [r for r in tools_nav_full if can_view(r)]
 
-# Один суцільний список з роздільником (не вибирається)
-_SEP = "─" * 18
-report_options = main_nav + [_SEP] + tools_nav_full
-
-if not (main_nav + tools_nav_full):
+all_real = main_nav + tools_nav_full
+if not all_real:
     _no_access = {"UA": "У вас немає доступу до жодного розділу.", "RU": "У вас нет доступа ни к одному разделу.", "EN": "You have no access to any section."}
     st.warning(_no_access.get(lang, _no_access["UA"]))
     st.stop()
 
-if st.session_state.report_choice not in (main_nav + tools_nav_full):
-    st.session_state.report_choice = (main_nav + tools_nav_full)[0]
+# Один radio з нe-вибираємим роздільником
+_SEP = _lbl_tools_sep
+all_nav = main_nav + [_SEP] + tools_nav_full
 
-# Заголовки секцій через markdown (не radio)
+if st.session_state.report_choice not in all_real:
+    st.session_state.report_choice = all_real[0]
+
+_cur_idx = all_nav.index(st.session_state.report_choice) if st.session_state.report_choice in all_nav else 0
+
 st.sidebar.markdown(f"**{_lbl_reports}**")
-main_choice = st.sidebar.radio(
-    "main_radio", main_nav,
-    index=main_nav.index(st.session_state.report_choice) if st.session_state.report_choice in main_nav else 0,
+raw_choice = st.sidebar.radio(
+    "nav", all_nav,
+    index=_cur_idx,
     label_visibility="collapsed",
-    key="nav_main"
+    key="nav_single"
 )
 
-st.sidebar.markdown(f"**{_lbl_tools}**")
-tools_choice = st.sidebar.radio(
-    "tools_radio", tools_nav_full,
-    index=tools_nav_full.index(st.session_state.report_choice) if st.session_state.report_choice in tools_nav_full else 0,
-    label_visibility="collapsed",
-    key="nav_tools"
-)
-
-# Який radio змінився — той і активний
-_prev = st.session_state.get("_nav_prev_main")
-_prev_t = st.session_state.get("_nav_prev_tools")
-
-if main_choice != _prev:
-    st.session_state.report_choice = main_choice
-elif tools_choice != _prev_t:
-    st.session_state.report_choice = tools_choice
-
-st.session_state["_nav_prev_main"]  = main_choice
-st.session_state["_nav_prev_tools"] = tools_choice
+# Якщо вибрали роздільник — повертаємось до попереднього
+if raw_choice == _SEP:
+    pass  # не міняємо report_choice
+else:
+    st.session_state.report_choice = raw_choice
 
 report_choice = st.session_state.report_choice
 
