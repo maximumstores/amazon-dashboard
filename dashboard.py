@@ -1783,7 +1783,7 @@ def show_reviews(t):
                     .format({'Рейтинг': '{:.2f}', 'Neg %': '{:.1f}%', 'Pos %': '{:.1f}%'})
                     .background_gradient(subset=['Рейтинг'], cmap='RdYlGn')
                     .background_gradient(subset=['Neg %'], cmap='RdYlGn_r'),
-                use_container_width=True, hide_index=True
+                width='stretch', hide_index=True
             )
 
     df_table = balanced_reviews(df_dl, max_per_star=100).sort_values('rating', ascending=True)
@@ -2023,7 +2023,7 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
     ai_cols = st.columns(len(preset_questions))
     auto_q = None
     for i, (col, q) in enumerate(zip(ai_cols, preset_questions)):
-        if col.button(q, key=f"ai_btn_{section_key}_{i}", use_container_width=True):
+        if col.button(q, key=f"ai_btn_{section_key}_{i}", width='stretch'):
             auto_q = q
 
     user_q = st.chat_input("💬 Питання про ваші дані...", key=f"ai_input_{section_key}")
@@ -2051,7 +2051,7 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 
         if df_result is not None and not df_result.empty:
             with st.expander(f"⚡ Результат з БД ({len(df_result)} рядків)", expanded=False):
-                st.dataframe(df_result, use_container_width=True)
+                st.dataframe(df_result, width='stretch')
 
         if analysis and not analysis.startswith("SQL помилка"):
             answer_md = analysis
@@ -2162,7 +2162,7 @@ def show_inventory_unified():
         m2.metric("✅ Fulfillable",    f"{fulfillable:,}")
         m3.metric("❌ Unsellable",     f"{unsellable:,}")
         m4.metric("🛒 Продажі 30д",   f"{sales_30d:,.0f}")
-        st.dataframe(df[cols], use_container_width=True, hide_index=True)
+        st.dataframe(df[cols], width='stretch', hide_index=True)
         st.download_button("⬇️ CSV", df[cols].to_csv(index=False).encode(), "summary.csv", "text/csv")
 
     with tab2:
@@ -2177,7 +2177,7 @@ def show_inventory_unified():
         cols_r = [c for c in ["sku","asin","product_name","afn_fulfillable_quantity",
                   "afn_unsellable_quantity","days_of_supply","stranded_reason","recommended_action"] if c in df_r.columns]
         st.caption(f"{len(df_r):,} SKU")
-        st.dataframe(df_r[cols_r], use_container_width=True, hide_index=True)
+        st.dataframe(df_r[cols_r], width='stretch', hide_index=True)
         st.download_button("⬇️ CSV", df_r[cols_r].to_csv(index=False).encode(), "risk.csv", "text/csv")
 
     with tab3:
@@ -2186,7 +2186,7 @@ def show_inventory_unified():
         cols_s = [c for c in ["sku","asin","product_name","age_0_90","age_91_180",
                   "age_181_270","age_271_365","storage_cost_next_month","your_price"] if c in df.columns]
         df_s = df[cols_s].sort_values("storage_cost_next_month", ascending=False) if 'storage_cost_next_month' in df.columns else df[cols_s]
-        st.dataframe(df_s, use_container_width=True, hide_index=True)
+        st.dataframe(df_s, width='stretch', hide_index=True)
         st.download_button("⬇️ CSV", df_s.to_csv(index=False).encode(), "storage.csv", "text/csv")
 
     with tab4:
@@ -2199,7 +2199,7 @@ def show_inventory_unified():
                    "sales_last_30_days","sell_through"] if c in df_rs.columns]
         df_rs = df_rs[cols_rs].sort_values("days_of_supply") if 'days_of_supply' in df_rs.columns else df_rs[cols_rs]
         st.caption(f"{len(df_rs):,} SKU потребують поповнення")
-        st.dataframe(df_rs, use_container_width=True, hide_index=True)
+        st.dataframe(df_rs, width='stretch', hide_index=True)
         st.download_button("⬇️ CSV", df_rs.to_csv(index=False).encode(), "restock.csv", "text/csv")
 
 
@@ -2243,7 +2243,7 @@ def show_etl_status():
         st.error(f"DB помилка: {e}")
         return
 
-    now = _dt.datetime.utcnow().date()
+    now = _dt.datetime.now(_dt.timezone.utc).date()
     data = []
     for name, table, (cnt, last), freq in modules:
         if cnt and cnt > 0:
@@ -2262,7 +2262,7 @@ def show_etl_status():
                          "Останнє оновлення": "—", "Частота": freq, "Статус": "⏳ Немає даних"})
 
     import pandas as _pd
-    st.dataframe(_pd.DataFrame(data), use_container_width=True, hide_index=True)
+    st.dataframe(_pd.DataFrame(data), width='stretch', hide_index=True)
 
 
 def show_about():
@@ -2385,7 +2385,7 @@ def show_overview(df_filtered, t, selected_date):
         if not critical.empty:
             st.error(f"🔴 **{len(critical)} SKU** закінчаться за **<14 днів**")
             cols_show = [c for c in ['SKU','Available','Velocity','days_left'] if c in critical.columns]
-            st.dataframe(critical[cols_show].head(10), use_container_width=True, hide_index=True)
+            st.dataframe(critical[cols_show].head(10), width='stretch', hide_index=True)
         if not warning.empty:
             st.warning(f"🟡 **{len(warning)} SKU** — залишилось 14–30 днів")
         if critical.empty and warning.empty:
@@ -2401,7 +2401,7 @@ def show_overview(df_filtered, t, selected_date):
     cols_top = [c for c in ['SKU','Product Name','Available','Price','Stock Value','Store Name'] if c in top_sku.columns]
     st.dataframe(
         top_sku[cols_top].style.format({'Price': '${:.2f}', 'Stock Value': '${:,.0f}'}),
-        use_container_width=True, hide_index=True
+        width='stretch', hide_index=True
     )
 
     st.markdown("---")
@@ -2416,7 +2416,7 @@ def show_overview(df_filtered, t, selected_date):
         fig = px.treemap(dm, path=path, values='Stock Value',
                          color='Stock Value', color_continuous_scale='RdYlGn_r', height=420)
         fig.update_layout(margin=dict(l=0, r=0, t=10, b=0))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     # ── AI CHAT ──
     ctx_overview = f"""Inventory Overview:
@@ -3087,7 +3087,7 @@ _lbl_reports, _lbl_tools_sep = _nav_labels.get(lang, _nav_labels["UA"])
 main_nav = [
     "🏠 Overview",
     "📈 Sales & Traffic",
-    "🏦 Settlements (Payouts)",
+    "💰 Фінанси (Settlements)",
     "💰 Inventory Value (CFO)",
     "🛒 Orders Analytics",
     "📦 Склад (Inventory)",
@@ -3143,7 +3143,7 @@ report_choice = st.session_state.report_choice
 # ── ROUTING ──
 if   report_choice == "🏠 Overview":                show_overview(df_filtered, t, selected_date)
 elif report_choice == "📈 Sales & Traffic":          show_sales_traffic(t)
-elif report_choice == "🏦 Settlements (Payouts)":   show_settlements(t)
+elif report_choice == "💰 Фінанси (Settlements)":   show_settlements(t)
 elif report_choice == "💰 Inventory Value (CFO)":   show_inventory_finance(df_filtered, t)
 elif report_choice == "🛒 Orders Analytics":         show_orders(t)
 elif report_choice == "📦 Склад (Inventory)":        show_inventory_unified()
