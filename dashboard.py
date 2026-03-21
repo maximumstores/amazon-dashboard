@@ -2763,9 +2763,29 @@ def show_settlements(t):
 
     # ── TAB 6: Finance Events ──
     with tabs[5]:
-        df_fe = _fin_load('finance_events', date_col='posted_date')
+        # Finance events — фільтруємо по даті прямо в SQL (там 1M+ рядків)
+        try:
+            engine = get_engine()
+            with engine.connect() as conn:
+                df_fe = pd.read_sql(text(f'''
+                    SELECT * FROM finance_events
+                    WHERE posted_date >= :d1 AND posted_date <= :d2
+                    ORDER BY posted_date DESC
+                    LIMIT 10000
+                '''), conn, params={"d1": str(date_range[0]), "d2": str(date_range[1])})
+        except Exception:
+            df_fe = pd.DataFrame()
         if df_fe.empty:
-            df_fe = _fin_load('finance_event_groups', date_col='fund_transfer_date')
+            try:
+                engine = get_engine()
+                with engine.connect() as conn:
+                    df_fe = pd.read_sql(text(f'''
+                        SELECT * FROM finance_event_groups
+                        WHERE fund_transfer_date >= :d1 AND fund_transfer_date <= :d2
+                        ORDER BY fund_transfer_date DESC LIMIT 5000
+                    '''), conn, params={"d1": str(date_range[0]), "d2": str(date_range[1])})
+            except Exception:
+                df_fe = pd.DataFrame()
         if df_fe.empty:
             st.info("⏳ Таблиці finance_events / finance_event_groups порожні або ще не завантажені")
         else:
