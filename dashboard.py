@@ -2217,9 +2217,6 @@ def show_inventory_unified():
 
     # ── Hero Card ──
     val_color = "#4CAF50" if total_value > 0 else "#888"
-    uns_span = (f'<span style="background:#2b1a1a;border:1px solid #4a2d2d;'
-                f'border-radius:6px;padding:6px 12px;font-size:13px">'
-                f'❌ Unsellable <b style="color:#F44336">{total_uns}</b></span>') if total_uns > 0 else ""
     st.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border:1px solid #2d2d4a;
             border-radius:12px;padding:20px 28px;margin-bottom:16px;
@@ -2231,23 +2228,22 @@ def show_inventory_unified():
     <div style="font-size:48px;font-weight:900;color:{val_color};font-family:monospace;line-height:1">
       {_fmt(total_value)}
     </div>
-    <div style="font-size:12px;color:#666;margin-top:6px">{total_sku} SKU · {total_avail:,} штук</div>
+    <div style="font-size:12px;color:#666;margin-top:6px">{total_sku} SKU &nbsp;·&nbsp; {total_avail:,} штук</div>
   </div>
-  <div style="flex:1;min-width:200px">
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
-        ✅ Available <b style="color:#4CAF50">{total_avail:,}</b>
-      </span>
-      <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
-        🚚 Inbound <b style="color:#5B9BD5">{total_inb:,}</b>
-      </span>
-      <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
-        🔒 Reserved <b style="color:#FFC107">{total_res:,}</b>
-      </span>
-      {uns_span}
-    </div>
+  <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+      ✅ Available <b style="color:#4CAF50">{total_avail:,}</b>
+    </span>
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+      🚚 Inbound <b style="color:#5B9BD5">{total_inb:,}</b>
+    </span>
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      🔒 Reserved <b style="color:#FFC107">{total_res:,}</b>
+    </span>
   </div>
 </div>""", unsafe_allow_html=True)
+    if total_uns > 0:
+        st.error(f"❌ Unsellable: **{total_uns}** одиниць — перевір причину в Seller Central")
 
     # ── Алерти ──
     if low_stock_cnt > 0:
@@ -3831,4 +3827,4 @@ elif report_choice == "👑 User Management":          show_admin_panel()
 elif report_choice == "ℹ️ Про додаток":              show_about()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍") 
+st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
