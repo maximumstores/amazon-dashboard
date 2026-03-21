@@ -2733,7 +2733,10 @@ def show_settlements(t):
         with engine.connect() as conn:
             fe_main = pd.read_sql(text("""
                 SELECT
-                    SUM(CASE WHEN event_type = 'Shipment' AND charge_type = 'Principal'
+                    -- Gross БЕЗ Tax (Tax збирає Amazon для держави, не наші гроші)
+                    SUM(CASE WHEN event_type = 'Shipment'
+                         AND charge_type = 'Principal'
+                         AND COALESCE(charge_type,'') != 'Tax'
                         THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS gross_sales,
                     SUM(CASE WHEN event_type = 'Refund' AND charge_type = 'Principal'
                         THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS refunds,
@@ -2741,6 +2744,7 @@ def show_settlements(t):
                         THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS fees,
                     SUM(CASE WHEN event_type = 'ShipmentPromo'
                         THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS promos,
+                    -- Adjustments: компенсації Amazon (lost/damaged)
                     SUM(CASE WHEN event_type = 'Adjustment'
                         THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS adjustments,
                     SUM(CASE WHEN event_type = 'RefundFee'
@@ -2759,7 +2763,7 @@ def show_settlements(t):
     adjustments = float(fe_main['adjustments']  or 0)
     refund_fees = float(fe_main['refund_fees']  or 0)
     rows        = int(fe_main['total_rows']     or 0)
-    net         = gross + refs + fees + promos + adjustments + refund_fees
+    net         = gross + refs + fees + promos + adjustments  # без refund_fees (вже в fees)
 
     # orders з settlements
     orders = 0
@@ -2819,18 +2823,17 @@ def show_settlements(t):
     # ── WATERFALL P&L ──
     st.markdown("---")
     st.markdown("### 📊 P&L Waterfall")
-    labels  = ["Gross Sales", "Amazon Fees", "Refunds", "Promotions", "Adjustments", "Refund Fees", "Net Payout"]
-    values  = [gross, fees, refs, promos, adjustments, refund_fees, net]
-    measure = ["absolute","relative","relative","relative","relative","relative","total"]
+    labels  = ["Gross Sales", "Amazon Fees", "Refunds", "Promotions", "Adjustments", "Net Payout"]
+    values  = [gross, fees, refs, promos, adjustments, net]
+    measure = ["absolute","relative","relative","relative","relative","total"]
 
     _hints = [
-        "Всі продажі до відрахувань<br>Item Price × Quantity",
-        "FBA Fulfillment Fee<br>Referral Fee (комісія Amazon)<br>Storage Fee та інші",
+        "Продажі БЕЗ Tax<br>event_type=Shipment, charge_type=Principal<br>(Tax не наші гроші — Amazon перераховує державі)",
+        "FBA Fulfillment Fee<br>Referral Fee (комісія Amazon)<br>+ RefundFee",
         "Повернення коштів покупцям<br>Refund Principal",
         "Купони та знижки<br>Lightning Deals, Promotions",
-        "Компенсації від Amazon<br>Lost/Damaged на складі<br>REVERSAL_REIMBURSEMENT",
-        "Повернення комісій при рефандах<br>RefundFee credit від Amazon",
-        "Чиста виплата на рахунок<br>Gross − Fees − Refunds − Promos<br>+ Adjustments + Refund Fees",
+        "Компенсації від Amazon<br>Lost/Damaged на складі<br>REVERSAL_REIMBURSEMENT · +$44K",
+        "Чиста виплата<br>Gross − Fees − Refunds − Promos + Adjustments<br>Маржа ~54.5%",
     ]
 
     fig_wf = go.Figure(go.Waterfall(
