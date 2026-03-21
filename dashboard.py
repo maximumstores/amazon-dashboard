@@ -1335,8 +1335,6 @@ def show_reviews(t):
 
     has_domain = 'domain' in df_all.columns
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader(t["rev_filters"])
 
     selected_domains = []
     if has_domain:
@@ -1367,7 +1365,6 @@ def show_reviews(t):
     star_filter = st.sidebar.multiselect(t["rev_star_filter"], [5, 4, 3, 2, 1], default=[], key="rev_stars")
 
     if selected_asin and has_domain:
-        st.sidebar.markdown("---")
         st.sidebar.markdown("**🔗 Відкрити на Amazon:**")
         asin_domains = sorted(df_all[df_all['asin'] == selected_asin]['domain'].dropna().unique().tolist())
         for dom in asin_domains:
@@ -2144,8 +2141,6 @@ def show_inventory_unified():
     uns_c   = col_map.get('unsellable')
 
     # ── Sidebar фільтри ──
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📦 Фільтри складу")
     search_sku  = st.sidebar.text_input("🔍 SKU", "", key="inv_sku")
     search_asin = st.sidebar.text_input("🔍 ASIN", "", key="inv_asin")
 
@@ -2600,7 +2595,6 @@ def show_sales_traffic(t):
     df_st = load_sales_traffic()
     if df_st.empty:
         st.warning("⚠️ No Sales & Traffic data found."); return
-    st.sidebar.markdown("---"); st.sidebar.subheader(t["st_filters"])
     min_date = df_st['report_date'].min().date()
     max_date = df_st['report_date'].max().date()
     date_range = st.sidebar.date_input(t["st_date_range"],
@@ -2700,8 +2694,6 @@ def show_settlements(t):
     st.caption("Виплати, комісії, компенсації — реальні дані SP-API")
 
     # ── Sidebar фільтри ──
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("💰 Фільтри")
 
     engine = get_engine()
 
@@ -3134,8 +3126,6 @@ def show_returns(t=None):
     status_c = col_map.get('status', None)
 
     # ── sidebar фільтри ──
-    st.sidebar.markdown("---")
-    st.sidebar.subheader(t.get("ret_filters", "📦 Фільтри"))
 
     try:
         with engine.connect() as conn:
@@ -3335,7 +3325,6 @@ def show_orders(t=None):
     if t is None: t = translations.get("UA", {})
     df_orders = load_orders()
     if df_orders.empty: st.warning("⚠️ No orders data."); return
-    st.sidebar.markdown("---"); st.sidebar.subheader("🛒 Orders Filters")
     min_date = df_orders['Order Date'].min().date(); max_date = df_orders['Order Date'].max().date()
     date_range = st.sidebar.date_input(t["st_date_range"],value=(max_date-dt.timedelta(days=7),max_date),min_value=min_date,max_value=max_date)
     df_f = df_orders[(df_orders['Order Date'].dt.date>=date_range[0])&(df_orders['Order Date'].dt.date<=date_range[1])] if len(date_range)==2 else df_orders
