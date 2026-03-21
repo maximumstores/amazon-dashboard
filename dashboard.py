@@ -2644,11 +2644,12 @@ def show_settlements(t):
     measure = ["absolute","relative","relative","relative","relative","relative","total"]
     fig_wf = go.Figure(go.Waterfall(
         orientation="v", measure=measure, x=labels, y=values,
-        text=[f"${v:,.0f}" for v in values], textposition="outside",
-        connector={"line": {"color": "rgba(128,128,128,0.3)"}},
+        base=0,
+        text=[f"${abs(v):,.0f}" for v in values], textposition="outside",
+        connector={"line": {"color": "rgba(128,128,128,0.3)", "width": 1}},
         increasing={"marker": {"color": "#4CAF50"}},
         decreasing={"marker": {"color": "#F44336"}},
-        totals={"marker":    {"color": "#2196F3"}},
+        totals={"marker":    {"color": "#4472C4"}},
     ))
     fig_wf.update_layout(
         height=420, margin=dict(l=0,r=0,t=30,b=0),
