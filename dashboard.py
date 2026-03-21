@@ -3379,28 +3379,107 @@ def show_orders(t=None):
     if t is None: t = translations.get("UA", {})
     df_orders = load_orders()
     if df_orders.empty: st.warning("⚠️ No orders data."); return
-    min_date = df_orders['Order Date'].min().date(); max_date = df_orders['Order Date'].max().date()
-    date_range = st.sidebar.date_input(t["st_date_range"],value=(max_date-dt.timedelta(days=7),max_date),min_value=min_date,max_value=max_date)
-    df_f = df_orders[(df_orders['Order Date'].dt.date>=date_range[0])&(df_orders['Order Date'].dt.date<=date_range[1])] if len(date_range)==2 else df_orders
-    c1,c2,c3 = st.columns(3)
-    c1.metric("📦 Orders",df_f['Order ID'].nunique()); c2.metric("💰 Revenue",f"${df_f['Total Price'].sum():,.2f}"); c3.metric("📦 Items",int(df_f['Quantity'].sum()))
-    st.markdown("#### 📈 Daily Revenue")
+
+    min_date = df_orders['Order Date'].min().date()
+    max_date = df_orders['Order Date'].max().date()
+    date_range = st.sidebar.date_input(
+        t["st_date_range"], value=(min_date, max_date),
+        min_value=min_date, max_value=max_date, key="ord_date"
+    )
+    df_f = df_orders[
+        (df_orders['Order Date'].dt.date >= date_range[0]) &
+        (df_orders['Order Date'].dt.date <= date_range[1])
+    ] if len(date_range) == 2 else df_orders
+
+    total_orders = df_f['Order ID'].nunique()
+    total_rev    = df_f['Total Price'].sum()
+    total_items  = int(df_f['Quantity'].sum())
+    avg_order    = total_rev / total_orders if total_orders > 0 else 0
+    days_span    = max((df_f['Order Date'].max() - df_f['Order Date'].min()).days, 1)
+    rev_per_day  = total_rev / days_span
+    d1 = str(date_range[0]) if len(date_range)==2 else str(min_date)
+    d2 = str(date_range[1]) if len(date_range)==2 else str(max_date)
+
+    # ── Hero Card ──
+    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a2b1e,#0d1f12);border:1px solid #2d4a30;
+            border-radius:12px;padding:20px 28px;margin-bottom:16px;
+            display:flex;align-items:center;gap:32px;flex-wrap:wrap">
+  <div>
+    <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+      🛒 Виручка за період
+    </div>
+    <div style="font-size:48px;font-weight:900;color:#4CAF50;font-family:monospace;line-height:1">
+      {_fmt(total_rev)}
+    </div>
+    <div style="font-size:12px;color:#666;margin-top:6px">{d1} → {d2}</div>
+  </div>
+  <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+      📦 Замовлень <b style="color:#4CAF50">{total_orders:,}</b>
+    </span>
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+      📋 Одиниць <b style="color:#5B9BD5">{total_items:,}</b>
+    </span>
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      💵 Avg Order <b style="color:#FFC107">${avg_order:.2f}</b>
+    </span>
+    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px">
+      📈 /день <b style="color:#AB47BC">{_fmt(rev_per_day)}</b>
+    </span>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    # ── Інсайти ──
+    _icols = st.columns(3)
+    with _icols[0]: insight_card("🛒", "Середній чек",
+        f"<b>${avg_order:.2f}</b> — +10% AOV = +{_fmt(total_rev*0.1)}", "#1a1a2e")
+    with _icols[1]: insight_card("📈", "Дохід/день",
+        f"<b>{_fmt(rev_per_day)}</b>/день · прогноз місяць: <b>{_fmt(rev_per_day*30)}</b>", "#1a2b1e")
+    top_sku_rev = df_f.groupby('SKU')['Total Price'].sum().nlargest(1)
+    if not top_sku_rev.empty:
+        pct = top_sku_rev.iloc[0]/total_rev*100 if total_rev > 0 else 0
+        with _icols[2]: insight_card("⚡", "Топ SKU",
+            f"<b>{top_sku_rev.index[0]}</b> = {_fmt(top_sku_rev.iloc[0])} ({pct:.0f}%)", "#2b1a00")
+
+    st.markdown("---")
+    insights_orders(df_f)
+
+    st.markdown("---")
+    # ── Тренд ──
+    st.markdown("#### 📈 Тренд виручки по днях")
     daily = df_f.groupby(df_f['Order Date'].dt.date)['Total Price'].sum().reset_index()
-    fig = px.bar(daily,x='Order Date',y='Total Price',title="Daily Revenue")
+    daily.columns = ['Date', 'Revenue']
+    fig = go.Figure(go.Bar(
+        x=daily['Date'], y=daily['Revenue'],
+        marker_color='#4CAF50', opacity=0.85,
+        text=[_fmt(v) for v in daily['Revenue']], textposition='outside'
+    ))
+    fig.update_layout(height=320, margin=dict(l=0,r=0,t=10,b=0),
+                      yaxis=dict(tickprefix="$"))
     st.plotly_chart(fig, width="stretch")
-    col1,col2 = st.columns(2)
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
     with col1:
-        st.markdown("#### 🏆 Top 10 SKU by Revenue")
-        ts = df_f.groupby('SKU')['Total Price'].sum().nlargest(10).reset_index()
-        fig2 = px.bar(ts,x='Total Price',y='SKU',orientation='h'); fig2.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.markdown("#### 🏆 Топ 15 SKU за виручкою")
+        ts = df_f.groupby('SKU')['Total Price'].sum().nlargest(15).reset_index()
+        fig2 = px.bar(ts, x='Total Price', y='SKU', orientation='h',
+                      color='Total Price', color_continuous_scale='Greens',
+                      text=[_fmt(v) for v in ts['Total Price']])
+        fig2.update_layout(yaxis={'categoryorder':'total ascending'}, height=450)
+        fig2.update_traces(textposition='outside')
         st.plotly_chart(fig2, width="stretch")
     with col2:
         if 'Order Status' in df_f.columns:
             st.markdown("#### 📊 Order Status")
-            sc = df_f['Order Status'].value_counts().reset_index(); sc.columns=['Status','Count']
-            fig3 = px.pie(sc,values='Count',names='Status',hole=0.4); st.plotly_chart(fig3, width="stretch")
-    insights_orders(df_f)
-    ctx_ord = f"""Orders: {df_f['Order ID'].nunique()} замовлень | Revenue ${df_f['Total Price'].sum():,.2f}"""
+            sc = df_f['Order Status'].value_counts().reset_index()
+            sc.columns = ['Status', 'Count']
+            fig3 = px.pie(sc, values='Count', names='Status', hole=0.4)
+            fig3.update_layout(height=450)
+            st.plotly_chart(fig3, width="stretch")
+
+    ctx_ord = f"""Orders: {total_orders:,} замовлень | Revenue {_fmt(total_rev)} | Avg {avg_order:.2f} | /день {_fmt(rev_per_day)}"""
     show_ai_chat(ctx_ord, [
         "Топ 5 SKU за кількістю замовлень за останні 30 днів",
         "Порівняй обсяг замовлень: цей тиждень vs минулий",
