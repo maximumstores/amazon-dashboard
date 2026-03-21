@@ -2655,10 +2655,23 @@ def show_settlements(t):
     labels  = ["Gross Sales", "Amazon Fees", "Refunds", "Promotions", "Adjustments", "Refund Fees", "Net Payout"]
     values  = [gross, fees, refs, promos, adjustments, refund_fees, net]
     measure = ["absolute","relative","relative","relative","relative","relative","total"]
+
+    _hints = [
+        "Всі продажі до відрахувань<br>Item Price × Quantity",
+        "FBA Fulfillment Fee<br>Referral Fee (комісія Amazon)<br>Storage Fee та інші",
+        "Повернення коштів покупцям<br>Refund Principal",
+        "Купони та знижки<br>Lightning Deals, Promotions",
+        "Компенсації від Amazon<br>Lost/Damaged на складі<br>REVERSAL_REIMBURSEMENT",
+        "Повернення комісій при рефандах<br>RefundFee credit від Amazon",
+        "Чиста виплата на рахунок<br>Gross − Fees − Refunds − Promos<br>+ Adjustments + Refund Fees",
+    ]
+
     fig_wf = go.Figure(go.Waterfall(
         orientation="v", measure=measure, x=labels, y=values,
         base=0,
         text=[f"${abs(v):,.0f}" for v in values], textposition="outside",
+        customdata=_hints,
+        hovertemplate="<b>%{x}</b><br>%{customdata}<br><br><b>Сума: $%{y:,.0f}</b><extra></extra>",
         connector={"line": {"color": "rgba(128,128,128,0.3)", "width": 1}},
         increasing={"marker": {"color": "#4CAF50"}},
         decreasing={"marker": {"color": "#F44336"}},
