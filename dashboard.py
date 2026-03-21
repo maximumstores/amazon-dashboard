@@ -2246,7 +2246,7 @@ def show_inventory_unified():
       <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
         🔒 Reserved <b style="color:#FFC107">{total_res:,}</b>
       </span>
-      {"<span style='background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px'>❌ Unsellable <b style="color:#F44336">" + str(total_uns) + "</b></span>" if total_uns > 0 else ""}
+      {f'<span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">❌ Unsellable <b style="color:#F44336">{total_uns}</b></span>' if total_uns > 0 else ""}
     </div>
   </div>
 </div>""", unsafe_allow_html=True)
