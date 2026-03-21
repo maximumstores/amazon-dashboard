@@ -2584,8 +2584,10 @@ def show_settlements(t):
                     COALESCE((
                         SELECT SUM(NULLIF(original_total_amount,'')::numeric)
                         FROM finance_event_groups
-                        WHERE fund_transfer_date::date >= CAST(:d1 AS date)
-                          AND fund_transfer_date::date <= CAST(:d2 AS date)
+                        WHERE fund_transfer_date >= :d1
+                          AND fund_transfer_date <= :d2
+                          AND fund_transfer_date != ''
+                          AND fund_transfer_date IS NOT NULL
                     ), 0)                                                     AS net_payout,
 
                     -- Gross Sales = Principal із Shipment events
@@ -3467,4 +3469,4 @@ elif report_choice == "👑 User Management":          show_admin_panel()
 elif report_choice == "ℹ️ Про додаток":              show_about()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍") 
+st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
