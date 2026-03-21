@@ -2795,15 +2795,12 @@ def show_settlements(t):
         try:
             with engine.connect() as conn:
                 grp = pd.read_sql(text("""
-                    SELECT fund_transfer_date, processing_start_date,
-                           processing_end_date,
-                           original_total::numeric  AS total,
-                           converted_total::numeric AS converted,
-                           currency_code,
-                           fund_transfer_state
-                    FROM finance_event_groups
+                    SELECT * FROM finance_event_groups
                     ORDER BY fund_transfer_date DESC
                 """), conn)
+                for _c in grp.columns:
+                    if any(x in _c.lower() for x in ['total','amount','converted']):
+                        grp[_c] = pd.to_numeric(grp[_c].replace('', None), errors='coerce').fillna(0)
             if not grp.empty:
                 c1, c2, c3 = st.columns(3)
                 # знаходимо колонку з total
