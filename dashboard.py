@@ -2676,7 +2676,7 @@ def show_settlements(t):
                            SUM(NULLIF(amount,'')::numeric) AS total
                     FROM settlements
                     WHERE posted_date >= :d1 AND posted_date <= :d2
-                    GROUP BY 1 ORDER BY ABS(SUM(amount::numeric)) DESC
+                    GROUP BY 1 ORDER BY ABS(SUM(NULLIF(amount,'')::numeric)) DESC
                 """), conn, params={"d1": d1, "d2": d2})
             st.dataframe(
                 by_tt.style.format({'total': '${:,.2f}'}),
@@ -2690,7 +2690,7 @@ def show_settlements(t):
             with engine.connect() as conn:
                 df_raw = pd.read_sql(text("""
                     SELECT posted_date, transaction_type, amount_type,
-                           order_id, sku, amount, currency, marketplace_name
+                           order_id, sku, amount, currency
                     FROM settlements
                     WHERE posted_date >= :d1 AND posted_date <= :d2
                     ORDER BY posted_date DESC LIMIT 500
@@ -2711,10 +2711,10 @@ def show_settlements(t):
                 ev_types = pd.read_sql(text("""
                     SELECT event_type,
                            COUNT(*)           AS cnt,
-                           SUM(amount::numeric) AS total
+                           SUM(NULLIF(amount,'')::numeric) AS total
                     FROM finance_events
                     WHERE posted_date >= :d1 AND posted_date <= :d2
-                    GROUP BY 1 ORDER BY ABS(SUM(amount::numeric)) DESC
+                    GROUP BY 1 ORDER BY ABS(SUM(NULLIF(amount,'')::numeric)) DESC
                     LIMIT 30
                 """), conn, params={"d1": d1, "d2": d2})
 
@@ -2741,11 +2741,11 @@ def show_settlements(t):
                 charges = pd.read_sql(text("""
                     SELECT charge_type,
                            COUNT(*)             AS cnt,
-                           SUM(amount::numeric) AS total
+                           SUM(NULLIF(amount,'')::numeric) AS total
                     FROM finance_events
                     WHERE posted_date >= :d1 AND posted_date <= :d2
                       AND charge_type IS NOT NULL AND charge_type != ''
-                    GROUP BY 1 ORDER BY SUM(amount::numeric) ASC
+                    GROUP BY 1 ORDER BY SUM(NULLIF(amount,'')::numeric) ASC
                     LIMIT 20
                 """), conn, params={"d1": d1, "d2": d2})
 
@@ -2776,11 +2776,11 @@ def show_settlements(t):
                 by_sku = pd.read_sql(text("""
                     SELECT seller_sku AS sku,
                            COUNT(*)             AS cnt,
-                           SUM(amount::numeric) AS total
+                           SUM(NULLIF(amount,'')::numeric) AS total
                     FROM finance_events
                     WHERE posted_date >= :d1 AND posted_date <= :d2
                       AND seller_sku IS NOT NULL AND seller_sku != ''
-                    GROUP BY 1 ORDER BY SUM(amount::numeric) ASC
+                    GROUP BY 1 ORDER BY SUM(NULLIF(amount,'')::numeric) ASC
                     LIMIT 20
                 """), conn, params={"d1": d1, "d2": d2})
             if not by_sku.empty:
@@ -2806,13 +2806,14 @@ def show_settlements(t):
                 """), conn)
             if not grp.empty:
                 c1, c2, c3 = st.columns(3)
-                c1.metric("💰 Всього виплат",    f"${grp['total'].sum():,.0f}")
-                c2.metric("📋 Periods",           f"{len(grp)}")
-                c3.metric("💱 Остання виплата",  f"${grp['total'].iloc[0]:,.0f}" if len(grp) else "—")
-                st.dataframe(
-                    grp.style.format({'total': '${:,.2f}', 'converted': '${:,.2f}'}),
-                    width="stretch", hide_index=True
-                )
+                # знаходимо колонку з total
+                _tot_col = next((c for c in grp.columns if 'total' in c.lower()), None)
+                _tot_sum = grp[_tot_col].sum() if _tot_col else 0
+                _tot_last = grp[_tot_col].iloc[0] if (_tot_col and len(grp)) else 0
+                c1.metric("💰 Всього виплат",   f"${_tot_sum:,.0f}")
+                c2.metric("📋 Periods",          f"{len(grp)}")
+                c3.metric("💱 Остання виплата", f"${_tot_last:,.0f}")
+                st.dataframe(grp, width="stretch", hide_index=True)
             else:
                 st.info("Даних немає")
         except Exception as e:
