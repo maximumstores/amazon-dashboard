@@ -2718,7 +2718,7 @@ def show_settlements(t):
         max_date = dt.date.today()
 
     date_range = st.sidebar.date_input(
-        "📅 Діапазон:", value=(max_date - dt.timedelta(days=30), max_date),
+        "📅 Діапазон:", value=(min_date, max_date),
         min_value=min_date, max_value=max_date, key="fin_date"
     )
     if len(date_range) != 2:
