@@ -2709,12 +2709,10 @@ def show_settlements(t):
         min_date = dt.date(2024, 1, 1)
         max_date = dt.date.today()
 
-    date_range = st.sidebar.date_input(
-        "📅 Діапазон:", value=(min_date, max_date),
-        min_value=min_date, max_value=max_date, key="fin_date"
-    )
-    if len(date_range) != 2:
-        st.warning("Оберіть діапазон дат"); return
+    # Беремо date range з глобального sidebar (вже відрендерено вище)
+    date_range = st.session_state.get("fin_date", (min_date, max_date))
+    if not date_range or len(date_range) != 2:
+        date_range = (min_date, max_date)
     d1, d2 = str(date_range[0]), str(date_range[1])
 
     # ══════════════════════════════════════════
@@ -3717,23 +3715,40 @@ if not df.empty:
     df['Stock Value'] = df['Available'] * df['Price']
     df['created_at']  = pd.to_datetime(df['created_at'])
     df['date']        = df['created_at'].dt.date
-    # Фільтри інвентарю — тільки для сторінок де потрібно
-    _inv_pages = {"🏠 Overview", "📦 Склад (Inventory)"}
-    _cur = st.session_state.get("report_choice", "🏠 Overview")
-    if _cur in _inv_pages:
-        st.sidebar.header(t["sidebar_title"])
-        dates         = sorted(df['date'].unique(), reverse=True)
-        selected_date = st.sidebar.selectbox(t["date_label"], dates) if dates else None
-        stores        = [t["all_stores"]] + list(df['Store Name'].unique()) if 'Store Name' in df.columns else [t["all_stores"]]
-        selected_store = st.sidebar.selectbox(t["store_label"], stores)
-    else:
-        selected_date  = df['date'].max() if not df.empty else None
-        selected_store = t["all_stores"]
-    df_filtered    = df[df['date']==selected_date] if selected_date else df
-    if selected_store != t["all_stores"]:
+    dates  = sorted(df['date'].unique(), reverse=True)
+    stores = [t["all_stores"]] + list(df['Store Name'].unique()) if 'Store Name' in df.columns else [t["all_stores"]]
+else:
+    dates  = []
+    stores = [t.get("all_stores","Всі")]
+
+# ── Всі фільтри разом в одному місці ──
+_cur_page = st.session_state.get("report_choice", "🏠 Overview")
+st.sidebar.header(t["sidebar_title"])
+
+# 📅 Дата і 🏪 Магазин — для інвентарних сторінок
+selected_date  = st.sidebar.selectbox(t["date_label"], dates, key="sel_date") if dates else None
+selected_store = st.sidebar.selectbox(t["store_label"], stores, key="sel_store")
+
+# 📅 Діапазон — для фінансів (завжди показуємо, але використовується тільки в Фінанси)
+try:
+    _eng = get_engine()
+    with _eng.connect() as _c:
+        _b = pd.read_sql(text("SELECT MIN(posted_date)::date as mn, MAX(posted_date)::date as mx FROM settlements"), _c).iloc[0]
+    _fin_min, _fin_max = _b['mn'], _b['mx']
+except Exception:
+    _fin_min, _fin_max = dt.date(2024,1,1), dt.date.today()
+st.sidebar.date_input(
+    "📅 Діапазон:", value=(_fin_min, _fin_max),
+    min_value=_fin_min, max_value=_fin_max, key="fin_date"
+)
+
+if not df.empty:
+    df_filtered = df[df['date']==selected_date] if selected_date else df
+    if selected_store != t.get("all_stores","Всі"):
         df_filtered = df_filtered[df_filtered['Store Name']==selected_store]
 else:
-    df_filtered = pd.DataFrame(); selected_date = None
+    df_filtered = pd.DataFrame()
+    selected_date = None
 
 # ── NAVIGATION ──
 st.sidebar.markdown("---")
