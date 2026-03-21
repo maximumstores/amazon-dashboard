@@ -2664,13 +2664,56 @@ def show_sales_traffic(t):
     if df_filtered.empty:
         st.warning("No data for selected period"); return
     st.markdown(f"### {t['sales_traffic_title']}")
-    ts = int(df_filtered['sessions'].sum()); tpv = int(df_filtered['page_views'].sum())
-    tu = int(df_filtered['units_ordered'].sum()); tr = df_filtered['ordered_product_sales'].sum()
-    ac = tu/ts*100 if ts>0 else 0; ab = df_filtered['buy_box_percentage'].mean()
-    c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.metric(t["st_sessions"],f"{ts:,}"); c2.metric(t["st_page_views"],f"{tpv:,}")
-    c3.metric(t["st_units"],f"{tu:,}"); c4.metric(t["st_revenue"],f"${tr:,.2f}")
-    c5.metric(t["st_conversion"],f"{ac:.2f}%"); c6.metric(t["st_buy_box"],f"{ab:.1f}%")
+
+    ts  = int(df_filtered['sessions'].sum())
+    tpv = int(df_filtered['page_views'].sum())
+    tu  = int(df_filtered['units_ordered'].sum())
+    tr  = df_filtered['ordered_product_sales'].sum()
+    ac  = tu/ts*100 if ts>0 else 0
+    ab  = df_filtered['buy_box_percentage'].mean()
+    d1  = str(date_range[0]) if len(date_range)==2 else str(min_date)
+    d2  = str(date_range[1]) if len(date_range)==2 else str(max_date)
+
+    # ── Hero Card ──
+    rev_color = "#4CAF50" if tr > 0 else "#888"
+    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border:1px solid #2d2d4a;
+            border-radius:12px;padding:20px 28px;margin-bottom:16px;
+            display:flex;align-items:center;gap:32px;flex-wrap:wrap">
+  <div>
+    <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+      📈 Дохід за період
+    </div>
+    <div style="font-size:48px;font-weight:900;color:{rev_color};font-family:monospace;line-height:1">
+      {_fmt(tr)}
+    </div>
+    <div style="font-size:12px;color:#666;margin-top:6px">{d1} → {d2}</div>
+  </div>
+  <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+      👁 Sessions <b style="color:#4CAF50">{ts:,}</b>
+    </span>
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+      🛒 Units <b style="color:#5B9BD5">{tu:,}</b>
+    </span>
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      📊 CVR <b style="color:#FFC107">{ac:.2f}%</b>
+    </span>
+    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px">
+      🏆 Buy Box <b style="color:#AB47BC">{ab:.1f}%</b>
+    </span>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    # ── Інсайти ──
+    asin_col = 'child_asin' if 'child_asin' in df_filtered.columns else df_filtered.columns[0]
+    as_ = df_filtered.groupby(asin_col).agg(
+        {'sessions':'sum','units_ordered':'sum','ordered_product_sales':'sum','buy_box_percentage':'mean'}
+    ).reset_index()
+    as_.columns = ['ASIN','Sessions','Units','Revenue','Buy Box %']
+    as_['Conv %'] = (as_['Units']/as_['Sessions']*100).fillna(0)
+    insights_sales_traffic(df_filtered, as_)
+
     st.markdown("---"); st.markdown(t["st_daily_trends"])
     daily = df_filtered.groupby(df_filtered['report_date'].dt.date).agg(
         {'sessions':'sum','page_views':'sum','units_ordered':'sum','ordered_product_sales':'sum'}).reset_index()
@@ -2715,7 +2758,6 @@ def show_sales_traffic(t):
     st.dataframe(as_.sort_values('Revenue',ascending=False).style.format({'Revenue':'${:,.2f}','Conv %':'{:.2f}%','Buy Box %':'{:.1f}%'}),width="stretch",height=500)
     csv = as_.to_csv(index=False).encode('utf-8')
     st.download_button(t["st_download"], csv, "sales_traffic.csv","text/csv")
-    insights_sales_traffic(df_filtered, as_)
     ctx = f"""Sales & Traffic: Сесії {ts:,} | Дохід ${tr:,.2f} | Конверсія {ac:.2f}% | Buy Box {ab:.1f}%"""
     show_ai_chat(ctx, [
         "Який ASIN виріс найбільше за останні 7 днів?",
@@ -3263,13 +3305,39 @@ def show_returns(t=None):
     except Exception:
         pass
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric(t.get("ret_total",    "📦 Повернень"),      f"{total_ret:,}")
-    c2.metric(t.get("ret_unique_sku","📦 Унікальних SKU"), f"{unique_sku:,}")
-    c3.metric(t.get("ret_rate",     "📊 Return Rate"),     f"{rr:.1f}%")
-    c4.metric(t.get("ret_value",    "💰 Вартість"),        f"${total_val:,.0f}")
-    c5.metric(t.get("ret_avg",      "💵 Сер. вартість"),   f"${avg_val:.2f}")
-    st.caption(f"📋 {total_ret:,} повернень за {d1} → {d2}")
+    rr_color = "#4CAF50" if rr <= 3 else "#FFC107" if rr <= 8 else "#F44336"
+    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#2b1a1a,#1f0d0d);border:1px solid #4a2d2d;
+            border-radius:12px;padding:20px 28px;margin-bottom:16px;
+            display:flex;align-items:center;gap:32px;flex-wrap:wrap">
+  <div>
+    <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+      📦 Повернення за період
+    </div>
+    <div style="font-size:48px;font-weight:900;color:{rr_color};font-family:monospace;line-height:1">
+      {rr:.1f}%
+    </div>
+    <div style="font-size:12px;color:#666;margin-top:6px">{d1} → {d2} · {total_ret:,} повернень</div>
+  </div>
+  <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      📦 Всього <b style="color:#F44336">{total_ret:,}</b>
+    </span>
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+      📦 SKU <b style="color:#5B9BD5">{unique_sku:,}</b>
+    </span>
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      💰 Вартість <b style="color:#FFC107">{_fmt(total_val)}</b>
+    </span>
+    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px">
+      💵 Avg <b style="color:#AB47BC">${avg_val:.2f}</b>
+    </span>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    # ── Інсайти ──
+    insights_returns(df_f, rr)
+
     st.markdown("---")
 
     # ── Графіки ──
@@ -3346,8 +3414,6 @@ def show_returns(t=None):
         df_f.to_csv(index=False).encode('utf-8'),
         "returns.csv", "text/csv"
     )
-
-    insights_returns(df_f.rename(columns={reason_c: 'Reason', sku_c: 'SKU'}) if reason_c and sku_c else df_f, rr)
 
     ctx_ret = f"""Returns: {total_ret} повернень | Rate {rr:.1f}% | Вартість ${total_val:,.0f} | Період {d1}→{d2}"""
     show_ai_chat(ctx_ret, [
@@ -3478,6 +3544,18 @@ def show_orders(t=None):
             fig3 = px.pie(sc, values='Count', names='Status', hole=0.4)
             fig3.update_layout(height=450)
             st.plotly_chart(fig3, width="stretch")
+
+    # ── Таблиця ──
+    st.markdown("---")
+    st.markdown("#### 📋 Деталі замовлень")
+    table_cols = [c for c in ['Order Date','Order ID','SKU','Item Price','Quantity','Total Price','Order Status','Ship Country'] if c in df_f.columns]
+    st.dataframe(
+        df_f[table_cols].sort_values('Order Date', ascending=False).head(500)
+            .style.format({'Item Price':'${:.2f}','Total Price':'${:.2f}'}),
+        width="stretch", hide_index=True, height=400
+    )
+    st.caption(f"Показано {min(500,len(df_f)):,} з {len(df_f):,} замовлень")
+    st.download_button("📥 CSV", df_f[table_cols].to_csv(index=False).encode(), "orders.csv", "text/csv")
 
     ctx_ord = f"""Orders: {total_orders:,} замовлень | Revenue {_fmt(total_rev)} | Avg {avg_order:.2f} | /день {_fmt(rev_per_day)}"""
     show_ai_chat(ctx_ord, [
