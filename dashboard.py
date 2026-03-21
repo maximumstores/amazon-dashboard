@@ -2728,52 +2728,48 @@ def show_settlements(t):
     # ══════════════════════════════════════════
     # KPI з settlements
     # ══════════════════════════════════════════
+    # ── KPI з finance_events (повні дані 1.15M рядків) ──
     try:
         with engine.connect() as conn:
-            kpi = pd.read_sql(text("""
+            fe_main = pd.read_sql(text("""
                 SELECT
-                    -- Gross = всі позитивні суми
-                    SUM(CASE WHEN NULLIF(amount,'')::numeric > 0
+                    SUM(CASE WHEN event_type = 'Shipment' AND charge_type = 'Principal'
                         THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS gross_sales,
-                    -- Refunds = від'ємні refund транзакції
-                    SUM(CASE WHEN transaction_type = 'Refund'
+                    SUM(CASE WHEN event_type = 'Refund' AND charge_type = 'Principal'
                         THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS refunds,
-                    -- Fees = від'ємні не-refund суми
-                    SUM(CASE WHEN NULLIF(amount,'')::numeric < 0
-                         AND transaction_type != 'Refund'
+                    SUM(CASE WHEN event_type IN ('ShipmentFee','RefundFee')
                         THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS fees,
-                    -- Net = все разом
-                    SUM(NULLIF(amount,'')::numeric)                          AS net_payout,
-                    COUNT(DISTINCT order_id) FILTER (WHERE order_id IS NOT NULL
-                        AND order_id != '')                                   AS orders_count,
+                    SUM(CASE WHEN event_type = 'ShipmentPromo'
+                        THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS promos,
+                    SUM(CASE WHEN event_type = 'Adjustment'
+                        THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS adjustments,
+                    SUM(CASE WHEN event_type = 'RefundFee'
+                        THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS refund_fees,
                     COUNT(*)                                                  AS total_rows
-                FROM settlements
-                WHERE posted_date >= :d1 AND posted_date <= :d2
+                FROM finance_events
+                WHERE posted_date BETWEEN :d1 AND :d2
             """), conn, params={"d1": d1, "d2": d2}).iloc[0]
     except Exception as e:
-        st.error(f"Помилка завантаження settlements: {e}"); return
+        st.error(f"Помилка завантаження finance_events: {e}"); return
 
-    net    = float(kpi['net_payout']  or 0)
-    gross  = float(kpi['gross_sales'] or 0)
-    refs   = float(kpi['refunds']     or 0)
-    fees   = float(kpi['fees']        or 0)
-    orders = int(kpi['orders_count']  or 0)
-    rows   = int(kpi['total_rows']    or 0)
+    gross       = float(fe_main['gross_sales']  or 0)
+    refs        = float(fe_main['refunds']      or 0)
+    fees        = float(fe_main['fees']         or 0)
+    promos      = float(fe_main['promos']       or 0)
+    adjustments = float(fe_main['adjustments']  or 0)
+    refund_fees = float(fe_main['refund_fees']  or 0)
+    rows        = int(fe_main['total_rows']     or 0)
+    net         = gross + refs + fees + promos + adjustments + refund_fees
 
-    # ── Доп. метрики з finance_events ──
-    promos = 0; adjustments = 0; refund_fees = 0
+    # orders з settlements
+    orders = 0
     try:
         with engine.connect() as conn:
-            fe_kpi = pd.read_sql(text(
-                "SELECT "
-                "SUM(CASE WHEN event_type='ShipmentPromo' THEN NULLIF(amount,'')::numeric ELSE 0 END) AS promos,"
-                "SUM(CASE WHEN event_type='Adjustment'    THEN NULLIF(amount,'')::numeric ELSE 0 END) AS adjustments,"
-                "SUM(CASE WHEN event_type='RefundFee'     THEN NULLIF(amount,'')::numeric ELSE 0 END) AS refund_fees "
-                "FROM finance_events WHERE posted_date BETWEEN :d1 AND :d2"
+            ord_r = pd.read_sql(text(
+                "SELECT COUNT(DISTINCT order_id) AS cnt FROM settlements "
+                "WHERE posted_date BETWEEN :d1 AND :d2 AND order_id IS NOT NULL AND order_id != ''"
             ), conn, params={"d1": d1, "d2": d2}).iloc[0]
-        promos      = float(fe_kpi["promos"]      or 0)
-        adjustments = float(fe_kpi["adjustments"] or 0)
-        refund_fees = float(fe_kpi["refund_fees"] or 0)
+            orders = int(ord_r['cnt'] or 0)
     except Exception:
         pass
 
