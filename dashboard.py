@@ -2580,14 +2580,40 @@ def show_settlements(t):
         with engine.connect() as conn:
             kpi = pd.read_sql(text("""
                 SELECT
-                    SUM(NULLIF(amount,'')::numeric)                               AS net_payout,
-                    SUM(CASE WHEN amount_type = 'ItemPrice'
-                         AND NULLIF(amount,'')::numeric > 0
-                        THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS gross_sales,
-                    SUM(CASE WHEN transaction_type = 'Refund'
-                        THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS refunds,
-                    SUM(CASE WHEN amount_type = 'ItemFees'
-                        THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS fees,
+                    -- Net Payout з finance_event_groups (реальні виплати Amazon)
+                    COALESCE((
+                        SELECT SUM(NULLIF(original_total_amount,'')::numeric)
+                        FROM finance_event_groups
+                        WHERE fund_transfer_date::date >= :d1::date
+                          AND fund_transfer_date::date <= :d2::date
+                    ), 0)                                                     AS net_payout,
+
+                    -- Gross Sales = Principal із Shipment events
+                    COALESCE((
+                        SELECT SUM(NULLIF(amount,'')::numeric)
+                        FROM finance_events
+                        WHERE event_type = 'Shipment'
+                          AND charge_type = 'Principal'
+                          AND posted_date BETWEEN :d1 AND :d2
+                    ), 0)                                                     AS gross_sales,
+
+                    -- Refunds = Principal із Refund events
+                    COALESCE((
+                        SELECT SUM(NULLIF(amount,'')::numeric)
+                        FROM finance_events
+                        WHERE event_type = 'Refund'
+                          AND charge_type = 'Principal'
+                          AND posted_date BETWEEN :d1 AND :d2
+                    ), 0)                                                     AS refunds,
+
+                    -- Всі комісії Amazon (Commission + FBA + etc)
+                    COALESCE((
+                        SELECT SUM(NULLIF(amount,'')::numeric)
+                        FROM finance_events
+                        WHERE event_type IN ('ShipmentFee', 'RefundFee')
+                          AND posted_date BETWEEN :d1 AND :d2
+                    ), 0)                                                     AS fees,
+
                     COUNT(DISTINCT order_id) FILTER (WHERE order_id IS NOT NULL
                         AND order_id != '')                                   AS orders_count,
                     COUNT(*)                                                  AS total_rows
