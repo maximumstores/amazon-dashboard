@@ -485,26 +485,18 @@ def load_orders():
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            df = pd.read_sql(text('SELECT * FROM orders ORDER BY "Order Date" DESC'), conn)
+            df = pd.read_sql(text('SELECT * FROM orders ORDER BY purchase_date DESC'), conn)
         if df.empty:
             return pd.DataFrame()
-        df['Order Date'] = pd.to_datetime(df['Order Date'], dayfirst=True, errors='coerce')
-        column_mappings = {
-            'Quantity':       ['Quantity', 'quantity', 'qty'],
-            'Item Price':     ['Item Price', 'item-price', 'item_price', 'price'],
-            'Item Tax':       ['Item Tax', 'item-tax', 'item_tax', 'tax'],
-            'Shipping Price': ['Shipping Price', 'shipping-price', 'shipping_price', 'shipping'],
-        }
-        for target_col, possible_names in column_mappings.items():
-            found = False
-            for col_name in possible_names:
-                if col_name in df.columns:
-                    df[target_col] = pd.to_numeric(df[col_name], errors='coerce').fillna(0)
-                    found = True
-                    break
-            if not found:
-                df[target_col] = 0
-        df['Total Price'] = df['Item Price'] * df['Quantity']
+        # Маппінг реальних колонок → стандартні назви
+        df['Order Date']   = pd.to_datetime(df['purchase_date'], errors='coerce')
+        df['Order ID']     = df['amazon_order_id'] if 'amazon_order_id' in df.columns else df.get('order_id', '')
+        df['SKU']          = df['sku'] if 'sku' in df.columns else ''
+        df['Item Price']   = pd.to_numeric(df.get('item_price', 0), errors='coerce').fillna(0)
+        df['Quantity']     = pd.to_numeric(df.get('quantity', 1), errors='coerce').fillna(1)
+        df['Total Price']  = df['Item Price'] * df['Quantity']
+        df['Order Status'] = df.get('order_status', '')
+        df['Ship Country'] = df.get('ship_country', '')
         return df
     except Exception as e:
         st.error(f"Помилка завантаження orders: {e}")
