@@ -3415,6 +3415,24 @@ def show_returns(t=None):
         "returns.csv", "text/csv"
     )
 
+    # ── Таблиця ──
+    st.markdown("---")
+    st.markdown("#### 📋 Деталі повернень")
+    show_cols = [c for c in [date_c, sku_c, col_map.get('asin'), qty_c,
+                              reason_c, status_c, col_map.get('order_id'), '_price', 'Return Value']
+                 if c and c in df_f.columns]
+    rename_map = {date_c:'Return Date', sku_c:'SKU', qty_c:'Qty',
+                  reason_c:'Reason', status_c:'Status', '_price':'Price',
+                  col_map.get('order_id'):'Order ID', col_map.get('asin'):'ASIN'}
+    df_show = df_f[show_cols].rename(columns=rename_map).sort_values('Return Date', ascending=False).head(500)
+    fmt = {}
+    if 'Price' in df_show.columns:        fmt['Price']        = '${:.2f}'
+    if 'Return Value' in df_show.columns: fmt['Return Value']  = '${:.2f}'
+    st.dataframe(df_show.style.format(fmt) if fmt else df_show,
+                 width="stretch", hide_index=True, height=400)
+    st.caption(f"Показано {min(500,len(df_f)):,} з {len(df_f):,} повернень")
+    st.download_button("📥 CSV", df_f.to_csv(index=False).encode(), "returns.csv", "text/csv")
+
     ctx_ret = f"""Returns: {total_ret} повернень | Rate {rr:.1f}% | Вартість ${total_val:,.0f} | Період {d1}→{d2}"""
     show_ai_chat(ctx_ret, [
         "Які SKU мають найбільше повернень за цей період?",
