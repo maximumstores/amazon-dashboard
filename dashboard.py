@@ -2636,14 +2636,42 @@ def show_settlements(t):
 
     margin_pct = net / gross * 100 if gross > 0 else 0
 
-    c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.metric("💰 Net Payout",  _fmt(net))
-    c2.metric("📈 Gross Sales", _fmt(gross))
-    c3.metric("🔄 Refunds",     _fmt(refs))
-    c4.metric("💸 Fees",        _fmt(fees))
-    c5.metric("🎫 Promotions",  _fmt(promos))
-    c6.metric("📊 Маржа",       f"{margin_pct:.1f}%")
-    st.caption(f"📋 {rows:,} транзакцій · {orders:,} замовлень · {d1} → {d2}")
+    # ── Hero метрика ──
+    net_color = "#4CAF50" if net > 0 else "#F44336"
+    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a2b1e,#0d1f12);border:1px solid #2d4a30;
+            border-radius:12px;padding:20px 28px;margin-bottom:16px;
+            display:flex;align-items:center;gap:32px;flex-wrap:wrap">
+  <div>
+    <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+      💰 Чистий заробіток за період
+    </div>
+    <div style="font-size:48px;font-weight:900;color:{net_color};font-family:monospace;line-height:1">
+      {_fmt(net)}
+    </div>
+    <div style="font-size:12px;color:#666;margin-top:6px">{d1} → {d2} · {orders:,} замовлень</div>
+  </div>
+  <div style="flex:1;min-width:200px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+        📈 Gross <b style="color:#4CAF50">{_fmt(gross)}</b>
+      </span>
+      <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+        💸 Fees <b style="color:#F44336">{_fmt(fees)}</b>
+      </span>
+      <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+        🔄 Refunds <b style="color:#FF9800">{_fmt(refs)}</b>
+      </span>
+      <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+        🎫 Promos <b style="color:#FF9800">{_fmt(promos)}</b>
+      </span>
+      <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px">
+        📊 Маржа <b style="color:#5B9BD5">{margin_pct:.1f}%</b>
+      </span>
+    </div>
+  </div>
+</div>""", unsafe_allow_html=True)
+    st.caption(f"📋 {rows:,} транзакцій · {d1} → {d2}")
 
     # ── АВТОІНСАЙТИ одразу після KPI ──
     st.markdown("---")
