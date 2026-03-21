@@ -2645,6 +2645,10 @@ def show_settlements(t):
     c6.metric("📊 Маржа",       f"{margin_pct:.1f}%")
     st.caption(f"📋 {rows:,} транзакцій · {orders:,} замовлень · {d1} → {d2}")
 
+    # ── АВТОІНСАЙТИ одразу після KPI ──
+    st.markdown("---")
+    insights_settlements_v2(net, gross, refs, fees)
+
     # ── WATERFALL P&L ──
     st.markdown("---")
     st.markdown("### 📊 P&L Waterfall")
@@ -2759,7 +2763,6 @@ def show_settlements(t):
         # Debug: показуємо топ transaction_type якщо net=0
         if net == 0:
             st.info("⚠️ Net Payout = $0 — перевір фільтр transaction_type нижче у таблиці")
-        insights_settlements_v2(net, gross, refs, fees)
 
     # ── TAB 2: Finance Events ─────────────────
     with tabs[1]:
