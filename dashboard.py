@@ -2581,13 +2581,14 @@ def show_settlements(t):
             kpi = pd.read_sql(text("""
                 SELECT
                     SUM(CASE WHEN transaction_type = 'Transfer'
-                        THEN amount::numeric ELSE 0 END)                     AS net_payout,
-                    SUM(CASE WHEN amount_type = 'ItemPrice' AND amount::numeric > 0
-                        THEN amount::numeric ELSE 0 END)                     AS gross_sales,
+                        THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS net_payout,
+                    SUM(CASE WHEN amount_type = 'ItemPrice'
+                         AND NULLIF(amount,'')::numeric > 0
+                        THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS gross_sales,
                     SUM(CASE WHEN transaction_type = 'Refund'
-                        THEN amount::numeric ELSE 0 END)                     AS refunds,
+                        THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS refunds,
                     SUM(CASE WHEN amount_type = 'ItemFees'
-                        THEN amount::numeric ELSE 0 END)                     AS fees,
+                        THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS fees,
                     COUNT(DISTINCT order_id) FILTER (WHERE order_id IS NOT NULL
                         AND order_id != '')                                   AS orders_count,
                     COUNT(*)                                                  AS total_rows
@@ -2628,7 +2629,7 @@ def show_settlements(t):
                 with engine.connect() as conn:
                     daily = pd.read_sql(text("""
                         SELECT posted_date::date AS date,
-                               SUM(amount::numeric) AS net
+                               SUM(NULLIF(amount,'')::numeric) AS net
                         FROM settlements
                         WHERE posted_date >= :d1 AND posted_date <= :d2
                         GROUP BY 1 ORDER BY 1
@@ -2648,7 +2649,7 @@ def show_settlements(t):
                 with engine.connect() as conn:
                     by_type = pd.read_sql(text("""
                         SELECT amount_type,
-                               SUM(amount::numeric) AS total
+                               SUM(NULLIF(amount,'')::numeric) AS total
                         FROM settlements
                         WHERE posted_date >= :d1 AND posted_date <= :d2
                           AND amount_type IS NOT NULL AND amount_type != ''
@@ -2672,7 +2673,7 @@ def show_settlements(t):
                 by_tt = pd.read_sql(text("""
                     SELECT transaction_type,
                            COUNT(*) AS cnt,
-                           SUM(amount::numeric) AS total
+                           SUM(NULLIF(amount,'')::numeric) AS total
                     FROM settlements
                     WHERE posted_date >= :d1 AND posted_date <= :d2
                     GROUP BY 1 ORDER BY ABS(SUM(amount::numeric)) DESC
