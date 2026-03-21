@@ -516,11 +516,34 @@ def load_settlements():
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            df = pd.read_sql(text('SELECT * FROM settlements ORDER BY "Posted Date" DESC'), conn)
+            # Читаємо реальні назви колонок
+            cols_df = pd.read_sql(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name='settlements' ORDER BY ordinal_position"
+            ), conn)
+            real_cols = cols_df['column_name'].tolist()
+            date_col = next((c for c in real_cols if c.lower() in ('posted_date','posted date')), None)
+            order_clause = f'ORDER BY "{date_col}" DESC' if date_col else ''
+            df = pd.read_sql(text(f'SELECT * FROM settlements {order_clause}'), conn)
+
         if df.empty:
             return pd.DataFrame()
-        df['Amount']      = pd.to_numeric(df['Amount'], errors='coerce').fillna(0.0)
-        df['Quantity']    = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
+
+        # Нормалізуємо назви до стандартних
+        col_map = {}
+        for c in df.columns:
+            lc = c.lower().replace(' ', '_')
+            if lc == 'posted_date':        col_map[c] = 'Posted Date'
+            elif lc == 'transaction_type': col_map[c] = 'Transaction Type'
+            elif lc == 'order_id':         col_map[c] = 'Order ID'
+            elif lc == 'amount':           col_map[c] = 'Amount'
+            elif lc == 'currency':         col_map[c] = 'Currency'
+            elif lc == 'quantity':         col_map[c] = 'Quantity'
+            elif lc == 'sku':              col_map[c] = 'SKU'
+        df = df.rename(columns=col_map)
+
+        df['Amount']      = pd.to_numeric(df.get('Amount', 0), errors='coerce').fillna(0.0)
+        df['Quantity']    = pd.to_numeric(df.get('Quantity', 0), errors='coerce').fillna(0)
         df['Posted Date'] = pd.to_datetime(df['Posted Date'], dayfirst=True, errors='coerce')
         if 'Currency' not in df.columns:
             df['Currency'] = 'USD'
