@@ -2584,8 +2584,8 @@ def show_settlements(t):
                     COALESCE((
                         SELECT SUM(NULLIF(original_total_amount,'')::numeric)
                         FROM finance_event_groups
-                        WHERE fund_transfer_date::date >= :d1::date
-                          AND fund_transfer_date::date <= :d2::date
+                        WHERE fund_transfer_date::date >= CAST(:d1 AS date)
+                          AND fund_transfer_date::date <= CAST(:d2 AS date)
                     ), 0)                                                     AS net_payout,
 
                     -- Gross Sales = Principal із Shipment events
