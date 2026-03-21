@@ -2608,13 +2608,55 @@ def show_settlements(t):
     orders = int(kpi['orders_count']  or 0)
     rows   = int(kpi['total_rows']    or 0)
 
-    c1,c2,c3,c4,c5 = st.columns(5)
-    c1.metric("💰 Net Payout",      f"${net:,.0f}")
-    c2.metric("📈 Gross Sales",     f"${gross:,.0f}")
-    c3.metric("🔄 Refunds",         f"${refs:,.0f}")
-    c4.metric("💸 Amazon Fees",     f"${fees:,.0f}")
-    c5.metric("🛒 Orders",          f"{orders:,}")
-    st.caption(f"📋 {rows:,} транзакцій за період {d1} → {d2}")
+    # ── Доп. метрики з finance_events ──
+    promos = 0; adjustments = 0; refund_fees = 0
+    try:
+        with engine.connect() as conn:
+            fe_kpi = pd.read_sql(text(
+                "SELECT "
+                "SUM(CASE WHEN event_type='ShipmentPromo' THEN NULLIF(amount,'')::numeric ELSE 0 END) AS promos,"
+                "SUM(CASE WHEN event_type='Adjustment'    THEN NULLIF(amount,'')::numeric ELSE 0 END) AS adjustments,"
+                "SUM(CASE WHEN event_type='RefundFee'     THEN NULLIF(amount,'')::numeric ELSE 0 END) AS refund_fees "
+                "FROM finance_events WHERE posted_date BETWEEN :d1 AND :d2"
+            ), conn, params={"d1": d1, "d2": d2}).iloc[0]
+        promos      = float(fe_kpi["promos"]      or 0)
+        adjustments = float(fe_kpi["adjustments"] or 0)
+        refund_fees = float(fe_kpi["refund_fees"] or 0)
+    except Exception:
+        pass
+
+    margin_pct = net / gross * 100 if gross > 0 else 0
+
+    c1,c2,c3,c4,c5,c6 = st.columns(6)
+    c1.metric("💰 Net Payout",  f"${net:,.0f}")
+    c2.metric("📈 Gross Sales", f"${gross:,.0f}")
+    c3.metric("🔄 Refunds",     f"${refs:,.0f}")
+    c4.metric("💸 Fees",        f"${fees:,.0f}")
+    c5.metric("🎫 Promotions",  f"${promos:,.0f}")
+    c6.metric("📊 Маржа",       f"{margin_pct:.1f}%")
+    st.caption(f"📋 {rows:,} транзакцій · {orders:,} замовлень · {d1} → {d2}")
+
+    # ── WATERFALL P&L ──
+    st.markdown("---")
+    st.markdown("### 📊 P&L Waterfall")
+    labels  = ["Gross Sales", "Amazon Fees", "Refunds", "Promotions", "Adjustments", "Refund Fees", "Net Payout"]
+    values  = [gross, fees, refs, promos, adjustments, refund_fees, net]
+    measure = ["absolute","relative","relative","relative","relative","relative","total"]
+    fig_wf = go.Figure(go.Waterfall(
+        orientation="v", measure=measure, x=labels, y=values,
+        text=[f"${v:,.0f}" for v in values], textposition="outside",
+        connector={"line": {"color": "rgba(128,128,128,0.3)"}},
+        increasing={"marker": {"color": "#4CAF50"}},
+        decreasing={"marker": {"color": "#F44336"}},
+        totals={"marker":    {"color": "#2196F3"}},
+    ))
+    fig_wf.update_layout(
+        height=420, margin=dict(l=0,r=0,t=30,b=0),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        yaxis=dict(tickprefix="$", showgrid=True, gridcolor="rgba(128,128,128,0.1)"),
+        showlegend=False,
+    )
+    st.plotly_chart(fig_wf, width="stretch")
     st.markdown("---")
 
     # ══════════════════════════════════════════
@@ -2857,86 +2899,220 @@ def insights_settlements_v2(net, gross, refs, fees):
 
 def show_returns(t=None):
     if t is None: t = translations.get("UA", {})
-    df_ret_raw, df_orders = load_returns()
-    if df_ret_raw.empty:
-        st.warning("⚠️ No returns data."); return
-    df_r = df_ret_raw.copy()
-    df_r['Return Date'] = pd.to_datetime(df_r['Return Date'], errors='coerce')
-    if 'Price' not in df_r.columns and not df_orders.empty:
-        try:
-            for col in ['Item Price','item-price','item_price','price','Price']:
-                if col in df_orders.columns:
-                    df_orders[col] = pd.to_numeric(df_orders[col],errors='coerce')
-                    df_r['Price'] = df_r['SKU'].map(df_orders.groupby('SKU')[col].mean()).fillna(0)
-                    break
-        except: df_r['Price'] = 0
-    elif 'Price' not in df_r.columns: df_r['Price'] = 0
-    df_r['Price']        = pd.to_numeric(df_r['Price'],errors='coerce').fillna(0)
-    df_r['Quantity']     = pd.to_numeric(df_r['Quantity'],errors='coerce').fillna(1)
-    df_r['Return Value'] = df_r['Price'] * df_r['Quantity']
-    st.sidebar.markdown("---"); st.sidebar.subheader(t["ret_filters"])
-    min_date = df_r['Return Date'].min().date(); max_date = df_r['Return Date'].max().date()
-    date_range = st.sidebar.date_input(t["ret_date"],value=(max_date-dt.timedelta(days=30),max_date),min_value=min_date,max_value=max_date)
-    sel_store = 'All'
-    if 'Store Name' in df_r.columns:
-        stores = ['All'] + sorted(df_r['Store Name'].dropna().unique().tolist())
-        sel_store = st.sidebar.selectbox("🏪 Store:", stores)
-    df_f = df_r[(df_r['Return Date'].dt.date>=date_range[0])&(df_r['Return Date'].dt.date<=date_range[1])] if len(date_range)==2 else df_r
-    if sel_store != 'All': df_f = df_f[df_f['Store Name']==sel_store]
-    st.markdown(t["ret_title"])
+
+    st.markdown("### 📦 Повернення (Returns)")
+
+    engine = get_engine()
+
+    # ── читаємо реальні колонки ──
+    try:
+        with engine.connect() as conn:
+            cols_df = pd.read_sql(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name='returns' ORDER BY ordinal_position"
+            ), conn)
+        real_cols = cols_df['column_name'].tolist()
+    except Exception as e:
+        st.error(f"Помилка читання схеми returns: {e}"); return
+
+    if not real_cols:
+        st.warning("⚠️ Таблиця returns порожня або не існує"); return
+
+    # ── маппінг колонок (будь-який регістр) ──
+    col_map = {}
+    for c in real_cols:
+        lc = c.lower().replace(' ', '_').replace('-', '_')
+        if lc in ('return_date', 'returndate'):        col_map['date']     = c
+        elif lc in ('sku', 'seller_sku'):              col_map['sku']      = c
+        elif lc in ('asin',):                          col_map['asin']     = c
+        elif lc in ('quantity', 'qty'):                col_map['qty']      = c
+        elif lc in ('reason', 'return_reason'):        col_map['reason']   = c
+        elif lc in ('status', 'return_status'):        col_map['status']   = c
+        elif lc in ('order_id', 'orderid'):            col_map['order_id'] = c
+        elif lc in ('product_name', 'title', 'name'):  col_map['name']     = c
+
+    date_c  = col_map.get('date',  real_cols[0])
+    sku_c   = col_map.get('sku',   None)
+    qty_c   = col_map.get('qty',   None)
+    reason_c = col_map.get('reason', None)
+    status_c = col_map.get('status', None)
+
+    # ── sidebar фільтри ──
+    st.sidebar.markdown("---")
+    st.sidebar.subheader(t.get("ret_filters", "📦 Фільтри"))
+
+    try:
+        with engine.connect() as conn:
+            bounds = pd.read_sql(text(
+                f'SELECT MIN("{date_c}")::date as mn, MAX("{date_c}")::date as mx FROM returns'
+            ), conn).iloc[0]
+        min_date = bounds['mn']
+        max_date = bounds['mx']
+    except Exception:
+        min_date = dt.date(2024, 1, 1)
+        max_date = dt.date.today()
+
+    date_range = st.sidebar.date_input(
+        t.get("ret_date", "📅 Дата повернення:"),
+        value=(max_date - dt.timedelta(days=30), max_date),
+        min_value=min_date, max_value=max_date, key="ret_date_range"
+    )
+    if len(date_range) != 2:
+        st.warning("Оберіть діапазон дат"); return
+    d1, d2 = str(date_range[0]), str(date_range[1])
+
+    # ── завантажуємо дані ──
+    try:
+        with engine.connect() as conn:
+            df_f = pd.read_sql(text(
+                f'SELECT * FROM returns '
+                f'WHERE "{date_c}" >= :d1 AND "{date_c}" <= :d2 '
+                f'ORDER BY "{date_c}" DESC LIMIT 10000'
+            ), conn, params={"d1": d1, "d2": d2})
+    except Exception as e:
+        st.error(f"Помилка завантаження returns: {e}"); return
+
+    if df_f.empty:
+        st.info("Немає повернень за цей період"); return
+
+    # нормалізуємо типи
+    df_f[date_c] = pd.to_datetime(df_f[date_c], errors='coerce')
+    if qty_c:
+        df_f[qty_c] = pd.to_numeric(df_f[qty_c], errors='coerce').fillna(1)
+
+    # ── Return Value через orders ──
+    try:
+        with engine.connect() as conn:
+            # шукаємо колонки orders
+            oc = pd.read_sql(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name='orders' ORDER BY ordinal_position"
+            ), conn)['column_name'].tolist()
+            price_col = next((c for c in oc if c.lower() in ('item_price','item-price','itemprice','price')), None)
+            sku_o_col = next((c for c in oc if c.lower() in ('sku','seller_sku')), None)
+            if price_col and sku_o_col and sku_c:
+                prices = pd.read_sql(text(
+                    f'SELECT "{sku_o_col}" as sku, AVG(NULLIF("{price_col}",'')::numeric) as price '
+                    f'FROM orders GROUP BY 1'
+                ), conn)
+                price_map = prices.set_index('sku')['price'].to_dict()
+                df_f['_price'] = df_f[sku_c].map(price_map).fillna(0)
+            else:
+                df_f['_price'] = 0
+    except Exception:
+        df_f['_price'] = 0
+
+    qty_vals = df_f[qty_c] if qty_c else pd.Series([1]*len(df_f))
+    df_f['Return Value'] = df_f['_price'] * qty_vals
+
+    # ── KPI ──
+    total_ret   = len(df_f)
+    total_val   = df_f['Return Value'].sum()
+    unique_sku  = df_f[sku_c].nunique() if sku_c else 0
+    avg_val     = df_f['Return Value'].mean()
+
+    # return rate vs orders
     rr = 0
     try:
-        if not df_orders.empty:
-            for col in ['Order ID','order-id','order_id','OrderID']:
-                if col in df_orders.columns:
-                    rr = df_f['Order ID'].nunique()/df_orders[col].nunique()*100 if df_orders[col].nunique()>0 else 0
-                    break
-    except: pass
-    c1,c2,c3,c4,c5 = st.columns(5)
-    c1.metric(t["ret_total"],f"{len(df_f):,}"); c2.metric(t["ret_unique_sku"],df_f['SKU'].nunique())
-    c3.metric(t["ret_rate"],f"{rr:.1f}%"); c4.metric(t["ret_value"],f"${df_f['Return Value'].sum():,.2f}")
-    c5.metric(t["ret_avg"],f"${df_f['Return Value'].mean():.2f}")
+        with engine.connect() as conn:
+            o_count = pd.read_sql(text(
+                f'SELECT COUNT(DISTINCT "{next((c for c in oc if c.lower() in ("order_id","orderid")), oc[0])}") as cnt FROM orders'
+            ), conn).iloc[0]['cnt']
+            ret_orders = df_f[col_map['order_id']].nunique() if 'order_id' in col_map else 0
+            rr = ret_orders / o_count * 100 if o_count > 0 else 0
+    except Exception:
+        pass
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric(t.get("ret_total",    "📦 Повернень"),      f"{total_ret:,}")
+    c2.metric(t.get("ret_unique_sku","📦 Унікальних SKU"), f"{unique_sku:,}")
+    c3.metric(t.get("ret_rate",     "📊 Return Rate"),     f"{rr:.1f}%")
+    c4.metric(t.get("ret_value",    "💰 Вартість"),        f"${total_val:,.0f}")
+    c5.metric(t.get("ret_avg",      "💵 Сер. вартість"),   f"${avg_val:.2f}")
+    st.caption(f"📋 {total_ret:,} повернень за {d1} → {d2}")
     st.markdown("---")
-    col1,col2,col3 = st.columns(3)
+
+    # ── Графіки ──
+    col1, col2, col3 = st.columns(3)
+
     with col1:
-        st.markdown(t["ret_by_sku"])
-        tv = df_f.groupby('SKU')['Return Value'].sum().nlargest(10).reset_index()
-        fig = px.bar(tv,x='Return Value',y='SKU',orientation='h',text='Return Value',color='Return Value',color_continuous_scale='Reds')
-        fig.update_layout(yaxis={'categoryorder':'total ascending'},height=350); fig.update_traces(texttemplate='$%{text:,.0f}',textposition='outside')
+        st.markdown("#### 📅 Тренд повернень по днях")
+        daily = df_f.groupby(df_f[date_c].dt.date).size().reset_index()
+        daily.columns = ['Date', 'Count']
+        fig = px.bar(daily, x='Date', y='Count', color_discrete_sequence=['#FF6B6B'])
+        fig.update_layout(height=320, margin=dict(l=0,r=0,t=10,b=0))
         st.plotly_chart(fig, width="stretch")
+
     with col2:
-        st.markdown(t["ret_daily"])
-        dv = df_f.groupby(df_f['Return Date'].dt.date)['Return Value'].sum().reset_index(); dv.columns=['Date','Value']
-        fig = px.area(dv,x='Date',y='Value',line_shape='spline',color_discrete_sequence=['#FF6B6B'])
-        fig.update_layout(height=350); st.plotly_chart(fig, width="stretch")
+        if reason_c and reason_c in df_f.columns:
+            st.markdown("#### 🔍 Причини повернень")
+            rc = df_f[reason_c].value_counts().head(8).reset_index()
+            rc.columns = ['Reason', 'Count']
+            fig2 = px.pie(rc, values='Count', names='Reason', hole=0.4,
+                          color_discrete_sequence=px.colors.sequential.RdBu)
+            fig2.update_layout(height=320)
+            st.plotly_chart(fig2, width="stretch")
+        else:
+            st.info("Колонка reason відсутня")
+
     with col3:
-        if 'Reason' in df_f.columns:
-            st.markdown(t["ret_by_reason"])
-            rv = df_f.groupby('Reason')['Return Value'].sum().nlargest(8).reset_index()
-            fig = px.pie(rv,values='Return Value',names='Reason',hole=0.4,color_discrete_sequence=px.colors.sequential.RdBu)
-            fig.update_layout(height=350); st.plotly_chart(fig, width="stretch")
+        if sku_c:
+            st.markdown("#### 🏆 Топ SKU за кількістю")
+            top_sku = df_f[sku_c].value_counts().head(10).reset_index()
+            top_sku.columns = ['SKU', 'Returns']
+            fig3 = px.bar(top_sku, x='Returns', y='SKU', orientation='h',
+                          color='Returns', color_continuous_scale='Oranges')
+            fig3.update_layout(height=320, yaxis={'categoryorder': 'total ascending'})
+            st.plotly_chart(fig3, width="stretch")
+
     st.markdown("---")
-    col1,col2 = st.columns(2)
-    with col1:
-        st.markdown(t["ret_top_sku"])
-        ts = df_f['SKU'].value_counts().head(15).reset_index(); ts.columns=['SKU','Returns']
-        fig = px.bar(ts,x='Returns',y='SKU',orientation='h',color='Returns',color_continuous_scale='Oranges',text='Returns')
-        fig.update_layout(yaxis={'categoryorder':'total ascending'},height=450); st.plotly_chart(fig, width="stretch")
-    with col2:
-        if 'Reason' in df_f.columns:
-            st.markdown(t["ret_reasons"])
-            rs = df_f['Reason'].value_counts().head(10).reset_index(); rs.columns=['Reason','Count']
-            fig = px.pie(rs,values='Count',names='Reason',hole=0.4,color_discrete_sequence=px.colors.sequential.RdBu)
-            fig.update_layout(height=450); st.plotly_chart(fig, width="stretch")
-    st.markdown("---")
-    dc = ['Return Date','SKU','Product Name','Quantity','Price','Return Value','Reason','Status']
-    st.dataframe(df_f[[c for c in dc if c in df_f.columns]].sort_values('Return Date',ascending=False).head(100).style.format({'Price':'${:.2f}','Return Value':'${:.2f}'}),width="stretch")
-    st.download_button(t["ret_download"],df_f.to_csv(index=False).encode('utf-8'),"returns.csv","text/csv")
-    insights_returns(df_f, rr)
-    ctx_ret = f"""Returns: {len(df_f)} повернень | Rate {rr:.1f}% | Вартість ${df_f['Return Value'].sum():,.2f}"""
+
+    # ── Return Value charts (якщо є ціни) ──
+    if total_val > 0:
+        col1, col2 = st.columns(2)
+        with col1:
+            if sku_c:
+                st.markdown("#### 💰 Топ SKU за вартістю повернень")
+                tv = df_f.groupby(sku_c)['Return Value'].sum().nlargest(10).reset_index()
+                fig4 = px.bar(tv, x='Return Value', y=sku_c, orientation='h',
+                              color='Return Value', color_continuous_scale='Reds')
+                fig4.update_traces(texttemplate='$%{x:,.0f}', textposition='outside')
+                fig4.update_layout(height=350, yaxis={'categoryorder': 'total ascending'})
+                st.plotly_chart(fig4, width="stretch")
+        with col2:
+            if reason_c:
+                st.markdown("#### 💸 Вартість по причинах")
+                rv = df_f.groupby(reason_c)['Return Value'].sum().nlargest(8).reset_index()
+                fig5 = px.pie(rv, values='Return Value', names=reason_c, hole=0.4)
+                fig5.update_layout(height=350)
+                st.plotly_chart(fig5, width="stretch")
+        st.markdown("---")
+
+    # ── Таблиця ──
+    st.markdown("#### 📋 Деталі повернень")
+    show_cols = [c for c in [date_c, sku_c, col_map.get('asin'), qty_c,
+                             reason_c, status_c, col_map.get('order_id'), '_price', 'Return Value']
+                 if c and c in df_f.columns]
+    st.dataframe(
+        df_f[show_cols].rename(columns={date_c: 'Return Date', sku_c: 'SKU',
+                                         qty_c: 'Qty', reason_c: 'Reason',
+                                         status_c: 'Status', '_price': 'Price'})
+                        .sort_values('Return Date', ascending=False).head(500)
+                        .style.format({'Price': '${:.2f}', 'Return Value': '${:.2f}'}),
+        width="stretch", hide_index=True, height=400
+    )
+    st.download_button(
+        t.get("ret_download", "📥 CSV"),
+        df_f.to_csv(index=False).encode('utf-8'),
+        "returns.csv", "text/csv"
+    )
+
+    insights_returns(df_f.rename(columns={reason_c: 'Reason', sku_c: 'SKU'}) if reason_c and sku_c else df_f, rr)
+
+    ctx_ret = f"""Returns: {total_ret} повернень | Rate {rr:.1f}% | Вартість ${total_val:,.0f} | Період {d1}→{d2}"""
     show_ai_chat(ctx_ret, [
-        "Які SKU мають найбільше повернень за 30 днів?",
-        "Які топ-3 причини повернень по всіх SKU?",
+        "Які SKU мають найбільше повернень за цей період?",
+        "Які топ-3 причини повернень?",
         "Порівняй return rate цього місяця vs попереднього",
     ], "returns")
 
