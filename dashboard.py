@@ -3717,11 +3717,18 @@ if not df.empty:
     df['Stock Value'] = df['Available'] * df['Price']
     df['created_at']  = pd.to_datetime(df['created_at'])
     df['date']        = df['created_at'].dt.date
-    st.sidebar.header(t["sidebar_title"])
-    dates         = sorted(df['date'].unique(), reverse=True)
-    selected_date = st.sidebar.selectbox(t["date_label"], dates) if dates else None
-    stores        = [t["all_stores"]] + list(df['Store Name'].unique()) if 'Store Name' in df.columns else [t["all_stores"]]
-    selected_store = st.sidebar.selectbox(t["store_label"], stores)
+    # Фільтри інвентарю — тільки для сторінок де потрібно
+    _inv_pages = {"🏠 Overview", "📦 Склад (Inventory)"}
+    _cur = st.session_state.get("report_choice", "🏠 Overview")
+    if _cur in _inv_pages:
+        st.sidebar.header(t["sidebar_title"])
+        dates         = sorted(df['date'].unique(), reverse=True)
+        selected_date = st.sidebar.selectbox(t["date_label"], dates) if dates else None
+        stores        = [t["all_stores"]] + list(df['Store Name'].unique()) if 'Store Name' in df.columns else [t["all_stores"]]
+        selected_store = st.sidebar.selectbox(t["store_label"], stores)
+    else:
+        selected_date  = df['date'].max() if not df.empty else None
+        selected_store = t["all_stores"]
     df_filtered    = df[df['date']==selected_date] if selected_date else df
     if selected_store != t["all_stores"]:
         df_filtered = df_filtered[df_filtered['Store Name']==selected_store]
