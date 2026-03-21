@@ -2098,38 +2098,41 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 
 def show_inventory_unified():
     st.markdown("### 📦 Склад (Inventory)")
-
     engine = get_engine()
 
-    # ── Завантажуємо реальні колонки ──
+    # ── Схема ──
     try:
         with engine.connect() as conn:
-            cols_df = pd.read_sql(text(
+            real_cols = pd.read_sql(text(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name='fba_inventory' ORDER BY ordinal_position"
-            ), conn)
-        real_cols = cols_df['column_name'].tolist()
+            ), conn)['column_name'].tolist()
     except Exception as e:
-        st.error(f"Помилка читання схеми fba_inventory: {e}"); return
+        st.error(f"Помилка схеми: {e}"); return
 
-    # маппінг колонок
     col_map = {}
     for c in real_cols:
         lc = c.lower().replace(' ', '_').replace('-', '_')
-        if lc in ('sku', 'seller_sku'):                col_map['sku']       = c
-        elif lc == 'asin':                             col_map['asin']      = c
-        elif lc in ('available', 'afn_fulfillable_quantity'): col_map['available'] = c
-        elif lc in ('price', 'your_price'):            col_map['price']     = c
-        elif lc in ('velocity', 'sales_velocity'):     col_map['velocity']  = c
-        elif lc in ('days_of_supply', 'days_supply'):  col_map['dos']       = c
-        elif lc in ('inbound_quantity', 'inbound'):    col_map['inbound']   = c
-        elif lc in ('reserved_quantity', 'reserved'):  col_map['reserved']  = c
-        elif lc in ('store_name', 'marketplace', 'market_place'): col_map['store'] = c
-        elif lc in ('product_name', 'title', 'name'):  col_map['name']      = c
-        elif lc in ('afn_unsellable_quantity', 'unsellable'): col_map['unsellable'] = c
+        if lc in ('sku','seller_sku'):                     col_map['sku']        = c
+        elif lc == 'asin':                                 col_map['asin']       = c
+        elif lc in ('available','afn_fulfillable_quantity'):col_map['available']  = c
+        elif lc in ('price','your_price'):                 col_map['price']      = c
+        elif lc in ('velocity','sales_velocity'):          col_map['velocity']   = c
+        elif lc in ('days_of_supply','days_supply'):       col_map['dos']        = c
+        elif lc in ('inbound_quantity','inbound'):         col_map['inbound']    = c
+        elif lc in ('reserved_quantity','reserved'):       col_map['reserved']   = c
+        elif lc in ('store_name','marketplace','market_place'): col_map['store'] = c
+        elif lc in ('product_name','title','name'):        col_map['name']       = c
+        elif lc in ('afn_unsellable_quantity','unsellable'):col_map['unsellable']= c
+        # Age колонки
+        elif 'upto_90' in lc or '0_to_90' in lc or 'age_0' in lc:   col_map['age_0_90']    = c
+        elif '91_to_180' in lc or 'age_91' in lc:                     col_map['age_91_180']  = c
+        elif '181_to_270' in lc or 'age_181' in lc:                    col_map['age_181_270'] = c
+        elif '271_to_365' in lc or 'age_271' in lc:                    col_map['age_271_365'] = c
+        elif '365' in lc and ('plus' in lc or 'over' in lc or 'more' in lc): col_map['age_365_plus'] = c
 
-    sku_c  = col_map.get('sku')
-    asin_c = col_map.get('asin')
+    sku_c   = col_map.get('sku')
+    asin_c  = col_map.get('asin')
     avail_c = col_map.get('available')
     price_c = col_map.get('price')
     vel_c   = col_map.get('velocity')
@@ -2139,46 +2142,40 @@ def show_inventory_unified():
     store_c = col_map.get('store')
     name_c  = col_map.get('name')
     uns_c   = col_map.get('unsellable')
+    age_cols = {k: v for k, v in col_map.items() if k.startswith('age_')}
 
-    # ── Sidebar фільтри ──
+    # ── Sidebar ──
     search_sku  = st.sidebar.text_input("🔍 SKU", "", key="inv_sku")
     search_asin = st.sidebar.text_input("🔍 ASIN", "", key="inv_asin")
-
     stores_list = []
     if store_c:
         try:
             with engine.connect() as conn:
-                stores_df = pd.read_sql(text(f'SELECT DISTINCT "{store_c}" FROM fba_inventory WHERE "{store_c}" IS NOT NULL'), conn)
-            stores_list = sorted(stores_df.iloc[:,0].dropna().tolist())
-        except Exception:
-            pass
-    sel_store = st.sidebar.selectbox("🏪 Магазин:", ["Всі"] + stores_list, key="inv_store")
-    alert_filter = st.sidebar.selectbox("⚠️ Фільтр алертів:", ["Всі", "Low Stock <14д", "Out of Stock", "Inbound є"], key="inv_alert")
+                stores_list = sorted(pd.read_sql(text(
+                    f'SELECT DISTINCT "{store_c}" FROM fba_inventory WHERE "{store_c}" IS NOT NULL'
+                ), conn).iloc[:,0].dropna().tolist())
+        except: pass
+    sel_store    = st.sidebar.selectbox("🏪 Магазин:", ["Всі"] + stores_list, key="inv_store")
+    alert_filter = st.sidebar.selectbox("⚠️ Фільтр:", ["Всі", "Low Stock <30д", "Out of Stock", "Inbound є"], key="inv_alert")
 
-    # ── Завантажуємо дані ──
+    # ── Дані ──
     try:
         with engine.connect() as conn:
             df = pd.read_sql(text("SELECT * FROM fba_inventory"), conn)
     except Exception as e:
         st.error(f"Помилка: {e}"); return
-
     if df.empty:
-        st.warning("Таблиця fba_inventory порожня"); return
+        st.warning("fba_inventory порожня"); return
 
-    # нормалізуємо числові колонки
-    for col_key, col_name in [(avail_c,'avail'),(price_c,'price'),(vel_c,'vel'),(dos_c,'dos'),(inb_c,'inb'),(res_c,'res'),(uns_c,'uns')]:
-        if col_key and col_key in df.columns:
-            df[col_key] = pd.to_numeric(df[col_key].replace('', None), errors='coerce').fillna(0)
+    for c in [avail_c, price_c, vel_c, dos_c, inb_c, res_c, uns_c] + list(age_cols.values()):
+        if c and c in df.columns:
+            df[c] = pd.to_numeric(df[c].replace('', None), errors='coerce').fillna(0)
 
-    # Stock Value
-    if avail_c and price_c:
-        df['_stock_value'] = df[avail_c] * df[price_c]
-    else:
-        df['_stock_value'] = 0
+    df['_value'] = (df[avail_c] * df[price_c]) if (avail_c and price_c) else 0
 
-    # Days of Supply розрахунок якщо немає
+    # DoS розрахунок
     if not dos_c and vel_c and avail_c:
-        df['_dos'] = (df[avail_c] / df[vel_c].replace(0, float('nan'))).round(0)
+        df['_dos'] = (df[avail_c] / df[vel_c].replace(0, float('nan'))).round(0).fillna(0)
         dos_use = '_dos'
     else:
         dos_use = dos_c
@@ -2191,29 +2188,23 @@ def show_inventory_unified():
         df_f = df_f[df_f[asin_c].astype(str).str.contains(search_asin, case=False, na=False)]
     if sel_store != "Всі" and store_c:
         df_f = df_f[df_f[store_c] == sel_store]
-    if alert_filter == "Low Stock <14д" and dos_use:
-        df_f = df_f[(df_f[dos_use].fillna(999) < 14) & (df_f[dos_use].fillna(999) > 0)]
+    if alert_filter == "Low Stock <30д" and dos_use:
+        df_f = df_f[(df_f[dos_use] > 0) & (df_f[dos_use] < 30)]
     elif alert_filter == "Out of Stock" and avail_c:
         df_f = df_f[df_f[avail_c] == 0]
     elif alert_filter == "Inbound є" and inb_c:
         df_f = df_f[df_f[inb_c] > 0]
 
-    # ── KPI ──
-    total_sku    = len(df_f)
-    total_avail  = int(df_f[avail_c].sum()) if avail_c else 0
-    total_value  = df_f['_stock_value'].sum()
-    total_inb    = int(df_f[inb_c].sum()) if inb_c else 0
-    total_res    = int(df_f[res_c].sum()) if res_c else 0
-    total_uns    = int(df_f[uns_c].sum()) if uns_c else 0
-    avg_price    = df_f[price_c][df_f[price_c] > 0].mean() if price_c else 0
-
-    # Low stock алерти
-    low_stock_cnt = 0
-    oos_cnt = 0
-    if dos_use:
-        low_stock_cnt = int(((df_f[dos_use].fillna(999) < 14) & (df_f[dos_use].fillna(999) > 0)).sum())
-    if avail_c:
-        oos_cnt = int((df_f[avail_c] == 0).sum())
+    # KPI
+    total_sku   = len(df_f)
+    total_avail = int(df_f[avail_c].sum()) if avail_c else 0
+    total_value = df_f['_value'].sum()
+    total_inb   = int(df_f[inb_c].sum()) if inb_c else 0
+    total_res   = int(df_f[res_c].sum()) if res_c else 0
+    total_uns   = int(df_f[uns_c].sum()) if uns_c else 0
+    oos_cnt     = int((df_f[avail_c] == 0).sum()) if avail_c else 0
+    low30_cnt   = int(((df_f[dos_use] > 0) & (df_f[dos_use] < 30)).sum()) if dos_use else 0
+    low14_cnt   = int(((df_f[dos_use] > 0) & (df_f[dos_use] < 14)).sum()) if dos_use else 0
 
     # ── Hero Card ──
     val_color = "#4CAF50" if total_value > 0 else "#888"
@@ -2240,18 +2231,53 @@ def show_inventory_unified():
     <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
       🔒 Reserved <b style="color:#FFC107">{total_res:,}</b>
     </span>
+    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      📦 OOS <b style="color:#F44336">{oos_cnt}</b>
+    </span>
   </div>
 </div>""", unsafe_allow_html=True)
-    if total_uns > 0:
-        st.error(f"❌ Unsellable: **{total_uns}** одиниць — перевір причину в Seller Central")
+
+    # ── Інсайти ──
+    _icols = st.columns(3)
+    if low14_cnt > 0:
+        with _icols[0]: insight_card("🔴", "Критичний Low Stock",
+            f"<b>{low14_cnt} SKU</b> залишилось менше <b>14 днів</b> — терміново поповни!", "#2b0d0d")
+    elif low30_cnt > 0:
+        with _icols[0]: insight_card("🟡", "Low Stock <30д",
+            f"<b>{low30_cnt} SKU</b> — менше 30 днів запасів", "#2b2400")
+    else:
+        with _icols[0]: insight_card("🟢", "Запаси в нормі",
+            "Всі активні SKU мають достатній запас", "#0d2b1e")
+
+    oos_pct = oos_cnt / total_sku * 100 if total_sku > 0 else 0
+    if oos_pct > 50:
+        with _icols[1]: insight_card("🔴", "Багато OOS",
+            f"<b>{oos_cnt} SKU ({oos_pct:.0f}%)</b> без залишків — перевір активність листингів", "#2b0d0d")
+    else:
+        with _icols[1]: insight_card("🟡", f"OOS: {oos_cnt} SKU",
+            f"{oos_cnt} SKU з нульовими залишками ({oos_pct:.0f}% від загального)", "#2b2400")
+
+    avg_price_val = df_f[price_c][df_f[price_c] > 0].mean() if price_c else 0
+    with _icols[2]: insight_card("💰", "Середня ціна",
+        f"Avg Price: <b>${avg_price_val:.2f}</b> · Вартість складу: <b>{_fmt(total_value)}</b>", "#1a1a2e")
+
+    st.markdown("---")
 
     # ── Алерти ──
-    if low_stock_cnt > 0:
-        st.error(f"🔴 **{low_stock_cnt} SKU** закінчаться за **<14 днів** — терміново поповни!")
+    if low14_cnt > 0:
+        urgent = df_f[(df_f[dos_use] > 0) & (df_f[dos_use] < 14)].sort_values(dos_use) if dos_use else pd.DataFrame()
+        st.error(f"🔴 **{low14_cnt} SKU** закінчаться за **<14 днів** — терміново!")
+        if not urgent.empty and sku_c:
+            cols_u = [c for c in [sku_c, avail_c, vel_c, dos_use, price_c] if c and c in urgent.columns]
+            st.dataframe(urgent[cols_u].rename(columns={sku_c:'SKU',avail_c:'Available',
+                         vel_c:'Velocity',dos_use:'Days',price_c:'Price'}).head(10),
+                         width="stretch", hide_index=True)
+    if low30_cnt > 0:
+        st.warning(f"🟡 **{low30_cnt} SKU** — менше 30 днів запасів")
     if oos_cnt > 0:
         st.warning(f"🟡 **{oos_cnt} SKU** з нульовими залишками (Out of Stock)")
-    if low_stock_cnt == 0 and oos_cnt == 0:
-        st.success("✅ Всі SKU в нормі — критичних проблем немає")
+    if total_uns > 0:
+        st.error(f"❌ Unsellable: **{total_uns}** одиниць")
 
     st.markdown("---")
 
@@ -2260,106 +2286,145 @@ def show_inventory_unified():
 
     with col1:
         st.markdown("#### 💰 Де заморожені гроші (Treemap)")
-        dm = df_f[df_f['_stock_value'] > 0].copy()
+        dm = df_f[df_f['_value'] > 0].copy()
         if not dm.empty and sku_c:
-            path = []
-            if store_c and store_c in dm.columns: path.append(store_c)
-            path.append(sku_c)
-            fig = px.treemap(dm, path=path, values='_stock_value',
-                             color='_stock_value', color_continuous_scale='RdYlGn_r',
-                             height=400)
+            path = [store_c, sku_c] if store_c and store_c in dm.columns else [sku_c]
+            fig = px.treemap(dm, path=path, values='_value',
+                             color='_value', color_continuous_scale='RdYlGn_r', height=380)
             fig.update_layout(margin=dict(l=0,r=0,t=10,b=0))
             st.plotly_chart(fig, width="stretch")
-        else:
-            st.info("Немає даних для treemap")
 
     with col2:
         st.markdown("#### 🏆 Топ 15 SKU за залишками")
         if avail_c and sku_c:
-            top = df_f.nlargest(15, avail_c)
+            top = df_f[df_f[avail_c] > 0].nlargest(15, avail_c)
             colors = []
             for _, row in top.iterrows():
-                dos_val = row.get(dos_use, 999) if dos_use else 999
-                if pd.isna(dos_val): dos_val = 999
-                if dos_val < 14:   colors.append('#F44336')
-                elif dos_val < 30: colors.append('#FFC107')
-                else:              colors.append('#4CAF50')
+                d = row.get(dos_use, 999) if dos_use else 999
+                colors.append('#F44336' if d < 14 else '#FFC107' if d < 30 else '#4CAF50')
             fig2 = go.Figure(go.Bar(
                 x=top[avail_c], y=top[sku_c], orientation='h',
                 marker_color=colors,
-                text=[f"{int(v)}" for v in top[avail_c]],
-                textposition='outside'
+                text=[f"{int(v)} units" for v in top[avail_c]], textposition='outside'
             ))
-            fig2.update_layout(height=400, yaxis={'categoryorder': 'total ascending'},
-                               margin=dict(l=0,r=40,t=10,b=0))
+            fig2.update_layout(height=380, yaxis={'categoryorder':'total ascending'},
+                               margin=dict(l=0,r=80,t=10,b=0))
             st.plotly_chart(fig2, width="stretch")
 
-    st.markdown("---")
+    # ── Age Analysis ──
+    if age_cols:
+        st.markdown("---")
+        st.markdown("#### 📦 Aging — вік товару на складі")
+        st.caption("🟢 <90д — норм · 🟡 91-180д — увага · 🔴 >180д — ризик LTSF-комісій")
 
-    # ── Days of Supply chart ──
+        age_labels = {
+            'age_0_90':    '🟢 0-90 днів',
+            'age_91_180':  '🟡 91-180 днів',
+            'age_181_270': '🟠 181-270 днів',
+            'age_271_365': '🔴 271-365 днів',
+            'age_365_plus':'⛔ 365+ днів',
+        }
+        age_data = []
+        for key, label in age_labels.items():
+            if key in age_cols:
+                col_name = age_cols[key]
+                total_units_age = df_f[col_name].sum()
+                total_val_age   = (df_f[col_name] * df_f[price_c]).sum() if price_c else 0
+                age_data.append({'Вік': label, 'Одиниць': int(total_units_age), 'Вартість': total_val_age})
+
+        if age_data:
+            df_age = pd.DataFrame(age_data)
+            col1, col2 = st.columns(2)
+            with col1:
+                colors_age = ['#4CAF50','#FFC107','#FF9800','#F44336','#B71C1C'][:len(df_age)]
+                fig_age = go.Figure(go.Bar(
+                    x=df_age['Одиниць'], y=df_age['Вік'], orientation='h',
+                    marker_color=colors_age,
+                    text=[f"{v:,} units" for v in df_age['Одиниць']], textposition='outside'
+                ))
+                fig_age.update_layout(height=300, title="Одиниць по віку",
+                                      margin=dict(l=0,r=80,t=30,b=0))
+                st.plotly_chart(fig_age, width="stretch")
+            with col2:
+                fig_pie = px.pie(df_age, values='Вартість', names='Вік',
+                                 color_discrete_sequence=['#4CAF50','#FFC107','#FF9800','#F44336','#B71C1C'],
+                                 hole=0.4, title="Вартість по віку")
+                fig_pie.update_layout(height=300)
+                st.plotly_chart(fig_pie, width="stretch")
+
+            # Топ старих SKU
+            old_cols = [age_cols[k] for k in ['age_181_270','age_271_365','age_365_plus'] if k in age_cols]
+            if old_cols and sku_c:
+                df_f['_old_units'] = df_f[old_cols].sum(axis=1)
+                old_sku = df_f[df_f['_old_units'] > 0].nlargest(10, '_old_units')
+                if not old_sku.empty:
+                    st.markdown("##### ⚠️ SKU з товаром старше 180 днів (ризик LTSF)")
+                    show_c = [c for c in [sku_c, avail_c, price_c, '_value', '_old_units'] + old_cols if c in old_sku.columns]
+                    st.dataframe(old_sku[show_c].rename(columns={
+                        sku_c:'SKU', avail_c:'Available', price_c:'Price',
+                        '_value':'Stock Value', '_old_units':'Old Units (180+d)'
+                    }).style.format({'Price':'${:.2f}','Stock Value':'${:,.0f}'}),
+                    width="stretch", hide_index=True)
+
+    # ── Velocity Chart ──
+    if vel_c and sku_c:
+        st.markdown("---")
+        st.markdown("#### 🚀 Топ 15 SKU за Velocity (продажів/місяць)")
+        top_vel = df_f[df_f[vel_c] > 0].nlargest(15, vel_c)
+        if not top_vel.empty:
+            fig_v = go.Figure(go.Bar(
+                x=top_vel[vel_c], y=top_vel[sku_c], orientation='h',
+                marker_color='#5B9BD5',
+                text=[f"{v:.1f}/міс" for v in top_vel[vel_c]], textposition='outside'
+            ))
+            fig_v.update_layout(height=max(300, len(top_vel)*35),
+                                yaxis={'categoryorder':'total ascending'},
+                                margin=dict(l=0,r=80,t=10,b=0))
+            st.plotly_chart(fig_v, width="stretch")
+
+    # ── DoS Chart ──
     if dos_use and sku_c:
-        st.markdown("#### ⏳ Days of Supply по SKU (топ 20 найризикованіших)")
-        df_dos = df_f[df_f[dos_use].fillna(999) < 60].nsmallest(20, dos_use)
+        st.markdown("---")
+        st.markdown("#### ⏳ Days of Supply (топ 20 ризикованих)")
+        df_dos = df_f[(df_f[dos_use] > 0) & (df_f[dos_use] < 60)].nsmallest(20, dos_use)
         if not df_dos.empty:
-            colors_dos = ['#F44336' if v < 14 else '#FFC107' if v < 30 else '#4CAF50'
-                          for v in df_dos[dos_use]]
+            colors_dos = ['#F44336' if v < 14 else '#FFC107' if v < 30 else '#4CAF50' for v in df_dos[dos_use]]
             fig3 = go.Figure(go.Bar(
                 x=df_dos[dos_use], y=df_dos[sku_c], orientation='h',
                 marker_color=colors_dos,
-                text=[f"{int(v)}д" for v in df_dos[dos_use]],
-                textposition='outside'
+                text=[f"{int(v)}д" for v in df_dos[dos_use]], textposition='outside'
             ))
-            fig3.add_vline(x=14, line_dash="dash", line_color="#F44336",
-                           annotation_text="14д критично")
-            fig3.add_vline(x=30, line_dash="dash", line_color="#FFC107",
-                           annotation_text="30д увага")
+            fig3.add_vline(x=14, line_dash="dash", line_color="#F44336", annotation_text="14д ⚠️")
+            fig3.add_vline(x=30, line_dash="dash", line_color="#FFC107", annotation_text="30д")
             fig3.update_layout(height=max(300, len(df_dos)*35),
-                               xaxis_title="Days of Supply",
-                               yaxis={'categoryorder': 'total ascending'},
+                               yaxis={'categoryorder':'total ascending'},
                                margin=dict(l=0,r=80,t=10,b=0))
             st.plotly_chart(fig3, width="stretch")
-        st.markdown("---")
 
     # ── Таблиця ──
+    st.markdown("---")
     st.markdown("#### 📋 Таблиця складу")
-    show_cols_map = {
-        sku_c:   'SKU',
-        asin_c:  'ASIN',
-        name_c:  'Назва',
-        avail_c: 'Available',
-        inb_c:   'Inbound',
-        res_c:   'Reserved',
-        price_c: 'Price',
-        vel_c:   'Velocity',
-        dos_use: 'Days of Supply',
-        store_c: 'Store',
-        '_stock_value': 'Stock Value',
-    }
-    show_cols = [c for c in show_cols_map if c and c in df_f.columns]
-    df_show = df_f[show_cols].rename(columns=show_cols_map).sort_values(
-        'Days of Supply' if 'Days of Supply' in [show_cols_map.get(c) for c in show_cols] else 'Available',
-        ascending=True
-    ).head(500)
-
-    fmt_dict = {}
-    if 'Price' in df_show.columns:       fmt_dict['Price']       = '${:.2f}'
-    if 'Stock Value' in df_show.columns: fmt_dict['Stock Value']  = '${:,.0f}'
-    if 'Days of Supply' in df_show.columns: fmt_dict['Days of Supply'] = '{:.0f}'
-
-    st.dataframe(
-        df_show.style.format(fmt_dict) if fmt_dict else df_show,
-        width="stretch", hide_index=True, height=450
-    )
+    show_map = {sku_c:'SKU', asin_c:'ASIN', name_c:'Назва', avail_c:'Available',
+                inb_c:'Inbound', res_c:'Reserved', price_c:'Price',
+                vel_c:'Velocity', dos_use:'DoS', store_c:'Store', '_value':'Value'}
+    show_c = [c for c in show_map if c and c in df_f.columns]
+    df_show = df_f[show_c].rename(columns=show_map).sort_values('DoS' if 'DoS' in [show_map[c] for c in show_c] else 'Available').head(500)
+    fmt = {}
+    if 'Price' in df_show.columns:  fmt['Price']  = '${:.2f}'
+    if 'Value' in df_show.columns:  fmt['Value']  = '${:,.0f}'
+    if 'DoS' in df_show.columns:    fmt['DoS']    = '{:.0f}'
+    st.dataframe(df_show.style.format(fmt) if fmt else df_show,
+                 width="stretch", hide_index=True, height=450)
     st.caption(f"Показано {len(df_show):,} з {len(df_f):,} SKU")
     st.download_button("📥 CSV", df_f.to_csv(index=False).encode(), "inventory.csv", "text/csv")
 
-    # ── AI Chat ──
-    ctx_inv = f"""Inventory: {total_sku} SKU | Available: {total_avail:,} | Value: {_fmt(total_value)}
-Low Stock <14д: {low_stock_cnt} | Out of Stock: {oos_cnt} | Inbound: {total_inb:,}"""
-    show_ai_chat(ctx_inv, [
+    # ── AI ──
+    ctx = f"""Inventory: {total_sku} SKU | Available: {total_avail:,} | Value: {_fmt(total_value)}
+Low Stock <14д: {low14_cnt} | Low Stock <30д: {low30_cnt} | OOS: {oos_cnt} | Inbound: {total_inb:,}"""
+    show_ai_chat(ctx, [
         "Які SKU під ризиком out-of-stock найближчі 14 днів?",
         "Де найбільше заморожених грошей?",
-        "Які SKU мають velocity > 0 але залишки < 30 днів?",
+        "Які SKU старше 180 днів — ризик LTSF?",
     ], "inventory")
 
 
