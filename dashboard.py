@@ -2543,6 +2543,15 @@ def _fin_load(table, date_col=None, limit=5000):
         return pd.DataFrame()
 
 
+def _fmt(v):
+    """$1.25M / $455K / $1,234"""
+    a = abs(v)
+    sign = "-" if v < 0 else ""
+    if a >= 1_000_000: return f"{sign}${a/1_000_000:.2f}M"
+    if a >= 1_000:     return f"{sign}${a/1_000:.1f}K"
+    return f"{sign}${a:,.0f}"
+
+
 def show_settlements(t):
     st.markdown("### 💰 Фінанси (Settlements / Fees)")
     st.caption("Виплати, комісії, компенсації — реальні дані SP-API")
@@ -2628,11 +2637,11 @@ def show_settlements(t):
     margin_pct = net / gross * 100 if gross > 0 else 0
 
     c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.metric("💰 Net Payout",  f"${net:,.0f}")
-    c2.metric("📈 Gross Sales", f"${gross:,.0f}")
-    c3.metric("🔄 Refunds",     f"${refs:,.0f}")
-    c4.metric("💸 Fees",        f"${fees:,.0f}")
-    c5.metric("🎫 Promotions",  f"${promos:,.0f}")
+    c1.metric("💰 Net Payout",  _fmt(net))
+    c2.metric("📈 Gross Sales", _fmt(gross))
+    c3.metric("🔄 Refunds",     _fmt(refs))
+    c4.metric("💸 Fees",        _fmt(fees))
+    c5.metric("🎫 Promotions",  _fmt(promos))
     c6.metric("📊 Маржа",       f"{margin_pct:.1f}%")
     st.caption(f"📋 {rows:,} транзакцій · {orders:,} замовлень · {d1} → {d2}")
 
