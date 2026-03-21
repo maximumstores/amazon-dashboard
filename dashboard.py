@@ -2545,276 +2545,309 @@ def _fin_load(table, date_col=None, limit=5000):
 
 def show_settlements(t):
     st.markdown("### 💰 Фінанси (Settlements / Fees)")
-    st.caption("Виплати, комісії, компенсації — всі фінансові таблиці SP-API")
+    st.caption("Виплати, комісії, компенсації — реальні дані SP-API")
 
-    # ── Sidebar фільтри (дата + валюта) ──
+    # ── Sidebar фільтри ──
     st.sidebar.markdown("---")
     st.sidebar.subheader("💰 Фільтри")
 
-    df_main = load_settlements()
-    if df_main.empty:
-        st.warning("⚠️ Таблиця settlements порожня — перевір ETL")
-        return
+    engine = get_engine()
 
-    currencies  = ['All'] + sorted(df_main['Currency'].dropna().unique().tolist())
-    sel_cur     = st.sidebar.selectbox(t["currency_select"], currencies,
-                                       index=1 if "USD" in currencies else 0)
-    min_date    = df_main['Posted Date'].min().date()
-    max_date    = df_main['Posted Date'].max().date()
-    date_range  = st.sidebar.date_input(
+    # Визначаємо діапазон дат з settlements
+    try:
+        with engine.connect() as conn:
+            bounds = pd.read_sql(text(
+                "SELECT MIN(posted_date)::date as mn, MAX(posted_date)::date as mx FROM settlements"
+            ), conn).iloc[0]
+        min_date = bounds['mn']
+        max_date = bounds['mx']
+    except Exception:
+        min_date = dt.date(2024, 1, 1)
+        max_date = dt.date.today()
+
+    date_range = st.sidebar.date_input(
         "📅 Діапазон:", value=(max_date - dt.timedelta(days=30), max_date),
         min_value=min_date, max_value=max_date, key="fin_date"
     )
+    if len(date_range) != 2:
+        st.warning("Оберіть діапазон дат"); return
+    d1, d2 = str(date_range[0]), str(date_range[1])
 
-    df_f = df_main.copy()
-    if sel_cur != 'All':
-        df_f = df_f[df_f['Currency'] == sel_cur]
-    if len(date_range) == 2:
-        df_f = df_f[(df_f['Posted Date'].dt.date >= date_range[0]) &
-                    (df_f['Posted Date'].dt.date <= date_range[1])]
+    # ══════════════════════════════════════════
+    # KPI з settlements
+    # ══════════════════════════════════════════
+    try:
+        with engine.connect() as conn:
+            kpi = pd.read_sql(text("""
+                SELECT
+                    SUM(CASE WHEN transaction_type = 'Transfer'
+                        THEN amount::numeric ELSE 0 END)                     AS net_payout,
+                    SUM(CASE WHEN amount_type = 'ItemPrice' AND amount::numeric > 0
+                        THEN amount::numeric ELSE 0 END)                     AS gross_sales,
+                    SUM(CASE WHEN transaction_type = 'Refund'
+                        THEN amount::numeric ELSE 0 END)                     AS refunds,
+                    SUM(CASE WHEN amount_type = 'ItemFees'
+                        THEN amount::numeric ELSE 0 END)                     AS fees,
+                    COUNT(DISTINCT order_id) FILTER (WHERE order_id IS NOT NULL
+                        AND order_id != '')                                   AS orders_count,
+                    COUNT(*)                                                  AS total_rows
+                FROM settlements
+                WHERE posted_date >= :d1 AND posted_date <= :d2
+            """), conn, params={"d1": d1, "d2": d2}).iloc[0]
+    except Exception as e:
+        st.error(f"Помилка завантаження settlements: {e}"); return
 
-    if df_f.empty:
-        st.warning("Немає даних за обраний період."); return
+    net    = float(kpi['net_payout']  or 0)
+    gross  = float(kpi['gross_sales'] or 0)
+    refs   = float(kpi['refunds']     or 0)
+    fees   = float(kpi['fees']        or 0)
+    orders = int(kpi['orders_count']  or 0)
+    rows   = int(kpi['total_rows']    or 0)
 
-    # ── Топ KPI ──
-    sym     = "$" if sel_cur in ['USD', 'CAD', 'All'] else ""
-    net     = df_f['Amount'].sum()
-    gross   = df_f[(df_f['Transaction Type'] == 'Order') & (df_f['Amount'] > 0)]['Amount'].sum()
-    refunds = df_f[df_f['Transaction Type'] == 'Refund']['Amount'].sum()
-    fees    = df_f[(df_f['Amount'] < 0) & (df_f['Transaction Type'] != 'Refund')]['Amount'].sum()
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric(t['net_payout'],   f"{sym}{net:,.0f}")
-    c2.metric(t['gross_sales'],  f"{sym}{gross:,.0f}")
-    c3.metric(t['total_refunds'],f"{sym}{refunds:,.0f}")
-    c4.metric(t['total_fees'],   f"{sym}{fees:,.0f}")
+    c1,c2,c3,c4,c5 = st.columns(5)
+    c1.metric("💰 Net Payout",      f"${net:,.0f}")
+    c2.metric("📈 Gross Sales",     f"${gross:,.0f}")
+    c3.metric("🔄 Refunds",         f"${refs:,.0f}")
+    c4.metric("💸 Amazon Fees",     f"${fees:,.0f}")
+    c5.metric("🛒 Orders",          f"{orders:,}")
+    st.caption(f"📋 {rows:,} транзакцій за період {d1} → {d2}")
     st.markdown("---")
 
-    # ── Табы ──
-    tab_labels = [
-        "🏦 Settlements",
-        "🔄 Reimbursements",
-        "💸 FBA Fees",
-        "🗄️ Storage",
-        "⏳ Long-Term Storage",
-        "📊 Finance Events",
-    ]
-    tabs = st.tabs(tab_labels)
+    # ══════════════════════════════════════════
+    # ТАБИ
+    # ══════════════════════════════════════════
+    tabs = st.tabs(["🏦 Settlements", "📊 Finance Events", "💳 Event Groups"])
 
-    # ── TAB 1: Settlements ──
+    # ── TAB 1: Settlements ────────────────────
     with tabs[0]:
-        col1, col2 = st.columns([2, 1])
+        col1, col2 = st.columns(2)
+
         with col1:
-            st.markdown("#### 📈 Тренд виплат")
-            dt_ = df_f.groupby(df_f['Posted Date'].dt.date)['Amount'].sum().reset_index()
-            dt_.columns = ['Date', 'Net Amount']
-            fig = go.Figure(go.Bar(
-                x=dt_['Date'], y=dt_['Net Amount'],
-                marker_color=dt_['Net Amount'].apply(lambda x: '#4CAF50' if x >= 0 else '#F44336')
-            ))
-            fig.update_layout(height=380, yaxis_title=f"Net ({sel_cur})",
-                               margin=dict(l=0, r=0, t=10, b=0))
-            st.plotly_chart(fig, width="stretch")
-        with col2:
-            st.markdown("#### 💸 Структура витрат")
-            df_costs = df_f[df_f['Amount'] < 0]
-            if not df_costs.empty:
-                cb = df_costs.groupby('Transaction Type')['Amount'].sum().abs().reset_index()
-                fig2 = px.pie(cb, values='Amount', names='Transaction Type', hole=0.4)
-                fig2.update_layout(height=380)
-                st.plotly_chart(fig2, width="stretch")
-            else:
-                st.info("Немає витрат у цьому періоді")
-
-        st.markdown("#### 📋 Транзакції")
-        disp = ['Posted Date', 'Transaction Type', 'Order ID', 'SKU', 'Amount', 'Currency']
-        st.dataframe(
-            df_f[[c for c in disp if c in df_f.columns]]
-              .sort_values('Posted Date', ascending=False).head(200),
-            width="stretch", hide_index=True
-        )
-        st.download_button("📥 CSV", df_f.to_csv(index=False).encode(), "settlements.csv", "text/csv")
-        insights_settlements(df_f)
-
-    # ── TAB 2: Reimbursements ──
-    with tabs[1]:
-        df_rei = _fin_load('fba_reimbursements', date_col='approval_date')
-        if df_rei.empty:
-            st.info("⏳ Таблиця fba_reimbursements порожня або ще не завантажена")
-        else:
-            # KPI
-            amt_col = next((c for c in ['amount_total','amount','reimbursement_amount'] if c in df_rei.columns), None)
-            if amt_col:
-                df_rei[amt_col] = pd.to_numeric(df_rei[amt_col], errors='coerce').fillna(0)
-                total_rei = df_rei[amt_col].sum()
-                c1, c2, c3 = st.columns(3)
-                c1.metric("💰 Всього компенсацій", f"${total_rei:,.2f}")
-                c2.metric("📦 Кейсів", f"{len(df_rei):,}")
-                type_col = next((c for c in ['reimbursement_type','reason','type'] if c in df_rei.columns), None)
-                if type_col:
-                    c3.metric("🔢 Типів", df_rei[type_col].nunique())
-                st.markdown("---")
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("#### 💰 Топ 10 SKU за компенсаціями")
-                    sku_col = next((c for c in ['sku','SKU'] if c in df_rei.columns), None)
-                    if sku_col:
-                        top = df_rei.groupby(sku_col)[amt_col].sum().nlargest(10).reset_index()
-                        fig = px.bar(top, x=amt_col, y=sku_col, orientation='h',
-                                     color=amt_col, color_continuous_scale='Greens')
-                        fig.update_layout(height=350, yaxis={'categoryorder': 'total ascending'})
-                        st.plotly_chart(fig, width="stretch")
-                with col2:
-                    if type_col:
-                        st.markdown("#### 📊 По типах компенсацій")
-                        tc = df_rei.groupby(type_col)[amt_col].sum().abs().reset_index()
-                        fig2 = px.pie(tc, values=amt_col, names=type_col, hole=0.4)
-                        fig2.update_layout(height=350)
-                        st.plotly_chart(fig2, width="stretch")
-
-            st.dataframe(df_rei.head(200), width="stretch", hide_index=True)
-            st.download_button("📥 CSV", df_rei.to_csv(index=False).encode(), "reimbursements.csv", "text/csv")
-
-    # ── TAB 3: FBA Fee Estimates ──
-    with tabs[2]:
-        df_fee = _fin_load('fba_fee_estimates')
-        if df_fee.empty:
-            st.info("⏳ Таблиця fba_fee_estimates порожня або ще не завантажена")
-        else:
-            fee_col = next((c for c in ['total_fee_estimate','fee_estimate','total_fee','fee'] if c in df_fee.columns), None)
-            if fee_col:
-                df_fee[fee_col] = pd.to_numeric(df_fee[fee_col], errors='coerce').fillna(0)
-                c1, c2 = st.columns(2)
-                c1.metric("💸 Загальні комісії (estimate)", f"${df_fee[fee_col].sum():,.2f}")
-                c2.metric("📦 SKU", f"{len(df_fee):,}")
-                st.markdown("---")
-                st.markdown("#### 💸 Топ 20 SKU за комісіями")
-                sku_col = next((c for c in ['seller_sku','sku','SKU','asin','ASIN'] if c in df_fee.columns), None)
-                if sku_col:
-                    top = df_fee.groupby(sku_col)[fee_col].sum().nlargest(20).reset_index()
-                    fig = px.bar(top, x=fee_col, y=sku_col, orientation='h',
-                                 color=fee_col, color_continuous_scale='Reds')
-                    fig.update_layout(height=500, yaxis={'categoryorder': 'total ascending'})
-                    st.plotly_chart(fig, width="stretch")
-            st.dataframe(df_fee.head(200), width="stretch", hide_index=True)
-            st.download_button("📥 CSV", df_fee.to_csv(index=False).encode(), "fba_fee_estimates.csv", "text/csv")
-
-    # ── TAB 4: Storage Fees ──
-    with tabs[3]:
-        df_stor = _fin_load('fba_storage_fees', date_col='storage_fee_date')
-        if df_stor.empty:
-            # try overage
-            df_stor = _fin_load('fba_overage_fees', date_col='storage_fee_date')
-        if df_stor.empty:
-            st.info("⏳ Таблиці fba_storage_fees / fba_overage_fees порожні або ще не завантажені")
-        else:
-            fee_col = next((c for c in ['storage_fee','fee_amount','amount','total_fee'] if c in df_stor.columns), None)
-            if fee_col:
-                df_stor[fee_col] = pd.to_numeric(df_stor[fee_col], errors='coerce').fillna(0)
-                c1, c2 = st.columns(2)
-                c1.metric("🗄️ Загальні витрати на зберігання", f"${df_stor[fee_col].sum():,.2f}")
-                c2.metric("📦 Записів", f"{len(df_stor):,}")
-                st.markdown("---")
-                col1, col2 = st.columns(2)
-                with col1:
-                    sku_col = next((c for c in ['sku','SKU','asin','ASIN','fnsku'] if c in df_stor.columns), None)
-                    if sku_col:
-                        st.markdown("#### 🏆 Топ SKU за вартістю зберігання")
-                        top = df_stor.groupby(sku_col)[fee_col].sum().nlargest(15).reset_index()
-                        fig = px.bar(top, x=fee_col, y=sku_col, orientation='h',
-                                     color=fee_col, color_continuous_scale='Oranges')
-                        fig.update_layout(height=400, yaxis={'categoryorder': 'total ascending'})
-                        st.plotly_chart(fig, width="stretch")
-                with col2:
-                    cat_col = next((c for c in ['storage_type','product_category','category'] if c in df_stor.columns), None)
-                    if cat_col:
-                        st.markdown("#### 📊 По категоріях")
-                        cc = df_stor.groupby(cat_col)[fee_col].sum().reset_index()
-                        fig2 = px.pie(cc, values=fee_col, names=cat_col, hole=0.4)
-                        fig2.update_layout(height=400)
-                        st.plotly_chart(fig2, width="stretch")
-            st.dataframe(df_stor.head(200), width="stretch", hide_index=True)
-            st.download_button("📥 CSV", df_stor.to_csv(index=False).encode(), "storage_fees.csv", "text/csv")
-
-    # ── TAB 5: Long-Term Storage ──
-    with tabs[4]:
-        df_ltsf = _fin_load('fba_ltsf_fees', date_col='snapshot_date')
-        if df_ltsf.empty:
-            st.info("⏳ Таблиця fba_ltsf_fees порожня або ще не завантажена")
-        else:
-            fee_col = next((c for c in ['projected_ltsf','ltsf_fee','fee_amount','amount'] if c in df_ltsf.columns), None)
-            if fee_col:
-                df_ltsf[fee_col] = pd.to_numeric(df_ltsf[fee_col], errors='coerce').fillna(0)
-                c1, c2 = st.columns(2)
-                c1.metric("⏳ LTSF загалом", f"${df_ltsf[fee_col].sum():,.2f}")
-                c2.metric("📦 SKU під LTSF", f"{len(df_ltsf):,}")
-                st.markdown("---")
-                sku_col = next((c for c in ['sku','SKU','asin','ASIN','fnsku'] if c in df_ltsf.columns), None)
-                if sku_col:
-                    top = df_ltsf.nlargest(20, fee_col)[[sku_col, fee_col]]
-                    fig = px.bar(top, x=fee_col, y=sku_col, orientation='h',
-                                 color=fee_col, color_continuous_scale='Reds',
-                                 title="Топ 20 SKU за LTSF")
-                    fig.update_layout(height=500, yaxis={'categoryorder': 'total ascending'})
-                    st.plotly_chart(fig, width="stretch")
-            st.dataframe(df_ltsf.head(200), width="stretch", hide_index=True)
-            st.download_button("📥 CSV", df_ltsf.to_csv(index=False).encode(), "ltsf_fees.csv", "text/csv")
-
-    # ── TAB 6: Finance Events ──
-    with tabs[5]:
-        # Finance events — фільтруємо по даті прямо в SQL (там 1M+ рядків)
-        try:
-            engine = get_engine()
-            with engine.connect() as conn:
-                df_fe = pd.read_sql(text(f'''
-                    SELECT * FROM finance_events
-                    WHERE posted_date >= :d1 AND posted_date <= :d2
-                    ORDER BY posted_date DESC
-                    LIMIT 10000
-                '''), conn, params={"d1": str(date_range[0]), "d2": str(date_range[1])})
-        except Exception:
-            df_fe = pd.DataFrame()
-        if df_fe.empty:
+            st.markdown("#### 📈 Тренд — net за день")
             try:
-                engine = get_engine()
                 with engine.connect() as conn:
-                    df_fe = pd.read_sql(text(f'''
-                        SELECT * FROM finance_event_groups
-                        WHERE fund_transfer_date >= :d1 AND fund_transfer_date <= :d2
-                        ORDER BY fund_transfer_date DESC LIMIT 5000
-                    '''), conn, params={"d1": str(date_range[0]), "d2": str(date_range[1])})
-            except Exception:
-                df_fe = pd.DataFrame()
-        if df_fe.empty:
-            st.info("⏳ Таблиці finance_events / finance_event_groups порожні або ще не завантажені")
-        else:
-            st.markdown(f"#### 📊 Finance Events — {len(df_fe):,} записів")
-            amt_col = next((c for c in ['amount','amount_value','total_amount','fee_amount'] if c in df_fe.columns), None)
-            if amt_col:
-                df_fe[amt_col] = pd.to_numeric(df_fe[amt_col], errors='coerce').fillna(0)
-                c1, c2 = st.columns(2)
-                c1.metric("💰 Загальна сума", f"${df_fe[amt_col].sum():,.2f}")
-                type_col = next((c for c in ['event_type','transaction_type','type'] if c in df_fe.columns), None)
-                if type_col:
-                    c2.metric("🔢 Типів подій", df_fe[type_col].nunique())
-                    st.markdown("#### 📊 По типах подій")
-                    tc = df_fe.groupby(type_col)[amt_col].sum().reset_index().sort_values(amt_col)
-                    fig = px.bar(tc, x=amt_col, y=type_col, orientation='h',
-                                 color=amt_col, color_continuous_scale='RdYlGn')
-                    fig.update_layout(height=max(350, len(tc)*35))
+                    daily = pd.read_sql(text("""
+                        SELECT posted_date::date AS date,
+                               SUM(amount::numeric) AS net
+                        FROM settlements
+                        WHERE posted_date >= :d1 AND posted_date <= :d2
+                        GROUP BY 1 ORDER BY 1
+                    """), conn, params={"d1": d1, "d2": d2})
+                fig = go.Figure(go.Bar(
+                    x=daily['date'], y=daily['net'],
+                    marker_color=daily['net'].apply(lambda x: '#4CAF50' if x >= 0 else '#F44336')
+                ))
+                fig.update_layout(height=360, margin=dict(l=0,r=0,t=10,b=0))
+                st.plotly_chart(fig, width="stretch")
+            except Exception as e:
+                st.error(str(e))
+
+        with col2:
+            st.markdown("#### 💸 По типах amount_type")
+            try:
+                with engine.connect() as conn:
+                    by_type = pd.read_sql(text("""
+                        SELECT amount_type,
+                               SUM(amount::numeric) AS total
+                        FROM settlements
+                        WHERE posted_date >= :d1 AND posted_date <= :d2
+                          AND amount_type IS NOT NULL AND amount_type != ''
+                        GROUP BY 1 ORDER BY 2 DESC
+                        LIMIT 15
+                    """), conn, params={"d1": d1, "d2": d2})
+                costs = by_type[by_type['total'] < 0].copy()
+                income = by_type[by_type['total'] > 0].copy()
+                if not costs.empty:
+                    costs['total'] = costs['total'].abs()
+                    fig2 = px.pie(costs, values='total', names='amount_type', hole=0.4,
+                                  title="Витрати (fees/refunds)")
+                    fig2.update_layout(height=360)
+                    st.plotly_chart(fig2, width="stretch")
+            except Exception as e:
+                st.error(str(e))
+
+        st.markdown("#### 📊 По transaction_type")
+        try:
+            with engine.connect() as conn:
+                by_tt = pd.read_sql(text("""
+                    SELECT transaction_type,
+                           COUNT(*) AS cnt,
+                           SUM(amount::numeric) AS total
+                    FROM settlements
+                    WHERE posted_date >= :d1 AND posted_date <= :d2
+                    GROUP BY 1 ORDER BY ABS(SUM(amount::numeric)) DESC
+                """), conn, params={"d1": d1, "d2": d2})
+            st.dataframe(
+                by_tt.style.format({'total': '${:,.2f}'}),
+                width="stretch", hide_index=True
+            )
+        except Exception as e:
+            st.error(str(e))
+
+        st.markdown("#### 📋 Останні транзакції")
+        try:
+            with engine.connect() as conn:
+                df_raw = pd.read_sql(text("""
+                    SELECT posted_date, transaction_type, amount_type,
+                           order_id, sku, amount, currency, marketplace_name
+                    FROM settlements
+                    WHERE posted_date >= :d1 AND posted_date <= :d2
+                    ORDER BY posted_date DESC LIMIT 500
+                """), conn, params={"d1": d1, "d2": d2})
+            st.dataframe(df_raw, width="stretch", hide_index=True, height=400)
+            st.download_button("📥 CSV",
+                df_raw.to_csv(index=False).encode(), "settlements.csv", "text/csv")
+        except Exception as e:
+            st.error(str(e))
+
+        insights_settlements_v2(net, gross, refs, fees)
+
+    # ── TAB 2: Finance Events ─────────────────
+    with tabs[1]:
+        st.markdown("#### 📊 Finance Events — по типах подій")
+        try:
+            with engine.connect() as conn:
+                ev_types = pd.read_sql(text("""
+                    SELECT event_type,
+                           COUNT(*)           AS cnt,
+                           SUM(amount::numeric) AS total
+                    FROM finance_events
+                    WHERE posted_date >= :d1 AND posted_date <= :d2
+                    GROUP BY 1 ORDER BY ABS(SUM(amount::numeric)) DESC
+                    LIMIT 30
+                """), conn, params={"d1": d1, "d2": d2})
+
+            if not ev_types.empty:
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig = px.bar(ev_types.sort_values('total'),
+                                 x='total', y='event_type', orientation='h',
+                                 color='total', color_continuous_scale='RdYlGn',
+                                 title="Сума по event_type")
+                    fig.update_layout(height=max(400, len(ev_types)*30))
                     st.plotly_chart(fig, width="stretch")
-            st.dataframe(df_fe.head(200), width="stretch", hide_index=True)
-            st.download_button("📥 CSV", df_fe.to_csv(index=False).encode(), "finance_events.csv", "text/csv")
+                with col2:
+                    st.dataframe(
+                        ev_types.style.format({'total': '${:,.2f}'}),
+                        width="stretch", hide_index=True
+                    )
+        except Exception as e:
+            st.error(f"finance_events: {e}")
+
+        st.markdown("#### 💸 По charge_type (комісії)")
+        try:
+            with engine.connect() as conn:
+                charges = pd.read_sql(text("""
+                    SELECT charge_type,
+                           COUNT(*)             AS cnt,
+                           SUM(amount::numeric) AS total
+                    FROM finance_events
+                    WHERE posted_date >= :d1 AND posted_date <= :d2
+                      AND charge_type IS NOT NULL AND charge_type != ''
+                    GROUP BY 1 ORDER BY SUM(amount::numeric) ASC
+                    LIMIT 20
+                """), conn, params={"d1": d1, "d2": d2})
+
+            if not charges.empty:
+                col1, col2 = st.columns(2)
+                with col1:
+                    colors = ['#F44336' if v < 0 else '#4CAF50' for v in charges['total']]
+                    fig2 = go.Figure(go.Bar(
+                        x=charges['total'], y=charges['charge_type'],
+                        orientation='h', marker_color=colors,
+                        text=[f"${v:,.0f}" for v in charges['total']],
+                        textposition='outside'
+                    ))
+                    fig2.update_layout(height=max(400, len(charges)*35),
+                                       title="Charge Types (витрати знизу)")
+                    st.plotly_chart(fig2, width="stretch")
+                with col2:
+                    st.dataframe(
+                        charges.style.format({'total': '${:,.2f}'}),
+                        width="stretch", hide_index=True
+                    )
+        except Exception as e:
+            st.info(f"charge_type: {e}")
+
+        st.markdown("#### 📦 По SKU (топ витрат)")
+        try:
+            with engine.connect() as conn:
+                by_sku = pd.read_sql(text("""
+                    SELECT seller_sku AS sku,
+                           COUNT(*)             AS cnt,
+                           SUM(amount::numeric) AS total
+                    FROM finance_events
+                    WHERE posted_date >= :d1 AND posted_date <= :d2
+                      AND seller_sku IS NOT NULL AND seller_sku != ''
+                    GROUP BY 1 ORDER BY SUM(amount::numeric) ASC
+                    LIMIT 20
+                """), conn, params={"d1": d1, "d2": d2})
+            if not by_sku.empty:
+                st.dataframe(by_sku.style.format({'total': '${:,.2f}'}),
+                             width="stretch", hide_index=True)
+        except Exception:
+            pass  # колонка може не існувати
+
+    # ── TAB 3: Event Groups (settlement periods) ──
+    with tabs[2]:
+        st.markdown("#### 💳 Settlement Periods (Finance Event Groups)")
+        try:
+            with engine.connect() as conn:
+                grp = pd.read_sql(text("""
+                    SELECT fund_transfer_date, processing_start_date,
+                           processing_end_date,
+                           original_total::numeric  AS total,
+                           converted_total::numeric AS converted,
+                           currency_code,
+                           fund_transfer_state
+                    FROM finance_event_groups
+                    ORDER BY fund_transfer_date DESC
+                """), conn)
+            if not grp.empty:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("💰 Всього виплат",    f"${grp['total'].sum():,.0f}")
+                c2.metric("📋 Periods",           f"{len(grp)}")
+                c3.metric("💱 Остання виплата",  f"${grp['total'].iloc[0]:,.0f}" if len(grp) else "—")
+                st.dataframe(
+                    grp.style.format({'total': '${:,.2f}', 'converted': '${:,.2f}'}),
+                    width="stretch", hide_index=True
+                )
+            else:
+                st.info("Даних немає")
+        except Exception as e:
+            st.error(f"finance_event_groups: {e}")
 
     # ── AI Chat ──
     st.markdown("---")
-    ctx_set = f"""Фінанси: Net ${net:,.0f} | Gross ${gross:,.0f} | Refunds ${refunds:,.0f} | Fees ${fees:,.0f}"""
-    show_ai_chat(ctx_set, [
+    ctx = f"""Фінанси settlements:
+Net Payout: ${net:,.0f} | Gross: ${gross:,.0f} | Refunds: ${refs:,.0f} | Fees: ${fees:,.0f}
+Orders: {orders:,} | Транзакцій: {rows:,} | Період: {d1} → {d2}"""
+    show_ai_chat(ctx, [
         "Який місяць приніс найбільший net payout?",
-        "Яка частка рефандів від gross sales?",
-        "Де найвищі FBA fees? Топ SKU за комісіями",
+        "Яка частка комісій від gross sales?",
+        "Де найвищі витрати по charge_type?",
     ], "settlements")
+
+
+def insights_settlements_v2(net, gross, refs, fees):
+    st.markdown("---")
+    st.markdown("### 🧠 Автоматичні інсайти")
+    margin_pct = net/gross*100 if gross > 0 else 0
+    fee_pct    = abs(fees)/gross*100 if gross > 0 else 0
+    ref_pct    = abs(refs)/gross*100 if gross > 0 else 0
+    cols = st.columns(3)
+    if margin_pct >= 30:   txt, em, col = f"Маржа <b>{margin_pct:.1f}%</b> — відмінно!", "🟢", "#0d2b1e"
+    elif margin_pct >= 15: txt, em, col = f"Маржа <b>{margin_pct:.1f}%</b> — норма для FBA.", "🟡", "#2b2400"
+    else:                  txt, em, col = f"Маржа <b>{margin_pct:.1f}%</b> — низько!", "🔴", "#2b0d0d"
+    with cols[0]: insight_card(em, "Чиста маржа", txt, col)
+    if fee_pct <= 30:   txt, em, col = f"Комісії <b>{fee_pct:.1f}%</b> — норма.", "🟢", "#0d2b1e"
+    elif fee_pct <= 40: txt, em, col = f"Комісії <b>{fee_pct:.1f}%</b> — трохи багато.", "🟡", "#2b2400"
+    else:               txt, em, col = f"Комісії <b>{fee_pct:.1f}%</b> — занадто!", "🔴", "#2b0d0d"
+    with cols[1]: insight_card(em, "Навантаження комісій", txt, col)
+    if ref_pct <= 3:   txt, em, col = f"Повернення <b>{ref_pct:.1f}%</b> — відмінно.", "🟢", "#0d2b1e"
+    elif ref_pct <= 8: txt, em, col = f"Повернення <b>{ref_pct:.1f}%</b> — помірно.", "🟡", "#2b2400"
+    else:              txt, em, col = f"Повернення <b>{ref_pct:.1f}%</b> — критично!", "🔴", "#2b0d0d"
+    with cols[2]: insight_card(em, "Повернення", txt, col)
 
 
 def show_returns(t=None):
@@ -3408,4 +3441,3 @@ elif report_choice == "ℹ️ Про додаток":              show_about()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
- 
