@@ -2101,129 +2101,272 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 
 def show_inventory_unified():
     st.markdown("### 📦 Склад (Inventory)")
-    import psycopg2, pandas as _pd
-    from sqlalchemy import create_engine as _ce, text as _text
 
-    _db_url = os.environ.get("DATABASE_URL", "").replace("postgres://", "postgresql://")
-    _engine = _ce(_db_url)
+    engine = get_engine()
 
+    # ── Завантажуємо реальні колонки ──
     try:
-        with _engine.connect() as _ec:
-            _kpi = _pd.read_sql(_text("""
-                SELECT
-                    COUNT(*)                                                    AS total_sku,
-                    COALESCE(SUM(afn_fulfillable_quantity), 0)                  AS fulfillable,
-                    COALESCE(SUM(afn_unsellable_quantity), 0)                   AS unsellable,
-                    COUNT(*) FILTER (WHERE days_of_supply < 14)                 AS low_stock,
-                    COUNT(*) FILTER (WHERE recommended_replenishment_qty > 0)   AS need_restock,
-                    COUNT(*) FILTER (WHERE stranded_reason IS NOT NULL)         AS stranded,
-                    COALESCE(SUM(sales_last_30_days), 0)                        AS sales_30d,
-                    MAX(snapshot_date)                                          AS snapshot_date
-                FROM spapi.inventory_summary
-            """), _ec).iloc[0]
-
-        total_sku    = int(_kpi['total_sku'])
-        fulfillable  = int(_kpi['fulfillable'])
-        unsellable   = int(_kpi['unsellable'])
-        low_stock    = int(_kpi['low_stock'])
-        need_restock = int(_kpi['need_restock'])
-        stranded     = int(_kpi['stranded'])
-        sales_30d    = float(_kpi['sales_30d'])
-        snapshot_date = str(_kpi['snapshot_date'])[:10]
-
+        with engine.connect() as conn:
+            cols_df = pd.read_sql(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name='fba_inventory' ORDER BY ordinal_position"
+            ), conn)
+        real_cols = cols_df['column_name'].tolist()
     except Exception as e:
-        st.error(f"Помилка вітрини: {e}")
-        st.info("Спочатку запусти `create_inventory_summary.sql` в БД")
-        return
+        st.error(f"Помилка читання схеми fba_inventory: {e}"); return
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("📦 Total SKU",       f"{total_sku:,}")
-    k2.metric("⚠️ Low Stock <14d",  f"{low_stock:,}")
-    k3.metric("🔒 Stranded",        f"{stranded:,}")
-    k4.metric("🔄 Need Restock",    f"{need_restock:,}")
+    # маппінг колонок
+    col_map = {}
+    for c in real_cols:
+        lc = c.lower().replace(' ', '_').replace('-', '_')
+        if lc in ('sku', 'seller_sku'):                col_map['sku']       = c
+        elif lc == 'asin':                             col_map['asin']      = c
+        elif lc in ('available', 'afn_fulfillable_quantity'): col_map['available'] = c
+        elif lc in ('price', 'your_price'):            col_map['price']     = c
+        elif lc in ('velocity', 'sales_velocity'):     col_map['velocity']  = c
+        elif lc in ('days_of_supply', 'days_supply'):  col_map['dos']       = c
+        elif lc in ('inbound_quantity', 'inbound'):    col_map['inbound']   = c
+        elif lc in ('reserved_quantity', 'reserved'):  col_map['reserved']  = c
+        elif lc in ('store_name', 'marketplace', 'market_place'): col_map['store'] = c
+        elif lc in ('product_name', 'title', 'name'):  col_map['name']      = c
+        elif lc in ('afn_unsellable_quantity', 'unsellable'): col_map['unsellable'] = c
 
-    c1, c2 = st.columns(2)
-    search_sku  = c1.text_input("🔍 SKU", "")
-    search_asin = c2.text_input("🔍 ASIN", "")
-    st.caption(f"📅 Snapshot: {snapshot_date}")
+    sku_c  = col_map.get('sku')
+    asin_c = col_map.get('asin')
+    avail_c = col_map.get('available')
+    price_c = col_map.get('price')
+    vel_c   = col_map.get('velocity')
+    dos_c   = col_map.get('dos')
+    inb_c   = col_map.get('inbound')
+    res_c   = col_map.get('reserved')
+    store_c = col_map.get('store')
+    name_c  = col_map.get('name')
+    uns_c   = col_map.get('unsellable')
+
+    # ── Sidebar фільтри ──
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📦 Фільтри складу")
+    search_sku  = st.sidebar.text_input("🔍 SKU", "", key="inv_sku")
+    search_asin = st.sidebar.text_input("🔍 ASIN", "", key="inv_asin")
+
+    stores_list = []
+    if store_c:
+        try:
+            with engine.connect() as conn:
+                stores_df = pd.read_sql(text(f'SELECT DISTINCT "{store_c}" FROM fba_inventory WHERE "{store_c}" IS NOT NULL'), conn)
+            stores_list = sorted(stores_df.iloc[:,0].dropna().tolist())
+        except Exception:
+            pass
+    sel_store = st.sidebar.selectbox("🏪 Магазин:", ["Всі"] + stores_list, key="inv_store")
+    alert_filter = st.sidebar.selectbox("⚠️ Фільтр алертів:", ["Всі", "Low Stock <14д", "Out of Stock", "Inbound є"], key="inv_alert")
+
+    # ── Завантажуємо дані ──
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(text("SELECT * FROM fba_inventory"), conn)
+    except Exception as e:
+        st.error(f"Помилка: {e}"); return
+
+    if df.empty:
+        st.warning("Таблиця fba_inventory порожня"); return
+
+    # нормалізуємо числові колонки
+    for col_key, col_name in [(avail_c,'avail'),(price_c,'price'),(vel_c,'vel'),(dos_c,'dos'),(inb_c,'inb'),(res_c,'res'),(uns_c,'uns')]:
+        if col_key and col_key in df.columns:
+            df[col_key] = pd.to_numeric(df[col_key].replace('', None), errors='coerce').fillna(0)
+
+    # Stock Value
+    if avail_c and price_c:
+        df['_stock_value'] = df[avail_c] * df[price_c]
+    else:
+        df['_stock_value'] = 0
+
+    # Days of Supply розрахунок якщо немає
+    if not dos_c and vel_c and avail_c:
+        df['_dos'] = (df[avail_c] / df[vel_c].replace(0, float('nan'))).round(0)
+        dos_use = '_dos'
+    else:
+        dos_use = dos_c
+
+    # Фільтри
+    df_f = df.copy()
+    if search_sku and sku_c:
+        df_f = df_f[df_f[sku_c].astype(str).str.contains(search_sku, case=False, na=False)]
+    if search_asin and asin_c:
+        df_f = df_f[df_f[asin_c].astype(str).str.contains(search_asin, case=False, na=False)]
+    if sel_store != "Всі" and store_c:
+        df_f = df_f[df_f[store_c] == sel_store]
+    if alert_filter == "Low Stock <14д" and dos_use:
+        df_f = df_f[(df_f[dos_use].fillna(999) < 14) & (df_f[dos_use].fillna(999) > 0)]
+    elif alert_filter == "Out of Stock" and avail_c:
+        df_f = df_f[df_f[avail_c] == 0]
+    elif alert_filter == "Inbound є" and inb_c:
+        df_f = df_f[df_f[inb_c] > 0]
+
+    # ── KPI ──
+    total_sku    = len(df_f)
+    total_avail  = int(df_f[avail_c].sum()) if avail_c else 0
+    total_value  = df_f['_stock_value'].sum()
+    total_inb    = int(df_f[inb_c].sum()) if inb_c else 0
+    total_res    = int(df_f[res_c].sum()) if res_c else 0
+    total_uns    = int(df_f[uns_c].sum()) if uns_c else 0
+    avg_price    = df_f[price_c][df_f[price_c] > 0].mean() if price_c else 0
+
+    # Low stock алерти
+    low_stock_cnt = 0
+    oos_cnt = 0
+    if dos_use:
+        low_stock_cnt = int(((df_f[dos_use].fillna(999) < 14) & (df_f[dos_use].fillna(999) > 0)).sum())
+    if avail_c:
+        oos_cnt = int((df_f[avail_c] == 0).sum())
+
+    # ── Hero Card ──
+    val_color = "#4CAF50" if total_value > 0 else "#888"
+    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border:1px solid #2d2d4a;
+            border-radius:12px;padding:20px 28px;margin-bottom:16px;
+            display:flex;align-items:center;gap:32px;flex-wrap:wrap">
+  <div>
+    <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+      📦 Вартість складу
+    </div>
+    <div style="font-size:48px;font-weight:900;color:{val_color};font-family:monospace;line-height:1">
+      {_fmt(total_value)}
+    </div>
+    <div style="font-size:12px;color:#666;margin-top:6px">{total_sku} SKU · {total_avail:,} штук</div>
+  </div>
+  <div style="flex:1;min-width:200px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+        ✅ Available <b style="color:#4CAF50">{total_avail:,}</b>
+      </span>
+      <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+        🚚 Inbound <b style="color:#5B9BD5">{total_inb:,}</b>
+      </span>
+      <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+        🔒 Reserved <b style="color:#FFC107">{total_res:,}</b>
+      </span>
+      {"<span style='background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px'>❌ Unsellable <b style="color:#F44336">" + str(total_uns) + "</b></span>" if total_uns > 0 else ""}
+    </div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    # ── Алерти ──
+    if low_stock_cnt > 0:
+        st.error(f"🔴 **{low_stock_cnt} SKU** закінчаться за **<14 днів** — терміново поповни!")
+    if oos_cnt > 0:
+        st.warning(f"🟡 **{oos_cnt} SKU** з нульовими залишками (Out of Stock)")
+    if low_stock_cnt == 0 and oos_cnt == 0:
+        st.success("✅ Всі SKU в нормі — критичних проблем немає")
+
     st.markdown("---")
 
-    where = ["1=1"]
-    params = {}
-    if search_sku:
-        where.append("sku ILIKE :sku"); params['sku'] = f"%{search_sku}%"
-    if search_asin:
-        where.append("asin ILIKE :asin"); params['asin'] = f"%{search_asin}%"
+    # ── Графіки ──
+    col1, col2 = st.columns(2)
 
-    wc = " AND ".join(where)
-    with _engine.connect() as _ec:
-        df = _pd.read_sql(_text(f"""
-            SELECT sku, asin, product_name, your_price,
-                   available, afn_fulfillable_quantity, afn_unsellable_quantity,
-                   afn_total_quantity, inbound_quantity, reserved_quantity,
-                   days_of_supply, sales_last_30_days, sales_last_7_days,
-                   recommended_replenishment_qty, recommended_ship_in_qty,
-                   recommended_action, storage_cost_next_month,
-                   age_0_90, age_91_180, age_181_270, age_271_365,
-                   sell_through, stranded_reason, snapshot_date
-            FROM spapi.inventory_summary
-            WHERE {wc}
-            ORDER BY days_of_supply ASC NULLS LAST
-            LIMIT 500
-        """), _ec, params=params)
+    with col1:
+        st.markdown("#### 💰 Де заморожені гроші (Treemap)")
+        dm = df_f[df_f['_stock_value'] > 0].copy()
+        if not dm.empty and sku_c:
+            path = []
+            if store_c and store_c in dm.columns: path.append(store_c)
+            path.append(sku_c)
+            fig = px.treemap(dm, path=path, values='_stock_value',
+                             color='_stock_value', color_continuous_scale='RdYlGn_r',
+                             height=400)
+            fig.update_layout(margin=dict(l=0,r=0,t=10,b=0))
+            st.plotly_chart(fig, width="stretch")
+        else:
+            st.info("Немає даних для treemap")
 
-    st.caption(f"Показано {len(df):,} з {total_sku:,} SKU (max 500 на екран)")
+    with col2:
+        st.markdown("#### 🏆 Топ 15 SKU за залишками")
+        if avail_c and sku_c:
+            top = df_f.nlargest(15, avail_c)
+            colors = []
+            for _, row in top.iterrows():
+                dos_val = row.get(dos_use, 999) if dos_use else 999
+                if pd.isna(dos_val): dos_val = 999
+                if dos_val < 14:   colors.append('#F44336')
+                elif dos_val < 30: colors.append('#FFC107')
+                else:              colors.append('#4CAF50')
+            fig2 = go.Figure(go.Bar(
+                x=top[avail_c], y=top[sku_c], orientation='h',
+                marker_color=colors,
+                text=[f"{int(v)}" for v in top[avail_c]],
+                textposition='outside'
+            ))
+            fig2.update_layout(height=400, yaxis={'categoryorder': 'total ascending'},
+                               margin=dict(l=0,r=40,t=10,b=0))
+            st.plotly_chart(fig2, width="stretch")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Summary", "⚠️ Risk", "💰 Storage Costs", "🔄 Restock"])
+    st.markdown("---")
 
-    with tab1:
-        cols = [c for c in ["sku","asin","product_name","your_price",
-                "available","afn_fulfillable_quantity","afn_unsellable_quantity",
-                "days_of_supply","sales_last_30_days","recommended_action"] if c in df.columns]
-        m1,m2,m3,m4 = st.columns(4)
-        m1.metric("📦 SKU на екрані", f"{len(df):,}")
-        m2.metric("✅ Fulfillable",    f"{fulfillable:,}")
-        m3.metric("❌ Unsellable",     f"{unsellable:,}")
-        m4.metric("🛒 Продажі 30д",   f"{sales_30d:,.0f}")
-        st.dataframe(df[cols], width='stretch', hide_index=True)
-        st.download_button("⬇️ CSV", df[cols].to_csv(index=False).encode(), "summary.csv", "text/csv")
+    # ── Days of Supply chart ──
+    if dos_use and sku_c:
+        st.markdown("#### ⏳ Days of Supply по SKU (топ 20 найризикованіших)")
+        df_dos = df_f[df_f[dos_use].fillna(999) < 60].nsmallest(20, dos_use)
+        if not df_dos.empty:
+            colors_dos = ['#F44336' if v < 14 else '#FFC107' if v < 30 else '#4CAF50'
+                          for v in df_dos[dos_use]]
+            fig3 = go.Figure(go.Bar(
+                x=df_dos[dos_use], y=df_dos[sku_c], orientation='h',
+                marker_color=colors_dos,
+                text=[f"{int(v)}д" for v in df_dos[dos_use]],
+                textposition='outside'
+            ))
+            fig3.add_vline(x=14, line_dash="dash", line_color="#F44336",
+                           annotation_text="14д критично")
+            fig3.add_vline(x=30, line_dash="dash", line_color="#FFC107",
+                           annotation_text="30д увага")
+            fig3.update_layout(height=max(300, len(df_dos)*35),
+                               xaxis_title="Days of Supply",
+                               yaxis={'categoryorder': 'total ascending'},
+                               margin=dict(l=0,r=80,t=10,b=0))
+            st.plotly_chart(fig3, width="stretch")
+        st.markdown("---")
 
-    with tab2:
-        risk_filter = st.selectbox("Фільтр:", ["Всі", "Low Stock <14д", "Stranded", "Unsellable > 0"])
-        df_r = df.copy()
-        if risk_filter == "Low Stock <14д":
-            df_r = df_r[df_r['days_of_supply'].fillna(999) < 14]
-        elif risk_filter == "Stranded":
-            df_r = df_r[df_r['stranded_reason'].notna()]
-        elif risk_filter == "Unsellable > 0":
-            df_r = df_r[df_r['afn_unsellable_quantity'].fillna(0) > 0]
-        cols_r = [c for c in ["sku","asin","product_name","afn_fulfillable_quantity",
-                  "afn_unsellable_quantity","days_of_supply","stranded_reason","recommended_action"] if c in df_r.columns]
-        st.caption(f"{len(df_r):,} SKU")
-        st.dataframe(df_r[cols_r], width='stretch', hide_index=True)
-        st.download_button("⬇️ CSV", df_r[cols_r].to_csv(index=False).encode(), "risk.csv", "text/csv")
+    # ── Таблиця ──
+    st.markdown("#### 📋 Таблиця складу")
+    show_cols_map = {
+        sku_c:   'SKU',
+        asin_c:  'ASIN',
+        name_c:  'Назва',
+        avail_c: 'Available',
+        inb_c:   'Inbound',
+        res_c:   'Reserved',
+        price_c: 'Price',
+        vel_c:   'Velocity',
+        dos_use: 'Days of Supply',
+        store_c: 'Store',
+        '_stock_value': 'Stock Value',
+    }
+    show_cols = [c for c in show_cols_map if c and c in df_f.columns]
+    df_show = df_f[show_cols].rename(columns=show_cols_map).sort_values(
+        'Days of Supply' if 'Days of Supply' in [show_cols_map.get(c) for c in show_cols] else 'Available',
+        ascending=True
+    ).head(500)
 
-    with tab3:
-        if 'storage_cost_next_month' in df.columns:
-            st.metric("💰 Загальна вартість зберігання", f"${df['storage_cost_next_month'].sum():,.2f}")
-        cols_s = [c for c in ["sku","asin","product_name","age_0_90","age_91_180",
-                  "age_181_270","age_271_365","storage_cost_next_month","your_price"] if c in df.columns]
-        df_s = df[cols_s].sort_values("storage_cost_next_month", ascending=False) if 'storage_cost_next_month' in df.columns else df[cols_s]
-        st.dataframe(df_s, width='stretch', hide_index=True)
-        st.download_button("⬇️ CSV", df_s.to_csv(index=False).encode(), "storage.csv", "text/csv")
+    fmt_dict = {}
+    if 'Price' in df_show.columns:       fmt_dict['Price']       = '${:.2f}'
+    if 'Stock Value' in df_show.columns: fmt_dict['Stock Value']  = '${:,.0f}'
+    if 'Days of Supply' in df_show.columns: fmt_dict['Days of Supply'] = '{:.0f}'
 
-    with tab4:
-        only_restock = st.checkbox("Тільки ті що треба поповнити", value=True)
-        df_rs = df.copy()
-        if only_restock:
-            df_rs = df_rs[df_rs['recommended_replenishment_qty'].fillna(0) > 0]
-        cols_rs = [c for c in ["sku","asin","product_name","available","afn_fulfillable_quantity",
-                   "days_of_supply","recommended_replenishment_qty","recommended_ship_in_qty",
-                   "sales_last_30_days","sell_through"] if c in df_rs.columns]
-        df_rs = df_rs[cols_rs].sort_values("days_of_supply") if 'days_of_supply' in df_rs.columns else df_rs[cols_rs]
-        st.caption(f"{len(df_rs):,} SKU потребують поповнення")
-        st.dataframe(df_rs, width='stretch', hide_index=True)
-        st.download_button("⬇️ CSV", df_rs.to_csv(index=False).encode(), "restock.csv", "text/csv")
+    st.dataframe(
+        df_show.style.format(fmt_dict) if fmt_dict else df_show,
+        width="stretch", hide_index=True, height=450
+    )
+    st.caption(f"Показано {len(df_show):,} з {len(df_f):,} SKU")
+    st.download_button("📥 CSV", df_f.to_csv(index=False).encode(), "inventory.csv", "text/csv")
+
+    # ── AI Chat ──
+    ctx_inv = f"""Inventory: {total_sku} SKU | Available: {total_avail:,} | Value: {_fmt(total_value)}
+Low Stock <14д: {low_stock_cnt} | Out of Stock: {oos_cnt} | Inbound: {total_inb:,}"""
+    show_ai_chat(ctx_inv, [
+        "Які SKU під ризиком out-of-stock найближчі 14 днів?",
+        "Де найбільше заморожених грошей?",
+        "Які SKU мають velocity > 0 але залишки < 30 днів?",
+    ], "inventory")
 
 
 def show_etl_status():
