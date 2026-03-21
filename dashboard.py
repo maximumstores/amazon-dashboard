@@ -2580,8 +2580,7 @@ def show_settlements(t):
         with engine.connect() as conn:
             kpi = pd.read_sql(text("""
                 SELECT
-                    SUM(CASE WHEN transaction_type = 'Transfer'
-                        THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS net_payout,
+                    SUM(NULLIF(amount,'')::numeric)                               AS net_payout,
                     SUM(CASE WHEN amount_type = 'ItemPrice'
                          AND NULLIF(amount,'')::numeric > 0
                         THEN NULLIF(amount,'')::numeric ELSE 0 END)          AS gross_sales,
@@ -2701,6 +2700,9 @@ def show_settlements(t):
         except Exception as e:
             st.error(str(e))
 
+        # Debug: показуємо топ transaction_type якщо net=0
+        if net == 0:
+            st.info("⚠️ Net Payout = $0 — перевір фільтр transaction_type нижче у таблиці")
         insights_settlements_v2(net, gross, refs, fees)
 
     # ── TAB 2: Finance Events ─────────────────
