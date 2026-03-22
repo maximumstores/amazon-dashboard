@@ -2985,21 +2985,37 @@ def show_overview(df_filtered, t, selected_date):
         try:
             with engine.connect() as conn:
                 df_ret_trend = pd.read_sql(text("""
-                    SELECT
-                        SUBSTRING(return_date::text,1,7) AS month,
-                        COUNT(*) AS returns
-                    FROM fba_returns
-                    WHERE SUBSTRING(return_date::text,1,10)::date >= CURRENT_DATE - INTERVAL '6 months'
-                    GROUP BY 1 ORDER BY 1
+                    SELECT m.month,
+                        COALESCE(r.returns,0) AS returns,
+                        COALESCE(o.orders,1) AS orders
+                    FROM (
+                        SELECT SUBSTRING(return_date::text,1,7) AS month
+                        FROM fba_returns
+                        WHERE SUBSTRING(return_date::text,1,10)::date >= CURRENT_DATE - INTERVAL '6 months'
+                        GROUP BY 1
+                    ) m
+                    LEFT JOIN (
+                        SELECT SUBSTRING(return_date::text,1,7) AS month, COUNT(DISTINCT order_id) AS returns
+                        FROM fba_returns GROUP BY 1
+                    ) r ON r.month = m.month
+                    LEFT JOIN (
+                        SELECT SUBSTRING(purchase_date,1,7) AS month, COUNT(DISTINCT amazon_order_id) AS orders
+                        FROM orders GROUP BY 1
+                    ) o ON o.month = m.month
+                    ORDER BY 1
                 """), conn)
             if not df_ret_trend.empty:
-                colors_ret = ['#F44336'] * len(df_ret_trend)
+                df_ret_trend['rr'] = (df_ret_trend['returns'] / df_ret_trend['orders'].replace(0,1) * 100).clip(0,50).round(1)
+                colors_ret = ['#F44336' if v > 10 else '#FFC107' if v > 5 else '#4CAF50' for v in df_ret_trend['rr']]
                 fig_ret = go.Figure(go.Bar(
-                    x=df_ret_trend['month'], y=df_ret_trend['returns'],
-                    marker_color='#F44336',
-                    text=df_ret_trend['returns'], textposition='outside'
+                    x=df_ret_trend['month'], y=df_ret_trend['rr'],
+                    marker_color=colors_ret,
+                    text=[f"{v:.1f}%" for v in df_ret_trend['rr']], textposition='outside',
+                    customdata=df_ret_trend[['returns','orders']].values,
+                    hovertemplate="<b>%{x}</b><br>Rate: %{y:.1f}%<br>Returns: %{customdata[0]}<br>Orders: %{customdata[1]}<extra></extra>"
                 ))
-                fig_ret.update_layout(height=220, margin=dict(l=0,r=0,t=20,b=0), yaxis_title="Returns count")
+                fig_ret.add_hline(y=8, line_dash="dash", line_color="#FFC107", annotation_text="8% норма")
+                fig_ret.update_layout(height=220, margin=dict(l=0,r=0,t=20,b=0), yaxis_title="Return Rate %")
                 st.plotly_chart(fig_ret, width="stretch")
             else:
                 st.info("Немає даних за 6 місяців")
