@@ -2991,7 +2991,7 @@ def show_overview(df_filtered, t, selected_date):
                         COUNT(DISTINCT o.amazon_order_id) AS orders
                     FROM fba_returns r
                     LEFT JOIN orders o ON SUBSTRING(o.purchase_date,1,7) = SUBSTRING(r.return_date::text,1,7)
-                    WHERE r.return_date >= CURRENT_DATE - INTERVAL '6 months'
+                    WHERE SUBSTRING(r.return_date::text,1,10)::date >= CURRENT_DATE - INTERVAL '6 months'
                     GROUP BY 1 ORDER BY 1
                 """), conn)
             if not df_ret_trend.empty:
@@ -3014,7 +3014,7 @@ def show_overview(df_filtered, t, selected_date):
             with engine.connect() as conn:
                 df_bb_lost = pd.read_sql(text(
                     "SELECT asin, price FROM pricing_buybox "
-                    "WHERE is_buybox_winner = false OR is_buybox_winner = 'False' OR is_buybox_winner = 'false' "
+                    "WHERE is_buybox_winner::text NOT IN ('true','True','t','1','yes') "
                     "ORDER BY price DESC LIMIT 8"
                 ), conn)
             if not df_bb_lost.empty:
@@ -3066,7 +3066,7 @@ def show_overview(df_filtered, t, selected_date):
         with engine.connect() as conn:
             df_inb = pd.read_sql(text(
                 "SELECT s.shipment_id, s.shipment_name, s.shipment_status, s.destination_fc, "
-                "SUM(i.quantity_shipped) as shipped, SUM(i.quantity_received) as received "
+                "SUM(NULLIF(i.quantity_shipped,'')::numeric) as shipped, SUM(NULLIF(i.quantity_received,'')::numeric) as received "
                 "FROM fba_shipments s "
                 "LEFT JOIN fba_shipment_items i ON s.shipment_id = i.shipment_id "
                 "WHERE s.shipment_status IN ('WORKING','SHIPPED','IN_TRANSIT','RECEIVING') "
