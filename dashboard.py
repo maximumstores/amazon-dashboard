@@ -5495,6 +5495,328 @@ def show_restock_agent(t=None):
     else:
         st.info("Рішень ще немає — запусти аналіз вище")
 
+def show_forecast(t=None):
+    import requests as _req
+    from sklearn.linear_model import LinearRegression
+    from sklearn.preprocessing import PolynomialFeatures
+    import numpy as np
+    import datetime as _dt
+
+    st.markdown("### 📈 Прогноз продажів (ML + AI)")
+    st.caption("Лінійна регресія + Gemini аналіз · на основі реальних даних orders")
+
+    engine = get_engine()
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY","")
+    GEMINI_MODEL   = os.environ.get("GEMINI_MODEL","gemini-1.5-flash")
+
+    # ── Sidebar ──
+    forecast_days = st.sidebar.selectbox("📅 Горизонт прогнозу:", [7, 14, 30, 60, 90], index=2, key="fc_days")
+    granularity   = st.sidebar.selectbox("📊 Гранулярність:", ["День", "Тиждень", "Місяць"], index=0, key="fc_gran")
+    history_days  = st.sidebar.selectbox("📖 Історія (днів):", [30, 60, 90, 180, 365], index=3, key="fc_hist")
+    sku_filter    = st.sidebar.text_input("🔍 SKU (опц.):", "", key="fc_sku")
+
+    # ── Завантаження даних ──
+    try:
+        with engine.connect() as conn:
+            where_sku = "AND sku = :sku" if sku_filter else ""
+            df_raw = pd.read_sql(text(f"""
+                SELECT
+                    SUBSTRING(purchase_date,1,10)::date AS day,
+                    COUNT(DISTINCT amazon_order_id) AS orders,
+                    SUM(CASE WHEN item_price ~ '^[0-9.]+$' THEN item_price::numeric ELSE 0 END) AS revenue,
+                    SUM(CASE WHEN quantity ~ '^[0-9]+$' THEN quantity::numeric ELSE 1 END) AS units
+                FROM orders
+                WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '{history_days} days'
+                  AND purchase_date IS NOT NULL AND purchase_date != ''
+                  {where_sku}
+                GROUP BY 1 ORDER BY 1
+            """), conn, params={"sku": sku_filter} if sku_filter else {})
+    except Exception as e:
+        st.error(f"Помилка завантаження: {e}"); return
+
+    if df_raw.empty or len(df_raw) < 7:
+        st.warning("Недостатньо даних для прогнозу (мінімум 7 днів)"); return
+
+    df_raw['day'] = pd.to_datetime(df_raw['day'])
+
+    # Агрегація
+    if granularity == "Тиждень":
+        df = df_raw.resample('W', on='day').agg({'orders':'sum','revenue':'sum','units':'sum'}).reset_index()
+    elif granularity == "Місяць":
+        df = df_raw.resample('MS', on='day').agg({'orders':'sum','revenue':'sum','units':'sum'}).reset_index()
+    else:
+        df = df_raw.copy()
+
+    df = df.dropna().reset_index(drop=True)
+    n = len(df)
+
+    # ── KPI ──
+    avg_rev   = df['revenue'].mean()
+    avg_ord   = df['orders'].mean()
+    total_rev = df['revenue'].sum()
+    trend_7   = df['revenue'].tail(7).mean() if n >= 7 else avg_rev
+    trend_prev= df['revenue'].iloc[-14:-7].mean() if n >= 14 else avg_rev
+    trend_chg = (trend_7 - trend_prev) / trend_prev * 100 if trend_prev > 0 else 0
+    trend_col = "#4CAF50" if trend_chg >= 0 else "#F44336"
+
+    st.markdown(f"""
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+  <div style="background:#1a2b1e;border:1px solid #2d4a30;border-radius:8px;padding:14px;text-align:center">
+    <div style="font-size:11px;color:#888">📊 Avg/день</div>
+    <div style="font-size:24px;font-weight:800;color:#4CAF50">{_fmt(avg_rev)}</div>
+  </div>
+  <div style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:8px;padding:14px;text-align:center">
+    <div style="font-size:11px;color:#888">📦 Avg замовлень</div>
+    <div style="font-size:24px;font-weight:800;color:#5B9BD5">{avg_ord:.0f}</div>
+  </div>
+  <div style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:8px;padding:14px;text-align:center">
+    <div style="font-size:11px;color:#888">💰 Всього ({history_days}д)</div>
+    <div style="font-size:24px;font-weight:800;color:#FFC107">{_fmt(total_rev)}</div>
+  </div>
+  <div style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:8px;padding:14px;text-align:center">
+    <div style="font-size:11px;color:#888">📈 Тренд (7д vs 7д)</div>
+    <div style="font-size:24px;font-weight:800;color:{trend_col}">{trend_chg:+.1f}%</div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════
+    # ML ПРОГНОЗ
+    # ══════════════════════════════════════
+    X = np.arange(n).reshape(-1,1)
+    y_rev = df['revenue'].values
+    y_ord = df['orders'].values
+
+    # Polynomial regression degree 2
+    poly = PolynomialFeatures(degree=2)
+    X_poly = poly.fit_transform(X)
+    lr_rev = LinearRegression().fit(X_poly, y_rev)
+    lr_ord = LinearRegression().fit(X_poly, y_ord)
+
+    # Майбутні точки
+    X_future = np.arange(n, n + forecast_days).reshape(-1,1)
+    X_future_poly = poly.transform(X_future)
+    y_pred_rev = lr_rev.predict(X_future_poly).clip(min=0)
+    y_pred_ord = lr_ord.predict(X_future_poly).clip(min=0)
+
+    # Дати прогнозу
+    last_date = df['day'].max()
+    if granularity == "Тиждень":
+        future_dates = pd.date_range(last_date + pd.Timedelta(days=7), periods=forecast_days//7 or 1, freq='W')
+        y_pred_rev = y_pred_rev[:len(future_dates)]
+        y_pred_ord = y_pred_ord[:len(future_dates)]
+    elif granularity == "Місяць":
+        future_dates = pd.date_range(last_date + pd.DateOffset(months=1), periods=forecast_days//30 or 1, freq='MS')
+        y_pred_rev = y_pred_rev[:len(future_dates)]
+        y_pred_ord = y_pred_ord[:len(future_dates)]
+    else:
+        future_dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=forecast_days)
+
+    df_forecast = pd.DataFrame({'day': future_dates, 'rev_pred': y_pred_rev, 'ord_pred': y_pred_ord})
+    total_forecast = df_forecast['rev_pred'].sum()
+    avg_forecast   = df_forecast['rev_pred'].mean()
+
+    # ── Графік ──
+    st.markdown(f"#### 📈 Прогноз виручки на {forecast_days} днів")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df['day'], y=df['revenue'],
+        name='Фактична виручка',
+        mode='lines', line=dict(color='#4CAF50', width=2),
+        fill='tozeroy', fillcolor='rgba(76,175,80,0.1)'
+    ))
+    # Moving average
+    ma = df['revenue'].rolling(7, min_periods=1).mean()
+    fig.add_trace(go.Scatter(
+        x=df['day'], y=ma,
+        name='MA-7', mode='lines',
+        line=dict(color='#FFC107', width=1.5, dash='dot')
+    ))
+    fig.add_trace(go.Scatter(
+        x=df_forecast['day'], y=df_forecast['rev_pred'],
+        name=f'Прогноз ({forecast_days}д)',
+        mode='lines+markers',
+        line=dict(color='#5B9BD5', width=2, dash='dash'),
+        marker=dict(size=5)
+    ))
+    # Confidence interval (±20%)
+    fig.add_trace(go.Scatter(
+        x=pd.concat([df_forecast['day'], df_forecast['day'][::-1]]),
+        y=pd.concat([df_forecast['rev_pred']*1.2, df_forecast['rev_pred'][::-1]*0.8]),
+        fill='toself', fillcolor='rgba(91,155,213,0.1)',
+        line=dict(color='rgba(255,255,255,0)'),
+        name='Довірчий інтервал ±20%', showlegend=True
+    ))
+    fig.add_vline(x=str(last_date), line_dash="dash", line_color="rgba(255,255,255,0.3)",
+                  annotation_text="сьогодні")
+    fig.update_layout(height=380, margin=dict(l=0,r=0,t=10,b=0),
+                      legend=dict(orientation='h', y=1.12),
+                      yaxis=dict(tickprefix="$", tickformat=".2s"))
+    st.plotly_chart(fig, width="stretch")
+
+    # ── Прогноз деталі ──
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("#### 📊 Прогноз замовлень")
+        fig2 = go.Figure(go.Bar(
+            x=df_forecast['day'], y=df_forecast['ord_pred'],
+            marker_color='#5B9BD5', opacity=0.8,
+            text=[f"{int(v)}" for v in df_forecast['ord_pred']], textposition='outside'
+        ))
+        fig2.update_layout(height=300, margin=dict(l=0,r=0,t=10,b=0))
+        st.plotly_chart(fig2, width="stretch")
+
+    with col2:
+        st.markdown("#### 💰 Підсумок прогнозу")
+        fc_month = df_forecast['rev_pred'].sum() / forecast_days * 30
+        fc_year  = df_forecast['rev_pred'].mean() * 365
+        st.markdown(f"""
+<div style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:8px;padding:16px">
+  <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #222">
+    <span style="color:#888">📅 Прогноз за {forecast_days}д</span>
+    <b style="color:#5B9BD5">{_fmt(total_forecast)}</b>
+  </div>
+  <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #222">
+    <span style="color:#888">📊 Avg/день</span>
+    <b style="color:#4CAF50">{_fmt(avg_forecast)}</b>
+  </div>
+  <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #222">
+    <span style="color:#888">📆 Прогноз/місяць</span>
+    <b style="color:#FFC107">{_fmt(fc_month)}</b>
+  </div>
+  <div style="display:flex;justify-content:space-between;padding:6px 0">
+    <span style="color:#888">🗓 Прогноз/рік</span>
+    <b style="color:#AB47BC">{_fmt(fc_year)}</b>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════
+    # GEMINI AI АНАЛІЗ
+    # ══════════════════════════════════════
+    st.markdown("#### 🤖 Gemini AI — аналіз прогнозу")
+
+    if "forecast_analysis" not in st.session_state:
+        st.session_state.forecast_analysis = None
+
+    if st.button("🤖 Запустити Gemini аналіз", type="primary", use_container_width=False):
+        with st.spinner("Gemini аналізує тренди..."):
+            # Prepare data summary
+            weekly = df_raw.resample('W', on='day')['revenue'].sum()
+            weekly_str = "\n".join([f"{d.date()}: ${v:,.0f}" for d,v in weekly.tail(8).items()])
+
+            # Best/worst days
+            best_day  = df_raw.nlargest(1,'revenue').iloc[0]
+            worst_day = df_raw[df_raw['revenue']>0].nsmallest(1,'revenue').iloc[0]
+
+            prompt = f"""Ти — Amazon FBA бізнес-аналітик для merino wool бренду.
+
+ДАНІ ПРОДАЖІВ (останні {history_days} днів):
+Загальна виручка: ${total_rev:,.0f}
+Середня/день: ${avg_rev:,.0f}
+Тренд (7д): {trend_chg:+.1f}%
+Найкращий день: {best_day['day'].date()} — ${best_day['revenue']:,.0f}
+Найгірший день: {worst_day['day'].date()} — ${worst_day['revenue']:,.0f}
+
+Тижневі дані (останні 8 тижнів):
+{weekly_str}
+
+ML ПРОГНОЗ на {forecast_days} днів:
+Прогнозована виручка: ${total_forecast:,.0f}
+Середня/день: ${avg_forecast:,.0f}
+Прогноз/місяць: ${fc_month:,.0f}
+Прогноз/рік: ${fc_year:,.0f}
+
+Дай структурований аналіз:
+ТРЕНД: [опис тренду — зростання/падіння/стабільність]
+СЕЗОННІСТЬ: [чи є сезонні паттерни?]
+ПРОГНОЗ: [чи реалістичний ML прогноз?]
+РИЗИКИ: [що може погіршити результат?]
+МОЖЛИВОСТІ: [де є потенціал зростання?]
+ДІЇ: [3 конкретних кроки для покращення продажів]"""
+
+            if GEMINI_API_KEY:
+                try:
+                    r = _req.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
+                        json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30
+                    )
+                    analysis = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                except Exception as e:
+                    analysis = f"Помилка Gemini: {e}"
+            else:
+                analysis = f"""ТРЕНД: Виручка {trend_chg:+.1f}% за останні 7 днів vs попередні 7 днів.
+СЕЗОННІСТЬ: Потрібні дані за 12+ місяців для виявлення сезонності.
+ПРОГНОЗ: ML прогнозує ${total_forecast:,.0f} за {forecast_days} днів (${avg_forecast:,.0f}/день).
+РИЗИКИ: Повернення 16%+ може суттєво знизити net виручку.
+МОЖЛИВОСТІ: Зростання +{trend_chg:.0f}% вказує на позитивну динаміку.
+ДІЇ: 1) Знизити повернення 2) Збільшити AOV через bundle 3) Розширити асортимент"""
+            st.session_state.forecast_analysis = analysis
+
+    if st.session_state.forecast_analysis:
+        st.markdown(f"""
+<div style="background:#1a1a2e;border:1px solid #6366f1;border-radius:8px;
+            padding:16px 20px;font-size:13px;line-height:1.8;white-space:pre-wrap;color:#e0e0e0">
+{st.session_state.forecast_analysis}
+</div>""", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── По SKU прогноз ──
+    st.markdown("#### 🏆 Топ 10 SKU — прогноз (trend-based)")
+    try:
+        with engine.connect() as conn:
+            df_sku = pd.read_sql(text(f"""
+                SELECT sku,
+                    SUM(CASE WHEN SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'
+                        AND item_price ~ '^[0-9.]+$' THEN item_price::numeric ELSE 0 END) AS rev_30d,
+                    SUM(CASE WHEN SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '60 days'
+                        AND SUBSTRING(purchase_date,1,10)::date < CURRENT_DATE - INTERVAL '30 days'
+                        AND item_price ~ '^[0-9.]+$' THEN item_price::numeric ELSE 0 END) AS rev_prev30d,
+                    COUNT(DISTINCT CASE WHEN SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'
+                        THEN amazon_order_id END) AS orders_30d
+                FROM orders
+                WHERE item_price ~ '^[0-9.]+$'
+                GROUP BY sku HAVING SUM(CASE WHEN SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'
+                    AND item_price ~ '^[0-9.]+$' THEN item_price::numeric ELSE 0 END) > 0
+                ORDER BY rev_30d DESC LIMIT 10
+            """), conn)
+        if not df_sku.empty:
+            df_sku['trend'] = ((df_sku['rev_30d'] - df_sku['rev_prev30d']) /
+                               df_sku['rev_prev30d'].replace(0, df_sku['rev_30d']) * 100).round(1)
+            df_sku['forecast_30d'] = (df_sku['rev_30d'] * (1 + df_sku['trend']/100)).clip(lower=0)
+            df_sku['trend_str'] = df_sku['trend'].apply(lambda x: f"+{x:.0f}%" if x >= 0 else f"{x:.0f}%")
+
+            fig3 = go.Figure()
+            fig3.add_trace(go.Bar(name='Факт 30д', x=df_sku['sku'], y=df_sku['rev_30d'], marker_color='#4CAF50'))
+            fig3.add_trace(go.Bar(name='Прогноз 30д', x=df_sku['sku'], y=df_sku['forecast_30d'],
+                                  marker_color='#5B9BD5', opacity=0.8))
+            fig3.update_layout(barmode='group', height=350, xaxis_tickangle=-30,
+                               margin=dict(l=0,r=0,t=10,b=60))
+            st.plotly_chart(fig3, width="stretch")
+
+            st.dataframe(
+                df_sku[['sku','rev_30d','rev_prev30d','trend_str','forecast_30d','orders_30d']]
+                    .rename(columns={'sku':'SKU','rev_30d':'Факт 30д','rev_prev30d':'Попередні 30д',
+                                     'trend_str':'Тренд','forecast_30d':'Прогноз 30д','orders_30d':'Замовлення'})
+                    .style.format({'Факт 30д':'${:,.0f}','Попередні 30д':'${:,.0f}','Прогноз 30д':'${:,.0f}'}),
+                width="stretch", hide_index=True
+            )
+    except Exception as e:
+        st.error(str(e))
+
+    # ── AI Chat ──
+    ctx_fc = f"""Forecast: {forecast_days}д прогноз=${_fmt(total_forecast)} · avg/д={_fmt(avg_forecast)}
+Тренд: {trend_chg:+.1f}% · Історія {history_days}д · Gross={_fmt(total_rev)}"""
+    show_ai_chat(ctx_fc, [
+        "Який прогноз продажів на наступний місяць?",
+        "Які SKU ростуть найшвидше?",
+        "Коли очікується пік продажів?",
+    ], "forecast")
+
 def show_scraper_manager():
     _scr_init()
     _scr_flush()
@@ -5730,6 +6052,7 @@ main_nav = [
     "⭐ Amazon Reviews",
     "── AI Агенти ──",
     "📦 Restock Agent",
+    "📈 Прогноз (Forecast)",
 ]
 
 tools_nav = [
@@ -5791,6 +6114,7 @@ elif report_choice == "💲 Pricing / BuyBox":         show_pricing()
 elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "📋 Податки (Tax)":            show_tax(t)
 elif report_choice == "📦 Restock Agent":            show_restock_agent(t)
+elif report_choice == "📈 Прогноз (Forecast)":       show_forecast(t)
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
