@@ -5243,19 +5243,70 @@ def show_restock_agent(t=None):
             return "\n".join([f"{r['day']}: {int(r['units'])} units" for _, r in df.iterrows()])
         except: return "Помилка отримання тренду"
 
+    def get_sku_fees(asin):
+        """Реальні fees з finance_events по ASIN"""
+        try:
+            with engine.connect() as conn:
+                df = pd.read_sql(text("""
+                    SELECT charge_type,
+                           AVG(ABS(NULLIF(amount,'')::numeric)) as avg_fee,
+                           COUNT(*) as cnt
+                    FROM finance_events
+                    WHERE asin = :asin
+                      AND charge_type IN ('Commission','FBAPerUnitFulfillmentFee',
+                                          'FixedClosingFee','ShippingChargeback')
+                      AND NULLIF(amount,'')::numeric < 0
+                    GROUP BY charge_type
+                """), conn, params={"asin": asin})
+            if df.empty:
+                return None
+            fees = {}
+            for _, r in df.iterrows():
+                fees[r['charge_type']] = round(float(r['avg_fee']), 2)
+            return fees
+        except:
+            return None
+
     def gemini_analyze(row, trend):
+        fees = get_sku_fees(row['asin'])
+        commission  = fees.get('Commission', 0) if fees else 0
+        fba_fee     = fees.get('FBAPerUnitFulfillmentFee', 0) if fees else 0
+        total_fees  = commission + fba_fee
+        net_unit    = float(row['price']) - total_fees if row['price'] > 0 else 0
+        margin_pct  = net_unit / float(row['price']) * 100 if row['price'] > 0 else 0
+        roi_total   = net_unit * int(row['recommended'])
+
+        fees_block = ""
+        if fees:
+            fees_block = (f"\nReальні fees (з finance_events):\n"
+                         f"  Commission:  -${commission:.2f}/unit\n"
+                         f"  FBA Fee:     -${fba_fee:.2f}/unit\n"
+                         f"  Net/unit:    ${net_unit:.2f}\n"
+                         f"  Маржа:       {margin_pct:.0f}%\n"
+                         f"  ROI поставки {int(row['recommended'])} units: ${roi_total:,.0f} чистими\n")
+        else:
+            fees_block = "\nFees: немає даних у finance_events для цього ASIN\n"
+
         if not GEMINI_API_KEY:
             return (f"РЕКОМЕНДАЦІЯ: {int(row['recommended'])} units\n"
+                    f"МАРЖА: ${net_unit:.2f}/unit ({margin_pct:.0f}%)\n"
+                    f"ROI поставки: ${roi_total:,.0f} чистими\n"
                     f"ПРИЧИНА: Базовий розрахунок (90д покриття)\n"
                     f"РИЗИК: Out of stock за {int(row['dos'])} днів\n"
                     f"ПРІОРИТЕТ: {'КРИТИЧНИЙ' if row['dos'] < 14 else 'ВИСОКИЙ'}")
         prompt = (f"Amazon FBA inventory менеджер (merino wool apparel).\n\n"
                   f"SKU: {row['sku']} | {str(row['name'])[:50]}\n"
                   f"Available: {int(row['available'])} | Inbound: {int(row['inbound'])} | Velocity: {row['velocity']}/день\n"
-                  f"Days of Supply: {int(row['dos'])} | Ціна: ${row['price']} | Базова рек: {int(row['recommended'])} units\n\n"
+                  f"Days of Supply: {int(row['dos'])} | Ціна: ${row['price']} | Базова рек: {int(row['recommended'])} units\n"
+                  f"{fees_block}\n"
                   f"Тренд продажів (30д):\n{trend}\n\n"
                   f"Відповідь строго у форматі:\n"
-                  f"РЕКОМЕНДАЦІЯ: [число] units\nПРИЧИНА: [1 речення]\nРИЗИК: [1 речення]\nПРІОРИТЕТ: [КРИТИЧНИЙ/ВИСОКИЙ/СЕРЕДНІЙ]")
+                  f"РЕКОМЕНДАЦІЯ: [число] units\n"
+                  f"МАРЖА: $[net/unit] ([%]%)\n"
+                  f"ROI поставки: $[сума] чистими\n"
+                  f"ПРИЧИНА: [1 речення]\n"
+                  f"РИЗИК: [1 речення]\n"
+                  f"ПРІОРИТЕТ: [КРИТИЧНИЙ/ВИСОКИЙ/СЕРЕДНІЙ]")
         try:
             r = _req.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
@@ -5360,12 +5411,12 @@ def show_restock_agent(t=None):
                                 trend = get_sales_trend(row['sku'])
                                 ai    = gemini_analyze(row, trend)
                                 st.session_state[ai_key] = ai
-                            st.rerun()
-                    else:
-                        st.markdown(f"""
+                    if st.session_state.get(ai_key):
+                        st.markdown(f'''
 <div style="background:#1a1a2e;border:1px solid #6366f1;border-radius:8px;
-            padding:14px 18px;font-size:13px;line-height:1.7;white-space:pre-wrap;color:#fff">{st.session_state[ai_key]}</div>""",
+            padding:14px 18px;font-size:13px;line-height:1.7;white-space:pre-wrap;color:#fff">{st.session_state[ai_key]}</div>''',
                             unsafe_allow_html=True)
+
 
                 st.markdown("**Ваше рішення:**")
                 b1, b2, b3 = st.columns(3)
