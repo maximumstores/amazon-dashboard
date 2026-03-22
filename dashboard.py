@@ -4841,7 +4841,7 @@ def show_tax(t=None):
             with engine.connect() as conn:
                 df_det = pd.read_sql(text("""
                     SELECT posted_date, event_type, charge_type,
-                           NULLIF(amount,'')::numeric AS amount, currency
+                           NULLIF(amount,'')::numeric AS amount
                     FROM finance_events
                     WHERE charge_type IN ('Tax','ShippingTax','GiftWrapTax','SalesTaxCollectionFee')
                     ORDER BY posted_date DESC NULLS LAST LIMIT 500
