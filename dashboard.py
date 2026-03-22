@@ -4448,6 +4448,224 @@ def show_pricing():
     ], "pricing")
 
 
+def show_fba_operations():
+    st.markdown("### 📦 FBA Operations")
+    engine = get_engine()
+
+    # ── Завантаження ──
+    try:
+        with engine.connect() as conn:
+            df_ship  = pd.read_sql(text("SELECT * FROM fba_shipments ORDER BY created_at DESC"), conn)
+            df_items = pd.read_sql(text("SELECT * FROM fba_shipment_items"), conn)
+            df_rem   = pd.read_sql(text("SELECT * FROM fba_removals ORDER BY order_date DESC"), conn)
+        try:
+            with engine.connect() as conn:
+                df_nc = pd.read_sql(text("SELECT * FROM fba_inbound_noncompliance ORDER BY received_date DESC"), conn)
+        except:
+            df_nc = pd.DataFrame()
+    except Exception as e:
+        st.error(f"Помилка: {e}"); return
+
+    # нормалізуємо числа
+    for df, cols in [
+        (df_items, ["quantity_shipped", "quantity_received", "quantity_in_case"]),
+        (df_rem,   ["requested_quantity", "shipped_quantity", "disposed_quantity", "cancelled_quantity", "in_progress_quantity"]),
+    ]:
+        for c in cols:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c].replace("", None), errors="coerce").fillna(0)
+
+    # ── KPI ──
+    total_shipments  = len(df_ship)
+    active_ship      = int((df_ship["shipment_status"].isin(["WORKING","SHIPPED","IN_TRANSIT","RECEIVING"])).sum()) if "shipment_status" in df_ship.columns else 0
+    closed_ship      = int((df_ship["shipment_status"] == "CLOSED").sum()) if "shipment_status" in df_ship.columns else 0
+    total_units_sent = int(df_items["quantity_shipped"].sum()) if "quantity_shipped" in df_items.columns else 0
+    total_units_recv = int(df_items["quantity_received"].sum()) if "quantity_received" in df_items.columns else 0
+    recv_rate        = total_units_recv / total_units_sent * 100 if total_units_sent > 0 else 0
+    total_removals   = len(df_rem)
+    removal_units    = int(df_rem["shipped_quantity"].sum()) if "shipped_quantity" in df_rem.columns else 0
+    nc_count         = len(df_nc)
+
+    # ── Hero ──
+    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border:1px solid #2d2d4a;
+            border-radius:12px;padding:20px 28px;margin-bottom:16px;
+            display:flex;align-items:center;gap:32px;flex-wrap:wrap">
+  <div>
+    <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+      📦 FBA Operations
+    </div>
+    <div style="font-size:48px;font-weight:900;color:#5B9BD5;font-family:monospace;line-height:1">
+      {total_shipments:,}
+    </div>
+    <div style="font-size:12px;color:#666;margin-top:6px">відвантажень всього</div>
+  </div>
+  <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+      🚀 Active <b style="color:#4CAF50">{active_ship}</b>
+    </span>
+    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px">
+      ✅ Closed <b style="color:#888">{closed_ship}</b>
+    </span>
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+      📬 Отримано <b style="color:#5B9BD5">{total_units_recv:,}</b> / {total_units_sent:,}
+    </span>
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      🗑 Removals <b style="color:#FFC107">{total_removals}</b>
+    </span>
+    {('<span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">⚠️ NonCompl <b style="color:#F44336">' + str(nc_count) + '</b></span>') if nc_count > 0 else ""}
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    # ── Інсайти ──
+    _ic = st.columns(3)
+    if recv_rate >= 98:   _em, _col = "🟢", "#0d2b1e"
+    elif recv_rate >= 90: _em, _col = "🟡", "#2b2400"
+    else:                 _em, _col = "🔴", "#2b0d0d"
+    with _ic[0]: insight_card(_em, "Received Rate",
+        f"Отримано <b>{recv_rate:.1f}%</b> — {total_units_recv:,} з {total_units_sent:,} одиниць", _col)
+    with _ic[1]: insight_card("🚀", "Активні відвантаження",
+        f"<b>{active_ship}</b> shipments в процесі · {closed_ship} закрито", "#1a1a2e")
+    if nc_count > 0:
+        with _ic[2]: insight_card("⚠️", "Non-Compliance",
+            f"<b>{nc_count}</b> проблем з відповідністю — перевір в Seller Central", "#2b0d0d")
+    else:
+        with _ic[2]: insight_card("🟢", "Non-Compliance",
+            "Проблем з відповідністю немає ✅", "#0d2b1e")
+
+    st.markdown("---")
+
+    # ── Таби ──
+    tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance"])
+
+    # ── TAB 1: Shipments ──
+    with tabs[0]:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 📊 По статусу")
+            if "shipment_status" in df_ship.columns:
+                sc = df_ship["shipment_status"].value_counts().reset_index()
+                sc.columns = ["Status", "Count"]
+                colors_s = {"WORKING":"#5B9BD5","SHIPPED":"#FFC107","IN_TRANSIT":"#FF9800",
+                            "RECEIVING":"#4CAF50","CLOSED":"#888","CANCELLED":"#F44336"}
+                fig = px.bar(sc, x="Count", y="Status", orientation="h",
+                             color="Status",
+                             color_discrete_map=colors_s, height=300)
+                fig.update_layout(showlegend=False, margin=dict(l=0,r=40,t=10,b=0))
+                st.plotly_chart(fig, width="stretch")
+
+        with col2:
+            st.markdown("#### 🏭 По Destination FC")
+            if "destination_fc" in df_ship.columns:
+                fc = df_ship["destination_fc"].value_counts().head(10).reset_index()
+                fc.columns = ["FC", "Count"]
+                fig2 = px.pie(fc, values="Count", names="FC", hole=0.4, height=300)
+                st.plotly_chart(fig2, width="stretch")
+
+        st.markdown("#### 📋 Список відвантажень")
+        show_s = [c for c in ["shipment_id","shipment_name","shipment_status","destination_fc",
+                               "label_prep_type","confirmed_need_by_date","marketplace","created_at"]
+                  if c in df_ship.columns]
+        
+        # sidebar filter
+        statuses = ["Всі"] + sorted(df_ship["shipment_status"].dropna().unique().tolist()) if "shipment_status" in df_ship.columns else ["Всі"]
+        sel_s = st.selectbox("Фільтр статус:", statuses, key="ship_status")
+        df_s = df_ship[df_ship["shipment_status"] == sel_s] if sel_s != "Всі" else df_ship
+        
+        st.dataframe(df_s[show_s].head(200), width="stretch", hide_index=True, height=400)
+        st.caption(f"{len(df_s)} відвантажень")
+        st.download_button("📥 CSV Shipments", df_ship.to_csv(index=False).encode(), "shipments.csv", "text/csv")
+
+    # ── TAB 2: Items ──
+    with tabs[1]:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 📦 Топ 15 SKU за відправленою кількістю")
+            if "sku" in df_items.columns and "quantity_shipped" in df_items.columns:
+                top_sku = df_items.groupby("sku")["quantity_shipped"].sum().nlargest(15).reset_index()
+                fig3 = go.Figure(go.Bar(
+                    x=top_sku["quantity_shipped"], y=top_sku["sku"], orientation="h",
+                    marker_color="#5B9BD5",
+                    text=top_sku["quantity_shipped"].astype(int), textposition="outside"
+                ))
+                fig3.update_layout(height=420, yaxis={"categoryorder":"total ascending"},
+                                   margin=dict(l=0,r=40,t=10,b=0))
+                st.plotly_chart(fig3, width="stretch")
+
+        with col2:
+            st.markdown("#### 📊 Shipped vs Received")
+            if "quantity_shipped" in df_items.columns and "quantity_received" in df_items.columns:
+                # per shipment
+                ship_agg = df_items.groupby("shipment_id").agg(
+                    shipped=("quantity_shipped","sum"),
+                    received=("quantity_received","sum")
+                ).reset_index().head(20)
+                fig4 = go.Figure()
+                fig4.add_trace(go.Bar(name="Shipped", x=ship_agg["shipment_id"], y=ship_agg["shipped"], marker_color="#5B9BD5"))
+                fig4.add_trace(go.Bar(name="Received", x=ship_agg["shipment_id"], y=ship_agg["received"], marker_color="#4CAF50"))
+                fig4.update_layout(barmode="group", height=420, xaxis_tickangle=-45,
+                                   margin=dict(l=0,r=0,t=10,b=80))
+                st.plotly_chart(fig4, width="stretch")
+
+        show_i = [c for c in ["shipment_id","sku","fnsku","asin","quantity_shipped","quantity_received","marketplace"]
+                  if c in df_items.columns]
+        st.dataframe(df_items[show_i].head(500), width="stretch", hide_index=True, height=400)
+        st.download_button("📥 CSV Items", df_items.to_csv(index=False).encode(), "shipment_items.csv", "text/csv")
+
+    # ── TAB 3: Removals ──
+    with tabs[2]:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 📊 По Disposition")
+            if "disposition" in df_rem.columns:
+                disp = df_rem["disposition"].value_counts().reset_index()
+                disp.columns = ["Disposition", "Count"]
+                fig5 = px.pie(disp, values="Count", names="Disposition", hole=0.4,
+                              color_discrete_sequence=["#F44336","#FF9800","#FFC107","#4CAF50"],
+                              height=320)
+                st.plotly_chart(fig5, width="stretch")
+
+        with col2:
+            st.markdown("#### 🏆 Топ SKU по Removals")
+            if "sku" in df_rem.columns and "shipped_quantity" in df_rem.columns:
+                top_rem = df_rem.groupby("sku")["shipped_quantity"].sum().nlargest(10).reset_index()
+                fig6 = go.Figure(go.Bar(
+                    x=top_rem["shipped_quantity"], y=top_rem["sku"], orientation="h",
+                    marker_color="#F44336",
+                    text=top_rem["shipped_quantity"].astype(int), textposition="outside"
+                ))
+                fig6.update_layout(height=320, yaxis={"categoryorder":"total ascending"},
+                                   margin=dict(l=0,r=40,t=10,b=0))
+                st.plotly_chart(fig6, width="stretch")
+
+        show_r = [c for c in ["order_id","order_date","order_status","sku","fnsku","disposition",
+                               "requested_quantity","shipped_quantity","disposed_quantity","marketplace"]
+                  if c in df_rem.columns]
+        st.dataframe(df_rem[show_r].head(300), width="stretch", hide_index=True, height=400)
+        st.caption(f"{len(df_rem)} removal orders · {removal_units:,} одиниць")
+        st.download_button("📥 CSV Removals", df_rem.to_csv(index=False).encode(), "removals.csv", "text/csv")
+
+    # ── TAB 4: Non-Compliance ──
+    with tabs[3]:
+        if df_nc.empty:
+            st.success("✅ Проблем з Non-Compliance немає!")
+        else:
+            st.error(f"⚠️ {len(df_nc)} Non-Compliance записів — перевір в Seller Central")
+            show_nc = [c for c in ["shipment_id","shipment_name","sku","fnsku","asin","product_name",
+                                    "quantity","noncompliance_type","fulfillment_center","received_date"]
+                       if c in df_nc.columns]
+            st.dataframe(df_nc[show_nc], width="stretch", hide_index=True)
+            st.download_button("📥 CSV Non-Compliance", df_nc.to_csv(index=False).encode(), "noncompliance.csv", "text/csv")
+
+    # ── AI ──
+    ctx = f"""FBA Operations: {total_shipments} shipments | Active: {active_ship} | Received: {recv_rate:.1f}% | Removals: {total_removals} ({removal_units} units) | NonCompliance: {nc_count}"""
+    show_ai_chat(ctx, [
+        "Які відвантаження ще не отримані повністю?",
+        "Які SKU найчастіше потрапляють у Removals?",
+        "Яка середня різниця між shipped та received?",
+    ], "fba_ops")
+
+
 def show_scraper_manager():
     _scr_init()
     _scr_flush()
@@ -4678,6 +4896,7 @@ main_nav = [
     "🔙 Повернення (Returns)",
     "📝 Листинги (Listings)",
     "💲 Pricing / BuyBox",
+    "📦 FBA Operations",
     "⭐ Amazon Reviews",
 ]
 
@@ -4737,6 +4956,7 @@ elif report_choice == "📦 Склад (Inventory)":        show_inventory_unifi
 elif report_choice == "🔙 Повернення (Returns)":                  show_returns(t)
 elif report_choice == "📝 Листинги (Listings)":      show_listings()
 elif report_choice == "💲 Pricing / BuyBox":         show_pricing()
+elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
