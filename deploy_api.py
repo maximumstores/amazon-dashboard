@@ -1,98 +1,67 @@
 """
-Деплой api.py на Heroku — запусти один раз
-Автоматично встановлює Heroku CLI якщо потрібно
+MR.EQUIPP — скачування через FastAPI
 """
-import subprocess
-import sys
-import os
-import urllib.request
+import requests
+import pandas as pd
+from datetime import datetime
 
-HEROKU_APP = "mrequipp-api"
-MAIN_APP   = "amazon-dashboard"
+BASE_URL = "https://mrequipp-api-33065495432e.herokuapp.com"
+API_KEY  = "merino2024"
 
-def run(cmd, check=True):
-    print(f"→ {cmd}")
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    if r.stdout: print(r.stdout.strip())
-    if r.stderr and r.stderr.strip(): print(r.stderr.strip())
-    if check and r.returncode != 0:
-        print(f"❌ Помилка: {r.returncode}")
-        sys.exit(1)
-    return r
+def get(endpoint, **params):
+    url = f"{BASE_URL}/{endpoint}"
+    r = requests.get(url, params={"key": API_KEY, **params}, timeout=60)
+    print(f"  → HTTP {r.status_code} | {len(r.text)} bytes")
+    if r.status_code != 200:
+        print(f"  ❌ Response: {r.text[:300]}")
+        return None
+    try:
+        return r.json()
+    except Exception as e:
+        print(f"  ❌ JSON error: {e}")
+        print(f"  Response: {r.text[:300]}")
+        return None
 
-def check_heroku():
-    r = subprocess.run("heroku --version", shell=True, capture_output=True)
-    return r.returncode == 0
+def save(data, name):
+    if data and isinstance(data, list):
+        df = pd.DataFrame(data)
+        fname = f"{name}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+        df.to_csv(fname, index=False)
+        print(f"  💾 {fname} ({len(df)} рядків)")
 
-print("🚀 Деплой MR.EQUIPP API на Heroku\n" + "="*40)
+# Проверка доступности
+print("🔌 Перевірка API...")
+try:
+    r = requests.get(f"{BASE_URL}/", params={"key": API_KEY}, timeout=10)
+    print(f"  HTTP {r.status_code}: {r.text[:200]}")
+except Exception as e:
+    print(f"  ❌ Не доступний: {e}")
+    print(f"\n  ⚠️  Переконайся що api.py задеплоєний на Heroku:")
+    print(f"  heroku logs --tail --app mrequipp-api")
+    exit(1)
 
-# 0. Перевірка/встановлення Heroku CLI
-if not check_heroku():
-    print("\n0️⃣  Встановлюємо Heroku CLI...")
-    installer = "heroku-x64.exe"
-    url = "https://cli-assets.heroku.com/channels/stable/heroku-x64.exe"
-    print(f"  Завантажуємо {url}...")
-    urllib.request.urlretrieve(url, installer)
-    print("  Встановлюємо...")
-    subprocess.run(f"{installer} /S", shell=True)
-    os.remove(installer)
-    # Оновлюємо PATH
-    os.environ["PATH"] += r";C:\Program Files\heroku\bin"
-    if not check_heroku():
-        print("  ⚠️  Перезапусти термінал після встановлення Heroku CLI і запусти знову")
-        sys.exit(0)
-    print("  ✅ Heroku CLI встановлено")
+print("\n📦 Inventory...")
+d = get("inventory")
+if d: print(f"  ✅ {d['count']} SKU"); save(d.get('data',[]), "inventory")
 
-# 1. Логін
-print("\n1️⃣  Логін в Heroku (відкриється браузер)...")
-run("heroku login")
+print("\n💰 Finance...")
+d = get("finance", days=30)
+if d: print(f"  ✅ Net: ${d['net']:,.0f} | Маржа: {d['margin_pct']}%")
 
-# 2. Створити app
-print("\n2️⃣  Створюємо Heroku app...")
-r = run(f"heroku create {HEROKU_APP}", check=False)
-if "already" in (r.stdout + r.stderr).lower():
-    print(f"  ℹ️  App {HEROKU_APP} вже існує")
+print("\n🛒 Orders...")
+d = get("orders", days=30)
+if d: print(f"  ✅ {d['count']} замовлень"); save(d.get('data',[]), "orders")
 
-# 3. DATABASE_URL
-print("\n3️⃣  Копіюємо DATABASE_URL...")
-r = run(f"heroku config:get DATABASE_URL --app {MAIN_APP}", check=False)
-db_url = r.stdout.strip()
-if db_url and db_url.startswith("postgres"):
-    run(f'heroku config:set DATABASE_URL="{db_url}" --app {HEROKU_APP}')
-    print("  ✅ DATABASE_URL встановлено")
-else:
-    print("  ⚠️  Введи DATABASE_URL вручну:")
-    db_url = input("  DATABASE_URL: ").strip()
-    if db_url:
-        run(f'heroku config:set DATABASE_URL="{db_url}" --app {HEROKU_APP}')
+print("\n🏆 Buy Box...")
+d = get("buybox")
+if d: print(f"  ✅ Win Rate: {d['win_rate_pct']}%"); save(d.get('data',[]), "buybox")
 
-# 4. API ключ
-print("\n4️⃣  API_KEY...")
-run(f'heroku config:set API_KEY="merino2024" --app {HEROKU_APP}')
+print("\n🚨 Alerts...")
+d = get("alerts")
+if d:
+    print(f"  ✅ {d['alerts_count']} алертів")
+    for a in d.get('alerts', []):
+        if a['type'] == 'LOW_STOCK':    print(f"     🔴 {a.get('sku','')} — {a.get('days_left',0)}д")
+        elif a['type'] == 'LOST_BUYBOX': print(f"     ⚠️  {a.get('asin','')} @ ${a.get('price',0)}")
 
-# 5. Procfile
-print("\n5️⃣  Procfile...")
-with open("Procfile", "w") as f:
-    f.write("web: uvicorn api:app --host 0.0.0.0 --port $PORT\n")
-print("  ✅ Procfile створено")
-
-# 6. requirements.txt
-print("\n6️⃣  requirements.txt...")
-existing = open("requirements.txt").read() if os.path.exists("requirements.txt") else ""
-with open("requirements.txt", "a") as f:
-    if "fastapi" not in existing: f.write("\nfastapi\n")
-    if "uvicorn"  not in existing: f.write("uvicorn\n")
-print("  ✅ OK")
-
-# 7. Git + деплой
-print("\n7️⃣  Деплоїмо...")
-run("git add api.py Procfile requirements.txt deploy_api.py")
-run('git commit -m "Add FastAPI"', check=False)
-run(f"git push heroku main")
-
-print(f"""
-✅ Готово! API живий:
-   https://{HEROKU_APP}.herokuapp.com/inventory?key=merino2024
-   https://{HEROKU_APP}.herokuapp.com/finance?key=merino2024&days=30
-   https://{HEROKU_APP}.herokuapp.com/alerts?key=merino2024
-""")
+print("\n✅ Готово!")
