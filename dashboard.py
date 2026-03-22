@@ -5649,8 +5649,7 @@ def show_forecast(t=None):
         line=dict(color='rgba(255,255,255,0)'),
         name='Довірчий інтервал ±20%', showlegend=True
     ))
-    fig.add_vline(x=str(last_date), line_dash="dash", line_color="rgba(255,255,255,0.3)",
-                  annotation_text="сьогодні")
+    # vline removed - incompatible with date axis in this plotly version
     fig.update_layout(height=380, margin=dict(l=0,r=0,t=10,b=0),
                       legend=dict(orientation='h', y=1.12),
                       yaxis=dict(tickprefix="$", tickformat=".2s"))
