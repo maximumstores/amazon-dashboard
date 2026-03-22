@@ -2363,16 +2363,16 @@ def show_inventory_unified():
     <div style="font-size:12px;color:#666;margin-top:6px">{total_sku} SKU &nbsp;·&nbsp; {total_avail:,} штук</div>
   </div>
   <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       ✅ Available <b style="color:#4CAF50">{total_avail:,}</b>
     </span>
-    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       🚚 Inbound <b style="color:#5B9BD5">{total_inb:,}</b>
     </span>
-    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       🔒 Reserved <b style="color:#FFC107">{total_res:,}</b>
     </span>
-    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       📦 OOS <b style="color:#F44336">{oos_cnt}</b>
     </span>
   </div>
@@ -2900,16 +2900,16 @@ def show_sales_traffic(t):
     <div style="font-size:12px;color:#666;margin-top:6px">{d1} → {d2}</div>
   </div>
   <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       👁 Sessions <b style="color:#4CAF50">{ts:,}</b>
     </span>
-    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       🛒 Units <b style="color:#5B9BD5">{tu:,}</b>
     </span>
-    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       📊 CVR <b style="color:#FFC107">{ac:.2f}%</b>
     </span>
-    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       🏆 Buy Box <b style="color:#AB47BC">{ab:.1f}%</b>
     </span>
   </div>
@@ -3094,19 +3094,19 @@ def show_settlements(t):
   </div>
   <div style="flex:1;min-width:200px">
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+      <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
         📈 Gross <b style="color:#4CAF50">{_fmt(gross)}</b>
       </span>
-      <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
         💸 Fees <b style="color:#F44336">{_fmt(fees)}</b>
       </span>
-      <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
         🔄 Refunds <b style="color:#FF9800">{_fmt(refs)}</b>
       </span>
-      <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
         🎫 Promos <b style="color:#FF9800">{_fmt(promos)}</b>
       </span>
-      <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px">
+      <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
         📊 Маржа <b style="color:#5B9BD5">{margin_pct:.1f}%</b>
       </span>
     </div>
@@ -3529,16 +3529,16 @@ def show_returns(t=None):
     <div style="font-size:12px;color:#666;margin-top:6px">{d1} → {d2} · {total_ret:,} повернень</div>
   </div>
   <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       📦 Всього <b style="color:#F44336">{total_ret:,}</b>
     </span>
-    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       📦 SKU <b style="color:#5B9BD5">{unique_sku:,}</b>
     </span>
-    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       💰 Вартість <b style="color:#FFC107">{_fmt(total_val)}</b>
     </span>
-    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       💵 Avg <b style="color:#AB47BC">${avg_val:.2f}</b>
     </span>
   </div>
@@ -3693,16 +3693,16 @@ def show_orders(t=None):
     <div style="font-size:12px;color:#666;margin-top:6px">{d1} → {d2}</div>
   </div>
   <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       📦 Замовлень <b style="color:#4CAF50">{total_orders:,}</b>
     </span>
-    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       📋 Одиниць <b style="color:#5B9BD5">{total_items:,}</b>
     </span>
-    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       💵 Avg Order <b style="color:#FFC107">${avg_order:.2f}</b>
     </span>
-    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       📈 /день <b style="color:#AB47BC">{_fmt(rev_per_day)}</b>
     </span>
   </div>
@@ -4037,16 +4037,16 @@ def show_listings():
     <div style="font-size:12px;color:#666;margin-top:6px">{unique_asins} унікальних ASIN · avg ${avg_price:.2f}</div>
   </div>
   <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       ✅ Active <b style="color:#4CAF50">{active_cnt:,}</b>
     </span>
-    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       ❌ Inactive <b style="color:#F44336">{inactive_cnt:,}</b>
     </span>
-    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       📦 FBA <b style="color:#5B9BD5">{fba_cnt:,}</b>
     </span>
-    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       🏪 FBM <b style="color:#FFC107">{fbm_cnt:,}</b>
     </span>
   </div>
@@ -4237,16 +4237,16 @@ def show_pricing():
     <div style="font-size:12px;color:#666;margin-top:6px">Snapshot: {snap_time}</div>
   </div>
   <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       🏆 BB Winners <b style="color:#4CAF50">{bb_winner_cnt}</b> / {bb_total}
     </span>
-    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       📦 ASINs <b style="color:#5B9BD5">{total_asins}</b>
     </span>
-    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       💰 Avg Price <b style="color:#FFC107">${avg_price:.2f}</b>
     </span>
-    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       ❌ BB Lost <b style="color:#F44336">{bb_total - bb_winner_cnt}</b>
     </span>
   </div>
