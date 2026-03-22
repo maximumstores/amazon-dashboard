@@ -5756,11 +5756,7 @@ ML ПРОГНОЗ на {forecast_days} днів:
             st.session_state.forecast_analysis = analysis
 
     if st.session_state.forecast_analysis:
-        st.markdown(f"""
-<div style="background:#1a1a2e;border:1px solid #6366f1;border-radius:8px;
-            padding:16px 20px;font-size:13px;line-height:1.8;white-space:pre-wrap;color:#e0e0e0">
-{st.session_state.forecast_analysis}
-</div>""", unsafe_allow_html=True)
+        st.markdown(st.session_state.forecast_analysis)
 
     st.markdown("---")
 
