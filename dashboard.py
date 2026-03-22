@@ -605,7 +605,7 @@ def load_returns():
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            df_returns = pd.read_sql(text('SELECT * FROM returns ORDER BY "Return Date" DESC'), conn)
+            df_returns = pd.read_sql(text('SELECT * FROM fba_returns ORDER BY return_date DESC'), conn)
             df_orders  = pd.read_sql(text("SELECT * FROM orders"), conn)
         return df_returns, df_orders
     except Exception:
@@ -2440,7 +2440,7 @@ def show_etl_status():
 
         sql_settlements = 'SELECT COUNT(*), MAX(TO_DATE("Posted Date", \'DD.MM.YYYY\')) FROM settlements WHERE "Posted Date" != \'\''
         sql_orders      = 'SELECT COUNT(*), MAX(CAST("Order Date" AS TIMESTAMP)) FROM orders'
-        sql_returns     = 'SELECT COUNT(*), MAX(CAST("Return Date" AS TIMESTAMP)) FROM returns'
+        sql_returns     = 'SELECT COUNT(*), MAX(return_date) FROM fba_returns'
         sql_fba         = 'SELECT COUNT(*), MAX(created_at) FROM fba_inventory'
         sql_st          = "SELECT COUNT(*), MAX(CAST(report_date AS DATE)) FROM spapi.sales_traffic WHERE report_date != ''"
         sql_rev         = 'SELECT COUNT(*), MAX(created_at) FROM amazon_reviews'
@@ -3193,7 +3193,7 @@ def show_returns(t=None):
         with engine.connect() as conn:
             cols_df = pd.read_sql(text(
                 "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name='returns' ORDER BY ordinal_position"
+                "WHERE table_name='fba_returns' ORDER BY ordinal_position"
             ), conn)
         real_cols = cols_df['column_name'].tolist()
     except Exception as e:
@@ -3206,14 +3206,14 @@ def show_returns(t=None):
     col_map = {}
     for c in real_cols:
         lc = c.lower().replace(' ', '_').replace('-', '_')
-        if lc in ('return_date', 'returndate'):        col_map['date']     = c
-        elif lc in ('sku', 'seller_sku'):              col_map['sku']      = c
-        elif lc in ('asin',):                          col_map['asin']     = c
+        if lc in ('return_date', 'returndate', 'date'):  col_map['date']     = c
+        elif lc in ('sku', 'seller_sku', 'msku'):      col_map['sku']      = c
+        elif lc in ('asin', 'fnsku'):                  col_map['asin']     = c
         elif lc in ('quantity', 'qty'):                col_map['qty']      = c
-        elif lc in ('reason', 'return_reason'):        col_map['reason']   = c
-        elif lc in ('status', 'return_status'):        col_map['status']   = c
-        elif lc in ('order_id', 'orderid'):            col_map['order_id'] = c
-        elif lc in ('product_name', 'title', 'name'):  col_map['name']     = c
+        elif lc in ('reason', 'return_reason', 'detailed_disposition'): col_map['reason'] = c
+        elif lc in ('status', 'return_status', 'disposition'): col_map['status'] = c
+        elif lc in ('order_id', 'orderid', 'amazon_order_id'): col_map['order_id'] = c
+        elif lc in ('product_name', 'title', 'name', 'product_description'): col_map['name'] = c
 
     date_c  = col_map.get('date',  real_cols[0])
     sku_c   = col_map.get('sku',   None)
@@ -3226,7 +3226,7 @@ def show_returns(t=None):
     try:
         with engine.connect() as conn:
             bounds = pd.read_sql(text(
-                f'SELECT MIN("{date_c}")::date as mn, MAX("{date_c}")::date as mx FROM returns'
+                f'SELECT MIN("{date_c}")::date as mn, MAX("{date_c}")::date as mx FROM fba_returns'
             ), conn).iloc[0]
         min_date = bounds['mn']
         max_date = bounds['mx']
@@ -3247,7 +3247,7 @@ def show_returns(t=None):
     try:
         with engine.connect() as conn:
             df_f = pd.read_sql(text(
-                f'SELECT * FROM returns '
+                f'SELECT * FROM fba_returns '
                 f'WHERE "{date_c}" >= :d1 AND "{date_c}" <= :d2 '
                 f'ORDER BY "{date_c}" DESC LIMIT 10000'
             ), conn, params={"d1": d1, "d2": d2})
@@ -4061,4 +4061,5 @@ elif report_choice == "👑 User Management":          show_admin_panel()
 elif report_choice == "ℹ️ Про додаток":              show_about()
 
 st.sidebar.markdown("---")
+st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
