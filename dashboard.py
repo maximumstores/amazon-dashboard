@@ -2778,82 +2778,214 @@ def show_about():
 
 
 def show_overview(df_filtered, t, selected_date):
-    st.markdown(f"### {t['ov_title']}")
-    st.caption(f"📅 {selected_date}")
+    st.markdown("## 🏠 Command Center")
+    st.caption(f"Головна панель · {dt.date.today().strftime('%d %b %Y')}")
 
-    if df_filtered.empty:
-        st.info("Немає даних по інвентарю. Перевір ETL або обери іншу дату.")
-        return
+    engine = get_engine()
 
-    # ── KPI (тільки з df_filtered — вже в пам'яті, без запитів до БД) ──
-    total_sku   = len(df_filtered)
-    total_units = int(df_filtered['Available'].sum())
-    total_value = df_filtered['Stock Value'].sum()
-    avg_price   = df_filtered[df_filtered['Price'] > 0]['Price'].mean()
-    vel_30      = df_filtered['Velocity'].sum() if 'Velocity' in df_filtered.columns else 0
+    # ══════════════════════════════════════
+    # 1. ФІНАНСИ (з finance_events, 30 днів)
+    # ══════════════════════════════════════
+    net=gross=fees=refs=promos=0; fin_orders=0
+    try:
+        with engine.connect() as conn:
+            fr = pd.read_sql(text("""
+                SELECT
+                  SUM(CASE WHEN event_type='Shipment' AND charge_type='Principal'
+                      THEN NULLIF(amount,'')::numeric ELSE 0 END) AS gross,
+                  SUM(CASE WHEN event_type IN ('ShipmentFee','RefundFee')
+                      THEN NULLIF(amount,'')::numeric ELSE 0 END) AS fees,
+                  SUM(CASE WHEN event_type='Refund' AND charge_type='Principal'
+                      THEN NULLIF(amount,'')::numeric ELSE 0 END) AS refs,
+                  SUM(CASE WHEN event_type='ShipmentPromo'
+                      THEN NULLIF(amount,'')::numeric ELSE 0 END) AS promos,
+                  SUM(CASE WHEN event_type='Adjustment'
+                      THEN NULLIF(amount,'')::numeric ELSE 0 END) AS adj
+                FROM finance_events
+                WHERE posted_date >= CURRENT_DATE - INTERVAL '30 days'
+            """), conn).iloc[0]
+            gross = float(fr["gross"] or 0)
+            fees  = float(fr["fees"]  or 0)
+            refs  = float(fr["refs"]  or 0)
+            promos= float(fr["promos"] or 0)
+            adj   = float(fr["adj"]   or 0)
+            net   = gross + fees + refs + promos + adj
+            oc = pd.read_sql(text("SELECT COUNT(DISTINCT amazon_order_id) as cnt FROM orders WHERE purchase_date >= CURRENT_DATE - INTERVAL '30 days'"), conn).iloc[0]
+            fin_orders = int(oc["cnt"] or 0)
+    except: pass
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("📦 SKU",             f"{total_sku:,}")
-    c2.metric("🔢 Штук на складі",  f"{total_units:,}")
-    c3.metric("💰 Вартість складу", f"${total_value:,.0f}")
-    c4.metric("💵 Сер. ціна",       f"${avg_price:.2f}" if not pd.isna(avg_price) else "—")
-    c5.metric("🚀 Velocity/міс",    f"{vel_30:,.0f}")
+    margin_pct = net/gross*100 if gross > 0 else 0
+
+    # ══════════════════════════════════════
+    # 2. СКЛАД
+    # ══════════════════════════════════════
+    inv_sku=inv_units=inv_value=low14=oos=0
+    if not df_filtered.empty:
+        inv_sku   = len(df_filtered)
+        inv_units = int(df_filtered['Available'].sum())
+        inv_value = df_filtered['Stock Value'].sum()
+        if 'Velocity' in df_filtered.columns:
+            df_risk = df_filtered[df_filtered['Velocity'] > 0].copy()
+            df_risk['_dos'] = (df_risk['Available'] / df_risk['Velocity']).round(0)
+            low14 = int((df_risk['_dos'] < 14).sum())
+        oos = int((df_filtered['Available'] == 0).sum())
+
+    # ══════════════════════════════════════
+    # 3. RETURNS + BUYBOX
+    # ══════════════════════════════════════
+    rr_pct=0; bb_pct=0; bb_lost=0
+    try:
+        with engine.connect() as conn:
+            ret_r = pd.read_sql(text(
+                "SELECT COUNT(DISTINCT order_id) as ret, "
+                "(SELECT COUNT(DISTINCT amazon_order_id) FROM orders "
+                " WHERE purchase_date >= CURRENT_DATE - INTERVAL '30 days') as ord "
+                "FROM fba_returns WHERE return_date >= CURRENT_DATE - INTERVAL '30 days'"
+            ), conn).iloc[0]
+            rr_pct = float(ret_r["ret"] or 0) / float(ret_r["ord"] or 1) * 100
+    except: pass
+    try:
+        with engine.connect() as conn:
+            bb_r = pd.read_sql(text(
+                "SELECT COUNT(*) as total, "
+                "SUM(CASE WHEN is_buybox_winner=true OR is_buybox_winner='True' THEN 1 ELSE 0 END) as won "
+                "FROM pricing_buybox"
+            ), conn).iloc[0]
+            total_bb = int(bb_r["total"] or 0)
+            won_bb   = int(bb_r["won"]   or 0)
+            bb_pct   = won_bb/total_bb*100 if total_bb > 0 else 0
+            bb_lost  = total_bb - won_bb
+    except: pass
+
+    # ══════════════════════════════════════
+    # HERO ROW — головні цифри
+    # ══════════════════════════════════════
+    margin_color = "#4CAF50" if margin_pct >= 50 else "#FFC107" if margin_pct >= 30 else "#F44336"
+    rr_color     = "#4CAF50" if rr_pct <= 5 else "#FFC107" if rr_pct <= 10 else "#F44336"
+    bb_color     = "#4CAF50" if bb_pct >= 80 else "#FFC107" if bb_pct >= 50 else "#F44336"
+    stock_color  = "#F44336" if low14 > 0 else "#4CAF50"
+
+    st.markdown(f"""
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px">
+
+  <div style="background:linear-gradient(135deg,#1a2b1e,#0d1f12);border:1px solid #2d4a30;
+              border-radius:12px;padding:16px 20px">
+    <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px">💰 Виручка (30д)</div>
+    <div style="font-size:36px;font-weight:900;color:#4CAF50;font-family:monospace;line-height:1.1">{_fmt(gross)}</div>
+    <div style="font-size:12px;color:#aaa;margin-top:4px">Net <b style="color:{margin_color}">{_fmt(net)}</b> · Маржа <b style="color:{margin_color}">{margin_pct:.1f}%</b></div>
+    <div style="font-size:11px;color:#666;margin-top:2px">Fees {_fmt(fees)} · Refunds {_fmt(refs)}</div>
+  </div>
+
+  <div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border:1px solid #2d2d4a;
+              border-radius:12px;padding:16px 20px">
+    <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px">📦 Склад</div>
+    <div style="font-size:36px;font-weight:900;color:#5B9BD5;font-family:monospace;line-height:1.1">{_fmt(inv_value)}</div>
+    <div style="font-size:12px;color:#aaa;margin-top:4px">{inv_units:,} штук · {inv_sku} SKU</div>
+    <div style="font-size:11px;color:{stock_color};margin-top:2px">{'🔴 ' + str(low14) + ' SKU <14д!' if low14 > 0 else '✅ Запаси в нормі'} · OOS: {oos}</div>
+  </div>
+
+  <div style="background:linear-gradient(135deg,#1a1a2e,#1f1a16);border:1px solid #3a2d1a;
+              border-radius:12px;padding:16px 20px">
+    <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px">🛒 Замовлення (30д)</div>
+    <div style="font-size:36px;font-weight:900;color:#FFC107;font-family:monospace;line-height:1.1">{fin_orders:,}</div>
+    <div style="font-size:12px;color:#aaa;margin-top:4px">Returns <b style="color:{rr_color}">{rr_pct:.1f}%</b> · BuyBox <b style="color:{bb_color}">{bb_pct:.0f}%</b></div>
+    <div style="font-size:11px;color:#666;margin-top:2px">BB Lost: {bb_lost} ASIN</div>
+  </div>
+
+</div>""", unsafe_allow_html=True)
+
+    # ══════════════════════════════════════
+    # МІНІ P&L WATERFALL
+    # ══════════════════════════════════════
+    st.markdown("#### 📊 P&L (30 днів)")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        labels  = ["Gross", "Fees", "Refunds", "Promos", "Adj", "Net"]
+        values  = [gross, fees, refs, promos, adj, net]
+        measure = ["absolute","relative","relative","relative","relative","total"]
+        fig_wf = go.Figure(go.Waterfall(
+            orientation="v", measure=measure, x=labels, y=values,
+            text=[_fmt(abs(v)) for v in values], textposition="outside",
+            connector={"line":{"color":"rgba(128,128,128,0.3)","width":1}},
+            increasing={"marker":{"color":"#4CAF50"}},
+            decreasing={"marker":{"color":"#F44336"}},
+            totals={"marker":{"color":"#4472C4"}},
+        ))
+        fig_wf.update_layout(height=280, margin=dict(l=0,r=0,t=20,b=0),
+                             yaxis=dict(tickprefix="$", tickformat=".2s"))
+        st.plotly_chart(fig_wf, width="stretch")
+
+    with col2:
+        st.markdown("**Зведення:**")
+        rows = [
+            ("💰 Gross",   _fmt(gross),  "#4CAF50"),
+            ("💸 Fees",    _fmt(fees),   "#F44336"),
+            ("🔄 Refunds", _fmt(refs),   "#F44336"),
+            ("🎫 Promos",  _fmt(promos), "#FF9800"),
+            ("✅ Net",     _fmt(net),    margin_color),
+            ("📊 Маржа",   f"{margin_pct:.1f}%", margin_color),
+        ]
+        for label, val, color in rows:
+            st.markdown(f'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #222"><span style="color:#888;font-size:13px">{label}</span><b style="color:{color};font-size:13px">{val}</b></div>', unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # ── LOW STOCK ALERT ──
-    st.markdown("### 🚨 Low Stock Alert")
-    critical = pd.DataFrame()
-    if 'Velocity' in df_filtered.columns:
-        df_risk  = df_filtered[df_filtered['Velocity'] > 0].copy()
-        df_risk['days_left'] = (df_risk['Available'] / df_risk['Velocity']).round(0)
-        critical = df_risk[df_risk['days_left'] < 14].sort_values('days_left')
-        warning  = df_risk[(df_risk['days_left'] >= 14) & (df_risk['days_left'] < 30)]
-        if not critical.empty:
-            st.error(f"🔴 **{len(critical)} SKU** закінчаться за **<14 днів**")
-            cols_show = [c for c in ['SKU','Available','Velocity','days_left'] if c in critical.columns]
-            st.dataframe(critical[cols_show].head(10), width='stretch', hide_index=True)
-        if not warning.empty:
-            st.warning(f"🟡 **{len(warning)} SKU** — залишилось 14–30 днів")
-        if critical.empty and warning.empty:
-            st.success("✅ Всі SKU в нормі")
-    else:
-        st.info("Немає даних Velocity")
+    # ══════════════════════════════════════
+    # LOW STOCK + ТОП SKU
+    # ══════════════════════════════════════
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 🚨 Low Stock (<14 днів)")
+        if not df_filtered.empty and 'Velocity' in df_filtered.columns:
+            df_risk = df_filtered[df_filtered['Velocity'] > 0].copy()
+            df_risk['_dos'] = (df_risk['Available'] / df_risk['Velocity']).round(0)
+            crit = df_risk[df_risk['_dos'] < 14].sort_values('_dos')
+            if not crit.empty:
+                cols_s = [c for c in ['SKU','Available','Velocity','_dos'] if c in crit.columns]
+                st.dataframe(crit[cols_s].rename(columns={'_dos':'Days'}).head(8),
+                             width="stretch", hide_index=True, height=250)
+            else:
+                st.success("✅ Всі SKU в нормі!")
+        else:
+            st.info("Немає даних Velocity")
+
+    with col2:
+        st.markdown("#### 🏆 Топ 5 SKU (продажі 30д)")
+        try:
+            with engine.connect() as conn:
+                df_top = pd.read_sql(text(
+                    "SELECT sku, SUM(item_price::numeric) as rev, COUNT(*) as orders "
+                    "FROM orders WHERE purchase_date >= CURRENT_DATE - INTERVAL '30 days' "
+                    "AND item_price ~ '^[0-9.]+$' "
+                    "GROUP BY sku ORDER BY rev DESC LIMIT 5"
+                ), conn)
+            if not df_top.empty:
+                fig_top = go.Figure(go.Bar(
+                    x=df_top["rev"], y=df_top["sku"], orientation="h",
+                    marker_color="#4472C4",
+                    text=[_fmt(v) for v in df_top["rev"]], textposition="outside"
+                ))
+                fig_top.update_layout(height=250, margin=dict(l=0,r=60,t=10,b=0),
+                                      yaxis={"categoryorder":"total ascending"})
+                st.plotly_chart(fig_top, width="stretch")
+        except Exception as e:
+            st.info(f"Немає даних: {e}")
 
     st.markdown("---")
 
-    # ── ТОП 15 SKU ──
-    st.markdown("### 📊 Топ 15 SKU за залишками")
-    top_sku  = df_filtered.nlargest(15, 'Available')
-    cols_top = [c for c in ['SKU','Product Name','Available','Price','Stock Value','Store Name'] if c in top_sku.columns]
-    st.dataframe(
-        top_sku[cols_top].style.format({'Price': '${:.2f}', 'Stock Value': '${:,.0f}'}),
-        width='stretch', hide_index=True
-    )
-
-    st.markdown("---")
-
-    # ── TREEMAP ──
-    st.markdown("### 💰 Де заморожені гроші?")
-    dm = df_filtered[df_filtered['Stock Value'] > 0]
-    if not dm.empty:
-        path = []
-        if 'Store Name' in dm.columns: path.append('Store Name')
-        path.append('SKU')
-        fig = px.treemap(dm, path=path, values='Stock Value',
-                         color='Stock Value', color_continuous_scale='RdYlGn_r', height=420)
-        fig.update_layout(margin=dict(l=0, r=0, t=10, b=0))
-        st.plotly_chart(fig, width='stretch')
-
-    # ── AI CHAT ──
-    ctx_overview = f"""Inventory Overview:
-- SKU: {total_sku} | Штук: {total_units:,} | Вартість: ${total_value:,.0f}
-- Low Stock <14д: {len(critical)} SKU
-- Дата: {selected_date}"""
-    show_ai_chat(ctx_overview, [
+    # ══════════════════════════════════════
+    # AI COMMAND CENTER
+    # ══════════════════════════════════════
+    ctx_cc = f"""Command Center — {dt.date.today()}
+Фінанси (30д): Gross {_fmt(gross)} · Net {_fmt(net)} · Маржа {margin_pct:.1f}%
+Склад: {inv_units:,} units · {inv_sku} SKU · Low Stock <14д: {low14} · OOS: {oos}
+Замовлення (30д): {fin_orders:,} · Returns: {rr_pct:.1f}% · BuyBox: {bb_pct:.0f}% (lost: {bb_lost})"""
+    show_ai_chat(ctx_cc, [
+        "Що найбільше потребує уваги прямо зараз?",
         "Які SKU під ризиком out-of-stock найближчі 14 днів?",
-        "Де найбільше заморожених грошей?",
-        "Яка загальна оборотність складу?",
+        "Як покращити маржу з поточних показників?",
+        "Де найбільше втрат — fees, refunds чи promotions?",
     ], "overview")
 
 
