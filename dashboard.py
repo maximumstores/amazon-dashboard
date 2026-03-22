@@ -4667,6 +4667,211 @@ def show_fba_operations():
     ], "fba_ops")
 
 
+
+def show_tax(t=None):
+    st.markdown("### 📋 Податки (Tax)")
+    st.caption("Marketplace Facilitator Tax — Amazon збирає та перераховує автоматично")
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            kpi = pd.read_sql(text("""
+                SELECT
+                    SUM(CASE WHEN charge_type = 'Tax'
+                        THEN NULLIF(amount,'')::numeric ELSE 0 END) AS fe_tax,
+                    SUM(CASE WHEN charge_type = 'ShippingTax'
+                        THEN NULLIF(amount,'')::numeric ELSE 0 END) AS fe_ship_tax,
+                    SUM(CASE WHEN charge_type = 'GiftWrapTax'
+                        THEN NULLIF(amount,'')::numeric ELSE 0 END) AS fe_gift_tax,
+                    COUNT(CASE WHEN charge_type = 'Tax' THEN 1 END) AS fe_tax_rows,
+                    SUM(CASE WHEN event_type='Shipment' AND charge_type='Principal'
+                        THEN NULLIF(amount,'')::numeric ELSE 0 END) AS gross
+                FROM finance_events
+            """), conn).iloc[0]
+            kpi_orders = pd.read_sql(text("""
+                SELECT
+                    SUM(CASE WHEN item_tax ~ '^[0-9.]+$'
+                        THEN item_tax::numeric ELSE 0 END) AS item_tax_total,
+                    COUNT(CASE WHEN item_tax ~ '^[0-9.]+$'
+                        AND item_tax::numeric > 0 THEN 1 END) AS orders_with_tax,
+                    COUNT(*) AS total_orders
+                FROM orders
+            """), conn).iloc[0]
+    except Exception as e:
+        st.error(f"Помилка: {e}"); return
+
+    fe_tax    = float(kpi["fe_tax"] or 0)
+    fe_ship   = float(kpi["fe_ship_tax"] or 0)
+    fe_gift   = float(kpi["fe_gift_tax"] or 0)
+    fe_rows   = int(kpi["fe_tax_rows"] or 0)
+    gross     = float(kpi["gross"] or 0)
+    total_tax = fe_tax + fe_ship + fe_gift
+    tax_rate  = total_tax/gross*100 if gross else 0
+    ord_with  = int(kpi_orders["orders_with_tax"] or 0)
+    ord_total = int(kpi_orders["total_orders"] or 0)
+    taxed_pct = ord_with/ord_total*100 if ord_total else 0
+
+    st.markdown(f"""
+<div style="background:#1a1a2e;border:1px solid #2a2a3e;border-radius:12px;
+            padding:20px 28px;margin-bottom:16px">
+  <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">
+    📋 MARKETPLACE FACILITATOR TAX (Amazon збирає замість тебе)
+  </div>
+  <div style="font-size:42px;font-weight:800;color:#fff;font-family:monospace">
+    ${total_tax:,.0f}
+    <span style="font-size:20px;color:#aaa"> зібрано податків</span>
+  </div>
+  <div style="font-size:13px;color:#aaa;margin-top:6px">
+    Tax rate {tax_rate:.1f}% від gross ${gross/1e6:.2f}M · {fe_rows:,} транзакцій
+  </div>
+  <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
+    <span style="background:#1e293b;border:1px solid #6366f1;border-radius:6px;padding:4px 12px;font-size:13px;color:#a5b4fc">
+      🛍 Item Tax ${fe_tax:,.0f}
+    </span>
+    <span style="background:#1e293b;border:1px solid #4472C4;border-radius:6px;padding:4px 12px;font-size:13px;color:#93c5fd">
+      🚚 Shipping Tax ${fe_ship:,.0f}
+    </span>
+    <span style="background:#1e293b;border:1px solid #22c55e;border-radius:6px;padding:4px 12px;font-size:13px;color:#86efac">
+      🎁 Gift Wrap ${fe_gift:,.0f}
+    </span>
+    <span style="background:#1e293b;border:1px solid #f59e0b;border-radius:6px;padding:4px 12px;font-size:13px;color:#fcd34d">
+      {taxed_pct:.1f}% замовлень з податком
+    </span>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    st.info("💡 **Marketplace Facilitator Tax** — Amazon автоматично збирає та сплачує податки. Ці гроші **не твої** — тобі нічого робити не потрібно.")
+
+    _ic = st.columns(3)
+    rate_color = "#22c55e" if tax_rate <= 10 else "#f59e0b" if tax_rate <= 15 else "#ef4444"
+    with _ic[0]: insight_card("📊", "Ставка податку",
+        f"Avg tax rate <b>{tax_rate:.1f}%</b> від gross — {'норма для US' if tax_rate <= 12 else 'перевір розрахунок'}", "#1a1a2e")
+    with _ic[1]: insight_card("🛍", "Замовлення з Tax",
+        f"<b>{ord_with:,}</b> замовлень ({taxed_pct:.1f}%) мають item tax", "#1e293b")
+    with _ic[2]: insight_card("✅", "Твоя дія",
+        "Amazon сплачує замість тебе. Звіти: Seller Central → Tax → Reports", "#0d2b1e")
+
+    st.markdown("---")
+    tabs = st.tabs(["📈 Тренд", "🗺️ По штатах", "📋 Деталі"])
+
+    with tabs[0]:
+        try:
+            with engine.connect() as conn:
+                df_trend = pd.read_sql(text("""
+                    SELECT
+                        DATE_TRUNC('month', posted_date::date) AS month,
+                        SUM(CASE WHEN charge_type='Tax'
+                            THEN NULLIF(amount,'')::numeric ELSE 0 END) AS item_tax,
+                        SUM(CASE WHEN charge_type='ShippingTax'
+                            THEN NULLIF(amount,'')::numeric ELSE 0 END) AS ship_tax,
+                        SUM(CASE WHEN charge_type IN ('Tax','ShippingTax','GiftWrapTax')
+                            THEN NULLIF(amount,'')::numeric ELSE 0 END) AS total_tax,
+                        SUM(CASE WHEN event_type='Shipment' AND charge_type='Principal'
+                            THEN NULLIF(amount,'')::numeric ELSE 0 END) AS gross
+                    FROM finance_events
+                    WHERE posted_date IS NOT NULL AND posted_date != ''
+                    GROUP BY 1 ORDER BY 1
+                """), conn)
+            if not df_trend.empty:
+                df_trend["month"] = pd.to_datetime(df_trend["month"])
+                df_trend["tax_rate"] = (df_trend["total_tax"] / df_trend["gross"].replace(0, float("nan")) * 100).round(2)
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("#### 📈 Податок по місяцях")
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(x=df_trend["month"], y=df_trend["item_tax"], name="Item Tax", marker_color="#4472C4"))
+                    fig.add_trace(go.Bar(x=df_trend["month"], y=df_trend["ship_tax"], name="Shipping Tax", marker_color="#ED7D31"))
+                    fig.update_layout(barmode="stack", height=350, yaxis_title="Tax $", legend=dict(orientation="h",y=1.1))
+                    st.plotly_chart(fig, width="stretch")
+                with col2:
+                    st.markdown("#### 📊 Tax Rate % по місяцях")
+                    fig2 = go.Figure(go.Scatter(
+                        x=df_trend["month"], y=df_trend["tax_rate"],
+                        mode="lines+markers+text",
+                        text=[f"{v:.1f}%" for v in df_trend["tax_rate"].fillna(0)],
+                        textposition="top center",
+                        line=dict(color="#22c55e", width=3), marker=dict(size=8)
+                    ))
+                    fig2.add_hline(y=10, line_dash="dash", line_color="orange", annotation_text="10% avg")
+                    fig2.update_layout(height=350, yaxis_title="Tax Rate %")
+                    st.plotly_chart(fig2, width="stretch")
+        except Exception as e:
+            st.error(str(e))
+
+    with tabs[1]:
+        try:
+            with engine.connect() as conn:
+                df_states = pd.read_sql(text("""
+                    SELECT ship_state AS state, COUNT(*) AS orders,
+                        SUM(CASE WHEN item_tax ~ '^[0-9.]+$' THEN item_tax::numeric ELSE 0 END) AS item_tax,
+                        SUM(CASE WHEN item_price ~ '^[0-9.]+$' THEN item_price::numeric ELSE 0 END) AS gross,
+                        AVG(CASE WHEN item_tax ~ '^[0-9.]+$' AND item_tax::numeric > 0
+                            AND item_price ~ '^[0-9.]+$' AND item_price::numeric > 0
+                            THEN item_tax::numeric / item_price::numeric * 100 END) AS avg_tax_rate
+                    FROM orders
+                    WHERE ship_state IS NOT NULL AND ship_state != '' AND ship_country = 'US'
+                    GROUP BY 1 ORDER BY item_tax DESC LIMIT 30
+                """), conn)
+            if not df_states.empty:
+                df_states["avg_tax_rate"] = df_states["avg_tax_rate"].fillna(0).round(2)
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("#### 💰 Топ штатів по сумі")
+                    fig = px.bar(df_states.head(20), x="item_tax", y="state", orientation="h",
+                                 color="item_tax", color_continuous_scale="Blues", text="item_tax",
+                                 labels={"item_tax":"Tax $","state":"Штат"})
+                    fig.update_layout(height=500, yaxis={"categoryorder":"total ascending"})
+                    fig.update_traces(texttemplate="$%{text:,.0f}")
+                    st.plotly_chart(fig, width="stretch")
+                with col2:
+                    st.markdown("#### 📊 Avg Tax Rate %")
+                    df_r = df_states[df_states["avg_tax_rate"] > 0].nlargest(20,"avg_tax_rate")
+                    fig2 = px.bar(df_r, x="avg_tax_rate", y="state", orientation="h",
+                                  color="avg_tax_rate", color_continuous_scale="RdYlGn_r", text="avg_tax_rate")
+                    fig2.update_layout(height=500, yaxis={"categoryorder":"total ascending"})
+                    fig2.update_traces(texttemplate="%{text:.1f}%")
+                    st.plotly_chart(fig2, width="stretch")
+                st.dataframe(df_states.style.format({"item_tax":"${:,.2f}","gross":"${:,.2f}","avg_tax_rate":"{:.2f}%"}),
+                             width="stretch", hide_index=True)
+                st.download_button("📥 CSV по штатах", df_states.to_csv(index=False).encode(), "tax_states.csv", "text/csv")
+        except Exception as e:
+            st.error(str(e))
+
+    with tabs[2]:
+        try:
+            with engine.connect() as conn:
+                df_det = pd.read_sql(text("""
+                    SELECT posted_date, event_type, charge_type, order_id, seller_sku,
+                           NULLIF(amount,'')::numeric AS amount, currency
+                    FROM finance_events
+                    WHERE charge_type IN ('Tax','ShippingTax','GiftWrapTax','SalesTaxCollectionFee')
+                    ORDER BY posted_date DESC NULLS LAST LIMIT 500
+                """), conn)
+            if not df_det.empty:
+                col1, col2 = st.columns(2)
+                with col1:
+                    ct = df_det["charge_type"].value_counts().reset_index()
+                    ct.columns = ["Type","Count"]
+                    fig = px.pie(ct, values="Count", names="Type", hole=0.4,
+                                 color_discrete_sequence=px.colors.qualitative.Set2)
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, width="stretch")
+                with col2:
+                    by_type = df_det.groupby("charge_type")["amount"].agg(["sum","count"]).reset_index()
+                    by_type.columns = ["charge_type","total","count"]
+                    st.dataframe(by_type.style.format({"total":"${:,.2f}"}), width="stretch", hide_index=True)
+                st.dataframe(df_det.style.format({"amount":"${:.2f}"}), width="stretch", hide_index=True, height=400)
+                st.download_button("📥 CSV деталей", df_det.to_csv(index=False).encode(), "tax_details.csv", "text/csv")
+        except Exception as e:
+            st.error(str(e))
+
+    st.markdown("---")
+    ctx = f"""Tax: ${total_tax:,.0f} зібрано · rate {tax_rate:.1f}% · Item ${fe_tax:,.0f} · Ship ${fe_ship:,.0f} · {ord_with}/{ord_total} замовлень з tax"""
+    show_ai_chat(ctx, [
+        "Який штат має найвищу ставку податку?",
+        "Як змінився tax rate за останні 3 місяці?",
+        "Скільки зібрано податків за 2025 рік?",
+    ], "tax")
+
 def show_scraper_manager():
     _scr_init()
     _scr_flush()
@@ -4898,6 +5103,7 @@ main_nav = [
     "📝 Листинги (Listings)",
     "💲 Pricing / BuyBox",
     "📦 FBA Operations",
+    "📋 Податки (Tax)",
     "⭐ Amazon Reviews",
 ]
 
@@ -4958,6 +5164,7 @@ elif report_choice == "🔙 Повернення (Returns)":                  sh
 elif report_choice == "📝 Листинги (Listings)":      show_listings()
 elif report_choice == "💲 Pricing / BuyBox":         show_pricing()
 elif report_choice == "📦 FBA Operations":           show_fba_operations()
+elif report_choice == "📋 Податки (Tax)":            show_tax(t)
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
