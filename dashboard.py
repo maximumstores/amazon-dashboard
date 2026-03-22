@@ -3272,10 +3272,10 @@ def show_returns(t=None):
             price_col = next((c for c in oc if c.lower() in ('item_price','item-price','itemprice','price')), None)
             sku_o_col = next((c for c in oc if c.lower() in ('sku','seller_sku')), None)
             if price_col and sku_o_col and sku_c:
-                prices = pd.read_sql(text(
-                    f"SELECT "{sku_o_col}" as sku, AVG(NULLIF("{price_col}",'')::numeric) as price "
-                    f"FROM orders WHERE NULLIF("{price_col}",'') IS NOT NULL GROUP BY 1"
-                ), conn)
+                _sql = (f'SELECT "{sku_o_col}" as sku,'
+                        f' AVG(NULLIF("{price_col}",\'\')::numeric) as price'
+                        f' FROM orders WHERE NULLIF("{price_col}",\'\') IS NOT NULL GROUP BY 1')
+                prices = pd.read_sql(text(_sql), conn)
                 price_map = prices.set_index('sku')['price'].to_dict()
                 df_f['_price'] = df_f[sku_c].map(price_map).fillna(0)
             else:
