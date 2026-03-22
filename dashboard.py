@@ -879,7 +879,7 @@ def show_overview_insights(df_inventory):
                     return_rate  = unique_ret/total_orders*100 if total_orders > 0 else 0
                     break
 
-    tabs = st.tabs(["💰 Inventory","🏦 Settlements","📈 Трафик (Sales & Traffic)","🛒 Orders","📦 Returns","⭐ Reviews"])
+    tabs = st.tabs(["💰 Inventory","🏦 Settlements","📈 Трафик (Sales & Traffic)","🛒 Orders","🔙 Повернення (Returns)","⭐ Reviews"])
 
     with tabs[0]:
         if not df_inventory.empty and 'Stock Value' in df_inventory.columns:
@@ -2449,7 +2449,7 @@ def show_etl_status():
             ("📦 FBA Inventory",   "fba_inventory",       q(sql_fba),         "3× / день"),
             ("🏦 Settlements",     "settlements",         q(sql_settlements), "3× / день"),
             ("🛒 Orders",          "orders",              q(sql_orders),      "2× / день"),
-            ("📦 Returns",         "returns",             q(sql_returns),     "1× / день"),
+            ("🔙 Повернення (Returns)",         "returns",             q(sql_returns),     "1× / день"),
             ("📈 Трафик (Sales & Traffic)", "spapi.sales_traffic", q(sql_st),          "2× / день"),
             ("⭐ Reviews",         "amazon_reviews",      q(sql_rev),         "за запитом"),
             ("📣 Advertising",     "advertising",         (0, None),          "—"),
@@ -3997,7 +3997,7 @@ main_nav = [
     "💰 Фінанси (Settlements)",
     "🛒 Продажи (Orders)",
     "📦 Склад (Inventory)",
-    "📦 Returns",
+    "🔙 Повернення (Returns)",
     "⭐ Amazon Reviews",
 ]
 
@@ -4053,7 +4053,7 @@ elif report_choice == "📈 Трафик (Sales & Traffic)":          show_sales
 elif report_choice == "💰 Фінанси (Settlements)":   show_settlements(t)
 elif report_choice == "🛒 Продажи (Orders)":         show_orders(t)
 elif report_choice == "📦 Склад (Inventory)":        show_inventory_unified()
-elif report_choice == "📦 Returns":                  show_returns(t)
+elif report_choice == "🔙 Повернення (Returns)":                  show_returns(t)
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
