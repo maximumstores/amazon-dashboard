@@ -2802,7 +2802,8 @@ def show_overview(df_filtered, t, selected_date):
                   SUM(CASE WHEN event_type='Adjustment'
                       THEN NULLIF(amount,'')::numeric ELSE 0 END) AS adj
                 FROM finance_events
-                WHERE SUBSTRING(posted_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE posted_date IS NOT NULL AND posted_date != ''
+                  AND SUBSTRING(posted_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'
             """), conn).iloc[0]
             gross = float(fr["gross"] or 0)
             fees  = float(fr["fees"]  or 0)
@@ -2840,7 +2841,7 @@ def show_overview(df_filtered, t, selected_date):
                 "SELECT COUNT(DISTINCT order_id) as ret, "
                 "(SELECT COUNT(DISTINCT amazon_order_id) FROM orders "
                 " WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days') as ord "
-                "FROM fba_returns WHERE return_date >= CURRENT_DATE - INTERVAL '30 days'"
+                "FROM fba_returns WHERE SUBSTRING(return_date::text,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'"
             ), conn).iloc[0]
             rr_pct = float(ret_r["ret"] or 0) / float(ret_r["ord"] or 1) * 100
     except: pass
