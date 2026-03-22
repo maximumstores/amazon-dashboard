@@ -2976,6 +2976,115 @@ def show_overview(df_filtered, t, selected_date):
     st.markdown("---")
 
     # ══════════════════════════════════════
+    # RETURNS ТРЕНД + BUYBOX LOST + MoM
+    # ══════════════════════════════════════
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("#### 🔴 Returns тренд")
+        try:
+            with engine.connect() as conn:
+                df_ret_trend = pd.read_sql(text("""
+                    SELECT
+                        SUBSTRING(r.return_date::text,1,7) AS month,
+                        COUNT(DISTINCT r.order_id) AS returns,
+                        COUNT(DISTINCT o.amazon_order_id) AS orders
+                    FROM fba_returns r
+                    LEFT JOIN orders o ON SUBSTRING(o.purchase_date,1,7) = SUBSTRING(r.return_date::text,1,7)
+                    WHERE r.return_date >= CURRENT_DATE - INTERVAL '6 months'
+                    GROUP BY 1 ORDER BY 1
+                """), conn)
+            if not df_ret_trend.empty:
+                df_ret_trend['rr'] = (df_ret_trend['returns'] / df_ret_trend['orders'].replace(0,1) * 100).round(1)
+                colors_ret = ['#F44336' if v > 10 else '#FFC107' if v > 5 else '#4CAF50' for v in df_ret_trend['rr']]
+                fig_ret = go.Figure(go.Bar(
+                    x=df_ret_trend['month'], y=df_ret_trend['rr'],
+                    marker_color=colors_ret,
+                    text=[f"{v:.1f}%" for v in df_ret_trend['rr']], textposition='outside'
+                ))
+                fig_ret.add_hline(y=8, line_dash="dash", line_color="#FFC107", annotation_text="8% норма")
+                fig_ret.update_layout(height=220, margin=dict(l=0,r=0,t=20,b=0), yaxis_title="Return Rate %")
+                st.plotly_chart(fig_ret, width="stretch")
+        except Exception as e:
+            st.info(str(e))
+
+    with col2:
+        st.markdown("#### ⚠️ BuyBox Lost ASIN")
+        try:
+            with engine.connect() as conn:
+                df_bb_lost = pd.read_sql(text(
+                    "SELECT asin, price FROM pricing_buybox "
+                    "WHERE is_buybox_winner = false OR is_buybox_winner = 'False' OR is_buybox_winner = 'false' "
+                    "ORDER BY price DESC LIMIT 8"
+                ), conn)
+            if not df_bb_lost.empty:
+                df_bb_lost['price'] = pd.to_numeric(df_bb_lost['price'], errors='coerce').fillna(0)
+                st.dataframe(df_bb_lost.style.format({'price':'${:.2f}'}),
+                             width="stretch", hide_index=True, height=220)
+            else:
+                st.success("✅ Всі ASIN мають Buy Box!")
+        except Exception as e:
+            st.info(str(e))
+
+    with col3:
+        st.markdown("#### 📊 Цей місяць vs минулий")
+        try:
+            with engine.connect() as conn:
+                df_mom = pd.read_sql(text("""
+                    SELECT
+                        SUM(CASE WHEN SUBSTRING(purchase_date,1,7) = TO_CHAR(CURRENT_DATE,'YYYY-MM')
+                            AND item_price ~ '^[0-9.]+$' THEN item_price::numeric ELSE 0 END) AS this_month,
+                        SUM(CASE WHEN SUBSTRING(purchase_date,1,7) = TO_CHAR(CURRENT_DATE - INTERVAL '1 month','YYYY-MM')
+                            AND item_price ~ '^[0-9.]+$' THEN item_price::numeric ELSE 0 END) AS last_month,
+                        COUNT(DISTINCT CASE WHEN SUBSTRING(purchase_date,1,7) = TO_CHAR(CURRENT_DATE,'YYYY-MM')
+                            THEN amazon_order_id END) AS this_orders,
+                        COUNT(DISTINCT CASE WHEN SUBSTRING(purchase_date,1,7) = TO_CHAR(CURRENT_DATE - INTERVAL '1 month','YYYY-MM')
+                            THEN amazon_order_id END) AS last_orders
+                    FROM orders
+                """), conn).iloc[0]
+            this_m = float(df_mom['this_month'] or 0)
+            last_m = float(df_mom['last_month'] or 0)
+            chg    = (this_m - last_m) / last_m * 100 if last_m > 0 else 0
+            chg_color = "#4CAF50" if chg >= 0 else "#F44336"
+            chg_icon  = "📈" if chg >= 0 else "📉"
+            st.markdown(f"""
+<div style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:8px;padding:12px">
+  <div style="font-size:11px;color:#888">Поточний місяць</div>
+  <div style="font-size:28px;font-weight:800;color:#4CAF50">{_fmt(this_m)}</div>
+  <div style="font-size:12px;color:#aaa">{int(df_mom['this_orders'] or 0):,} замовлень</div>
+  <div style="margin-top:8px;font-size:11px;color:#888">Минулий місяць</div>
+  <div style="font-size:20px;font-weight:700;color:#aaa">{_fmt(last_m)}</div>
+  <div style="margin-top:8px;font-size:20px;font-weight:800;color:{chg_color}">{chg_icon} {chg:+.1f}%</div>
+</div>""", unsafe_allow_html=True)
+        except Exception as e:
+            st.info(str(e))
+
+    # Inbound shipments
+    st.markdown("---")
+    st.markdown("#### 🚚 Inbound shipments (активні)")
+    try:
+        with engine.connect() as conn:
+            df_inb = pd.read_sql(text(
+                "SELECT s.shipment_id, s.shipment_name, s.shipment_status, s.destination_fc, "
+                "SUM(i.quantity_shipped) as shipped, SUM(i.quantity_received) as received "
+                "FROM fba_shipments s "
+                "LEFT JOIN fba_shipment_items i ON s.shipment_id = i.shipment_id "
+                "WHERE s.shipment_status IN ('WORKING','SHIPPED','IN_TRANSIT','RECEIVING') "
+                "GROUP BY 1,2,3,4 ORDER BY s.created_at DESC LIMIT 10"
+            ), conn)
+        if not df_inb.empty:
+            df_inb['received'] = df_inb['received'].fillna(0).astype(int)
+            df_inb['shipped']  = df_inb['shipped'].fillna(0).astype(int)
+            df_inb['%'] = (df_inb['received'] / df_inb['shipped'].replace(0,1) * 100).round(0).astype(int)
+            st.dataframe(df_inb, width="stretch", hide_index=True, height=200)
+        else:
+            st.info("Немає активних відвантажень")
+    except Exception as e:
+        st.info(str(e))
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════
     # ТРЕНДИ
     # ══════════════════════════════════════
     st.markdown("#### 📈 Тренди (30 днів)")
