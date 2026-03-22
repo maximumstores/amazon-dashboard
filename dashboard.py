@@ -3997,6 +3997,7 @@ main_nav = [
     "💰 Фінанси (Settlements)",
     "🛒 Продажи (Orders)",
     "📦 Склад (Inventory)",
+    "📦 Returns",
     "⭐ Amazon Reviews",
 ]
 
@@ -4052,6 +4053,7 @@ elif report_choice == "📈 Трафик (Sales & Traffic)":          show_sales
 elif report_choice == "💰 Фінанси (Settlements)":   show_settlements(t)
 elif report_choice == "🛒 Продажи (Orders)":         show_orders(t)
 elif report_choice == "📦 Склад (Inventory)":        show_inventory_unified()
+elif report_choice == "📦 Returns":                  show_returns(t)
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
