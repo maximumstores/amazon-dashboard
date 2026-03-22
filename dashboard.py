@@ -2802,7 +2802,7 @@ def show_overview(df_filtered, t, selected_date):
                   SUM(CASE WHEN event_type='Adjustment'
                       THEN NULLIF(amount,'')::numeric ELSE 0 END) AS adj
                 FROM finance_events
-                WHERE posted_date::timestamp >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE SUBSTRING(posted_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'
             """), conn).iloc[0]
             gross = float(fr["gross"] or 0)
             fees  = float(fr["fees"]  or 0)
@@ -2810,7 +2810,7 @@ def show_overview(df_filtered, t, selected_date):
             promos= float(fr["promos"] or 0)
             adj   = float(fr["adj"]   or 0)
             net   = gross + fees + refs + promos + adj
-            oc = pd.read_sql(text("SELECT COUNT(DISTINCT amazon_order_id) as cnt FROM orders WHERE purchase_date::timestamp >= CURRENT_DATE - INTERVAL '30 days'"), conn).iloc[0]
+            oc = pd.read_sql(text("SELECT COUNT(DISTINCT amazon_order_id) as cnt FROM orders WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'"), conn).iloc[0]
             fin_orders = int(oc["cnt"] or 0)
     except: pass
 
@@ -2839,7 +2839,7 @@ def show_overview(df_filtered, t, selected_date):
             ret_r = pd.read_sql(text(
                 "SELECT COUNT(DISTINCT order_id) as ret, "
                 "(SELECT COUNT(DISTINCT amazon_order_id) FROM orders "
-                " WHERE purchase_date::timestamp >= CURRENT_DATE - INTERVAL '30 days') as ord "
+                " WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days') as ord "
                 "FROM fba_returns WHERE return_date >= CURRENT_DATE - INTERVAL '30 days'"
             ), conn).iloc[0]
             rr_pct = float(ret_r["ret"] or 0) / float(ret_r["ord"] or 1) * 100
@@ -2956,7 +2956,7 @@ def show_overview(df_filtered, t, selected_date):
             with engine.connect() as conn:
                 df_top = pd.read_sql(text(
                     "SELECT sku, SUM(item_price::numeric) as rev, COUNT(*) as orders "
-                    "FROM orders WHERE purchase_date::timestamp >= CURRENT_DATE - INTERVAL '30 days' "
+                    "FROM orders WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days' "
                     "AND item_price ~ '^[0-9.]+$' "
                     "GROUP BY sku ORDER BY rev DESC LIMIT 5"
                 ), conn)
@@ -2988,7 +2988,7 @@ def show_overview(df_filtered, t, selected_date):
                     "SELECT purchase_date::date AS d, "
                     "SUM(item_price::numeric) AS rev "
                     "FROM orders "
-                    "WHERE purchase_date::timestamp >= CURRENT_DATE - INTERVAL '30 days' "
+                    "WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days' "
                     "AND item_price ~ '^[0-9.]+$' "
                     "GROUP BY 1 ORDER BY 1"
                 ), conn)
@@ -3011,7 +3011,7 @@ def show_overview(df_filtered, t, selected_date):
                 df_ord_d = pd.read_sql(text(
                     "SELECT purchase_date::date AS d, COUNT(DISTINCT amazon_order_id) AS cnt "
                     "FROM orders "
-                    "WHERE purchase_date::timestamp >= CURRENT_DATE - INTERVAL '30 days' "
+                    "WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days' "
                     "GROUP BY 1 ORDER BY 1"
                 ), conn)
             if not df_ord_d.empty:
