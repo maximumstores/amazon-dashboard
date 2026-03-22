@@ -74,10 +74,16 @@ def finance(key: str = Query(...), days: int = 30):
 def orders(key: str = Query(...), days: int = 30):
     auth(key)
     with get_engine().connect() as conn:
+        cols = pd.read_sql(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='orders' ORDER BY ordinal_position"
+        ), conn)['column_name'].tolist()
+    date_col = next((c for c in cols if c.lower() in ('purchase_date','order_date','date')), cols[0])
+    with get_engine().connect() as conn:
         df = pd.read_sql(text(
-            f"SELECT amazon_order_id, purchase_date, sku, item_price, quantity, order_status "
-            f"FROM orders WHERE purchase_date >= CURRENT_DATE - INTERVAL '{days} days' "
-            f"ORDER BY purchase_date DESC LIMIT 1000"
+            f"SELECT * FROM orders "
+            f"WHERE "{date_col}" >= CURRENT_DATE - INTERVAL '{days} days' "
+            f"ORDER BY "{date_col}" DESC LIMIT 1000"
         ), conn)
     return {"status": "ok", "period_days": days, "count": len(df),
             "data": df.to_dict(orient="records")}
