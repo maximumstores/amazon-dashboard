@@ -3891,29 +3891,41 @@ def show_listings():
             st.plotly_chart(fig3, width="stretch")
 
     with col2:
-        if 'sales_rank' in df_f.columns and df_f['sales_rank'].notna().any():
-            df_f['sales_rank'] = pd.to_numeric(df_f['sales_rank'], errors='coerce')
-            st.markdown("#### 📈 BSR (Sales Rank) топ 15")
-            df_bsr = df_f[df_f['sales_rank'].notna() & (df_f['sales_rank'] > 0)].nsmallest(15, 'sales_rank')
-            if not df_bsr.empty:
-                fig4 = go.Figure(go.Bar(
-                    x=df_bsr['sales_rank'], y=df_bsr['seller_sku'], orientation='h',
-                    marker_color='#4CAF50',
-                    text=[f"#{int(v):,}" for v in df_bsr['sales_rank']], textposition='outside'
-                ))
-                fig4.update_layout(height=380, yaxis={'categoryorder':'total descending'},
-                                   xaxis_title="BSR (менше = краще)",
-                                   margin=dict(l=0,r=80,t=10,b=0))
-                st.plotly_chart(fig4, width="stretch")
+        # BSR якщо є дані, інакше Size
+        df_f['sales_rank'] = pd.to_numeric(df_f.get('sales_rank', None), errors='coerce')
+        df_bsr = df_f[df_f['sales_rank'].notna() & (df_f['sales_rank'] > 0)] if 'sales_rank' in df_f.columns else pd.DataFrame()
+
+        if not df_bsr.empty:
+            st.markdown("#### 📈 BSR топ 15 (найкращий rank)")
+            top_bsr = df_bsr.nsmallest(15, 'sales_rank')
+            fig4 = go.Figure(go.Bar(
+                x=top_bsr['sales_rank'], y=top_bsr['seller_sku'], orientation='h',
+                marker_color='#4CAF50',
+                text=[f"#{int(v):,}" for v in top_bsr['sales_rank']], textposition='outside'
+            ))
+            fig4.update_layout(height=380, yaxis={'categoryorder':'total descending'},
+                               xaxis_title="BSR (менше = краще)",
+                               margin=dict(l=0,r=80,t=10,b=0))
+            st.plotly_chart(fig4, width="stretch")
+        elif 'size' in df_f.columns and df_f['size'].notna().any():
+            st.markdown("#### 📏 По розміру (Size)")
+            sz = df_f['size'].value_counts().head(12).reset_index()
+            sz.columns = ['Size', 'Count']
+            colors_sz = px.colors.qualitative.Set2[:len(sz)]
+            fig4 = go.Figure(go.Bar(
+                x=sz['Count'], y=sz['Size'], orientation='h',
+                marker_color=colors_sz,
+                text=sz['Count'], textposition='outside'
+            ))
+            fig4.update_layout(height=380, yaxis={'categoryorder':'total ascending'},
+                               margin=dict(l=0,r=40,t=10,b=0))
+            st.plotly_chart(fig4, width="stretch")
         else:
-            st.markdown("#### 🎨 По Size/Color")
-            if 'size' in df_f.columns and df_f['size'].notna().any():
-                sz = df_f['size'].value_counts().head(10).reset_index()
-                sz.columns = ['Size', 'Count']
-                fig4 = px.bar(sz, x='Count', y='Size', orientation='h',
-                              color='Count', color_continuous_scale='Blues', height=320)
-                fig4.update_layout(yaxis={'categoryorder':'total ascending'})
-                st.plotly_chart(fig4, width="stretch")
+            st.markdown("#### 📦 По Fulfillment Channel")
+            fc_cnt = df_f['fulfillment_channel'].value_counts().reset_index()
+            fc_cnt.columns = ['FC', 'Count']
+            fig4 = px.pie(fc_cnt, values='Count', names='FC', hole=0.4, height=380)
+            st.plotly_chart(fig4, width="stretch")
 
     # ── Таблиця ──
     st.markdown("---")
