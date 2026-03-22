@@ -5784,8 +5784,10 @@ ML ПРОГНОЗ на {forecast_days} днів:
                 ORDER BY rev_30d DESC LIMIT 10
             """), conn)
         if not df_sku.empty:
-            df_sku['trend'] = ((df_sku['rev_30d'] - df_sku['rev_prev30d']) /
-                               df_sku['rev_prev30d'].replace(0, df_sku['rev_30d']) * 100).round(1)
+            df_sku['trend'] = df_sku.apply(
+                lambda r: (r['rev_30d'] - r['rev_prev30d']) / r['rev_prev30d'] * 100
+                          if r['rev_prev30d'] > 0 else 0, axis=1
+            ).round(1)
             df_sku['forecast_30d'] = (df_sku['rev_30d'] * (1 + df_sku['trend']/100)).clip(lower=0)
             df_sku['trend_str'] = df_sku['trend'].apply(lambda x: f"+{x:.0f}%" if x >= 0 else f"{x:.0f}%")
 
