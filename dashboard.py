@@ -4840,7 +4840,7 @@ def show_tax(t=None):
         try:
             with engine.connect() as conn:
                 df_det = pd.read_sql(text("""
-                    SELECT posted_date, event_type, charge_type, order_id, seller_sku,
+                    SELECT posted_date, event_type, charge_type,
                            NULLIF(amount,'')::numeric AS amount, currency
                     FROM finance_events
                     WHERE charge_type IN ('Tax','ShippingTax','GiftWrapTax','SalesTaxCollectionFee')
