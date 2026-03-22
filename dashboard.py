@@ -2630,6 +2630,67 @@ def show_etl_status():
     st.dataframe(_pd.DataFrame(data), width='stretch', hide_index=True)
 
 
+def show_api_docs():
+    st.markdown("## 🔌 API — доступ до даних")
+    st.caption("REST-like API через URL параметри Streamlit")
+
+    api_key = os.getenv("API_KEY", "merino2024")
+    base    = "https://merino-bi.streamlit.app"
+
+    st.markdown("### 🔑 Авторизація")
+    st.code(f"?key={api_key}", language="bash")
+    st.caption("Задай `API_KEY` в Streamlit Secrets для зміни ключа")
+
+    st.markdown("---")
+    st.markdown("### 📋 Ендпоінти")
+
+    endpoints = [
+        ("📦 Inventory",    f"{base}/?api=inventory&key={api_key}",               "Всі SKU з залишками з fba_inventory"),
+        ("💰 Finance P&L",  f"{base}/?api=finance&key={api_key}&days=30",         "P&L за N днів з finance_events"),
+        ("🛒 Orders",       f"{base}/?api=orders&key={api_key}&days=30",           "Замовлення за N днів"),
+        ("🏆 Buy Box",      f"{base}/?api=buybox&key={api_key}",                   "Buy Box статус по ASIN"),
+        ("🚨 Alerts",       f"{base}/?api=alerts&key={api_key}",                   "Low Stock + Lost Buy Box алерти"),
+        ("⭐ Reviews",      f"{base}/?api=reviews&key={api_key}&limit=100&rating=2","Відгуки (фільтр по рейтингу)"),
+        ("📖 Help",         f"{base}/?api=help&key={api_key}",                     "Документація всіх ендпоінтів"),
+    ]
+
+    for name, url, desc in endpoints:
+        with st.expander(f"{name} — {desc}"):
+            st.code(url, language="bash")
+            st.markdown(f"[🔗 Відкрити в браузері]({url})")
+
+    st.markdown("---")
+    st.markdown("### 💡 Приклади використання")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Python:**")
+        st.code(f"""import requests, json
+
+url = "{base}/?api=finance&key={api_key}&days=30"
+r = requests.get(url)
+# парсимо JSON з відповіді
+""", language="python")
+
+    with col2:
+        st.markdown("**Power BI / Excel:**")
+        st.code(f"""= Json.Document(
+    Web.Contents(
+      "{base}/?api=inventory&key={api_key}"
+    )
+)""", language="text")
+
+    st.markdown("---")
+    st.markdown("### ⚙️ Параметри")
+    st.dataframe(pd.DataFrame([
+        {"Параметр": "api",    "Значення": "inventory / finance / orders / buybox / alerts / reviews / help", "Обов'язковий": "✅"},
+        {"Параметр": "key",    "Значення": "API ключ з Streamlit Secrets",  "Обов'язковий": "✅"},
+        {"Параметр": "days",   "Значення": "30 / 60 / 90 (для finance, orders)", "Обов'язковий": "❌"},
+        {"Параметр": "limit",  "Значення": "100 (для reviews)",             "Обов'язковий": "❌"},
+        {"Параметр": "rating", "Значення": "1-5 (для reviews)",             "Обов'язковий": "❌"},
+    ]), width="stretch", hide_index=True)
+
+
 def show_about():
     st.markdown("""
 <style>
@@ -4623,6 +4684,7 @@ tools_nav = [
     "📊 ETL Status",
     "🕷 Scraper Reviews",
     "ℹ️ Про додаток",
+    "🔌 API",
 ]
 
 if user["role"] == "admin":
@@ -4679,6 +4741,7 @@ elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 elif report_choice == "👑 User Management":          show_admin_panel()
 elif report_choice == "ℹ️ Про додаток":              show_about()
+elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
