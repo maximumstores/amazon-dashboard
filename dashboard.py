@@ -3892,6 +3892,7 @@ def show_listings():
 
     with col2:
         if 'sales_rank' in df_f.columns and df_f['sales_rank'].notna().any():
+            df_f['sales_rank'] = pd.to_numeric(df_f['sales_rank'], errors='coerce')
             st.markdown("#### 📈 BSR (Sales Rank) топ 15")
             df_bsr = df_f[df_f['sales_rank'].notna() & (df_f['sales_rank'] > 0)].nsmallest(15, 'sales_rank')
             if not df_bsr.empty:
