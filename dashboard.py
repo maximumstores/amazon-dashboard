@@ -5182,6 +5182,251 @@ def show_tax(t=None):
         "Скільки зібрано податків за 2025 рік?",
     ], "tax")
 
+def show_restock_agent(t=None):
+    import json, requests as _req
+    st.markdown("### 📦 Restock Agent")
+    st.caption("AI аналіз залишків · Gemini рекомендації · Human-in-the-loop рішення")
+
+    engine = get_engine()
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY","")
+    GEMINI_MODEL   = os.environ.get("GEMINI_MODEL","gemini-1.5-flash")
+
+    # ── Ensure decisions table ──
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS public.agent_decisions (
+                    id SERIAL PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    agent_type TEXT, sku TEXT, asin TEXT, alert_type TEXT,
+                    recommendation TEXT, ai_analysis TEXT, details TEXT,
+                    decision TEXT DEFAULT 'PENDING', decided_at TIMESTAMP, message_id TEXT
+                )
+            """))
+            conn.commit()
+    except: pass
+
+    # ── Аналіз inventory ──
+    def analyze_inventory():
+        try:
+            with engine.connect() as conn:
+                df = pd.read_sql(text("""
+                    SELECT "SKU" as sku, "ASIN" as asin, "Product Name" as name,
+                        COALESCE(NULLIF("Available",'')::numeric, 0) as available,
+                        COALESCE(NULLIF("Inbound",'')::numeric, 0) as inbound,
+                        COALESCE(NULLIF("Velocity",'')::numeric, 0) as velocity,
+                        COALESCE(NULLIF("Days of Supply",'')::numeric, 0) as dos,
+                        COALESCE(NULLIF("Price",'')::numeric, 0) as price,
+                        "Store Name" as store
+                    FROM public.fba_inventory
+                    WHERE COALESCE(NULLIF("Velocity",'')::numeric, 0) > 0
+                    ORDER BY COALESCE(NULLIF("Days of Supply",'')::numeric, 999) ASC
+                """), conn)
+            df['recommended'] = ((df['velocity'] * 90) - df['available'] - df['inbound']).clip(lower=0).astype(int)
+            df['value']       = df['recommended'] * df['price']
+            df['alert_type']  = df['dos'].apply(lambda x: 'CRITICAL' if x < 14 else 'WARNING' if x < 30 else 'OK')
+            return df
+        except Exception as e:
+            st.error(f"Помилка inventory: {e}"); return pd.DataFrame()
+
+    def get_sales_trend(sku):
+        try:
+            with engine.connect() as conn:
+                df = pd.read_sql(text("""
+                    SELECT SUBSTRING(purchase_date,1,10)::date as day,
+                        COUNT(*) as orders,
+                        SUM(COALESCE(NULLIF(quantity,'')::numeric,1)) as units
+                    FROM orders WHERE sku = :sku
+                      AND SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'
+                    GROUP BY 1 ORDER BY 1
+                """), conn, params={"sku": sku})
+            if df.empty: return "Даних за 30 днів немає"
+            return "\n".join([f"{r['day']}: {int(r['units'])} units" for _, r in df.iterrows()])
+        except: return "Помилка отримання тренду"
+
+    def gemini_analyze(row, trend):
+        if not GEMINI_API_KEY:
+            return (f"РЕКОМЕНДАЦІЯ: {int(row['recommended'])} units\n"
+                    f"ПРИЧИНА: Базовий розрахунок (90д покриття)\n"
+                    f"РИЗИК: Out of stock за {int(row['dos'])} днів\n"
+                    f"ПРІОРИТЕТ: {'КРИТИЧНИЙ' if row['dos'] < 14 else 'ВИСОКИЙ'}")
+        prompt = (f"Amazon FBA inventory менеджер (merino wool apparel).\n\n"
+                  f"SKU: {row['sku']} | {str(row['name'])[:50]}\n"
+                  f"Available: {int(row['available'])} | Inbound: {int(row['inbound'])} | Velocity: {row['velocity']}/день\n"
+                  f"Days of Supply: {int(row['dos'])} | Ціна: ${row['price']} | Базова рек: {int(row['recommended'])} units\n\n"
+                  f"Тренд продажів (30д):\n{trend}\n\n"
+                  f"Відповідь строго у форматі:\n"
+                  f"РЕКОМЕНДАЦІЯ: [число] units\nПРИЧИНА: [1 речення]\nРИЗИК: [1 речення]\nПРІОРИТЕТ: [КРИТИЧНИЙ/ВИСОКИЙ/СЕРЕДНІЙ]")
+        try:
+            r = _req.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
+                json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20
+            )
+            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        except:
+            return f"РЕКОМЕНДАЦІЯ: {int(row['recommended'])} units\nПРИЧИНА: Базовий розрахунок\nРИЗИК: OOS за {int(row['dos'])} днів\nПРІОРИТЕТ: КРИТИЧНИЙ"
+
+    def save_decision(sku, asin, alert_type, recommendation, ai_analysis, details):
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text(
+                    "INSERT INTO public.agent_decisions "
+                    "(agent_type, sku, asin, alert_type, recommendation, ai_analysis, details) "
+                    "VALUES ('restock', :sku, :asin, :at, :rec, :ai, :det) RETURNING id"
+                ), {"sku": sku, "asin": asin, "at": alert_type,
+                    "rec": recommendation, "ai": ai_analysis, "det": json.dumps(details, default=str)})
+                conn.commit()
+                return result.fetchone()[0]
+        except Exception as e:
+            st.error(f"Save error: {e}"); return None
+
+    def update_decision(dec_id, decision):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "UPDATE public.agent_decisions SET decision=:d, decided_at=NOW() WHERE id=:id"
+                ), {"d": decision, "id": dec_id})
+                conn.commit()
+        except Exception as e:
+            st.error(f"Update error: {e}")
+
+    def load_decisions():
+        try:
+            with engine.connect() as conn:
+                return pd.read_sql(text(
+                    "SELECT id, created_at, sku, asin, alert_type, recommendation, decision, decided_at "
+                    "FROM public.agent_decisions WHERE agent_type='restock' ORDER BY created_at DESC LIMIT 50"
+                ), conn)
+        except: return pd.DataFrame()
+
+    # ── UI ──
+    df_inv = analyze_inventory()
+    if df_inv.empty: st.warning("Немає даних inventory"); return
+
+    critical = df_inv[df_inv['alert_type']=='CRITICAL']
+    warning  = df_inv[df_inv['alert_type']=='WARNING']
+    ok       = df_inv[df_inv['alert_type']=='OK']
+
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric("🔴 Критичних (<14д)",   len(critical))
+    c2.metric("🟡 Попереджень (<30д)", len(warning))
+    c3.metric("✅ В нормі",            len(ok))
+    c4.metric("💰 Вартість поповнення",
+              f"${df_inv[df_inv['alert_type']!='OK']['value'].sum():,.0f}")
+    st.markdown("---")
+
+    # ── Алерти ──
+    st.markdown("### 🚨 Алерти — потребують рішення")
+    alerts_df = df_inv[df_inv['alert_type'].isin(['CRITICAL','WARNING'])].copy()
+    alerts_df = alerts_df[alerts_df['recommended'] > 0]
+
+    if alerts_df.empty:
+        st.success("✅ Всі SKU в нормі — поповнення не потрібне")
+    else:
+        for _, row in alerts_df.iterrows():
+            icon  = "🔴" if row['alert_type']=='CRITICAL' else "🟡"
+            color = "#2b0d0d" if row['alert_type']=='CRITICAL' else "#2b2400"
+            bc    = "#ef4444" if row['alert_type']=='CRITICAL' else "#f59e0b"
+            dos_str = f"{int(row['dos'])}д" if row['dos'] > 0 else "OOS"
+
+            with st.expander(
+                f"{icon} {row['sku']} — {dos_str} залишилось · рек. {int(row['recommended'])} units (~${row['value']:,.0f})",
+                expanded=(row['alert_type']=='CRITICAL')
+            ):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"""
+<div style="background:{color};border-left:4px solid {bc};border-radius:8px;padding:14px 18px">
+  <div style="font-size:16px;font-weight:700;color:#fff">{row['sku']}</div>
+  <div style="font-size:12px;color:#aaa;margin-bottom:8px">{row['asin']}</div>
+  <div style="font-size:13px;color:#ddd;margin-bottom:8px">{str(row['name'])[:60]}</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:13px;color:#fff">
+    <div>📦 Available: <b>{int(row['available'])}</b></div>
+    <div>🚛 Inbound: <b>{int(row['inbound'])}</b></div>
+    <div>⚡ Velocity: <b>{row['velocity']:.2f}/д</b></div>
+    <div>📅 Days: <b style="color:{bc}">{dos_str}</b></div>
+    <div>💰 Price: <b>${row['price']}</b></div>
+    <div>📬 Рек: <b>{int(row['recommended'])} units</b></div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+                with col2:
+                    ai_key = f"ai_{row['sku']}"
+                    if ai_key not in st.session_state:
+                        st.session_state[ai_key] = None
+                    if st.session_state[ai_key] is None:
+                        if st.button(f"🤖 Gemini аналіз", key=f"btn_ai_{row['sku']}",
+                                     type="primary", use_container_width=True):
+                            with st.spinner("Gemini аналізує..."):
+                                trend = get_sales_trend(row['sku'])
+                                ai    = gemini_analyze(row, trend)
+                                st.session_state[ai_key] = ai
+                            st.rerun()
+                    else:
+                        st.markdown(f"""
+<div style="background:#1a1a2e;border:1px solid #6366f1;border-radius:8px;
+            padding:14px 18px;font-size:13px;line-height:1.7;white-space:pre-wrap;color:#fff">{st.session_state[ai_key]}</div>""",
+                            unsafe_allow_html=True)
+
+                st.markdown("**Ваше рішення:**")
+                b1, b2, b3 = st.columns(3)
+                dec_key = f"dec_{row['sku']}"
+                if dec_key not in st.session_state:
+                    st.session_state[dec_key] = None
+
+                if st.session_state[dec_key] is None:
+                    with b1:
+                        if st.button("✅ Так, замовити", key=f"yes_{row['sku']}",
+                                     use_container_width=True, type="primary"):
+                            ai = st.session_state.get(ai_key, "Без AI аналізу")
+                            did = save_decision(row['sku'], row['asin'], row['alert_type'],
+                                f"Send {int(row['recommended'])} units", ai, row.to_dict())
+                            if did: update_decision(did, "YES"); st.session_state[dec_key] = "YES"; st.rerun()
+                    with b2:
+                        if st.button("❌ Пропустити", key=f"no_{row['sku']}", use_container_width=True):
+                            ai = st.session_state.get(ai_key, "Без AI аналізу")
+                            did = save_decision(row['sku'], row['asin'], row['alert_type'],
+                                f"Skip {row['sku']}", ai, row.to_dict())
+                            if did: update_decision(did, "NO"); st.session_state[dec_key] = "NO"; st.rerun()
+                    with b3:
+                        if st.button("⏰ Пізніше", key=f"later_{row['sku']}", use_container_width=True):
+                            st.session_state[dec_key] = "LATER"; st.rerun()
+                else:
+                    icons = {"YES":"✅ Замовити", "NO":"❌ Пропустити", "LATER":"⏰ Пізніше"}
+                    st.success(f"Рішення: **{icons.get(st.session_state[dec_key], '')}**")
+                    if st.button("↩️ Змінити", key=f"reset_{row['sku']}"):
+                        st.session_state[dec_key] = None; st.rerun()
+
+    st.markdown("---")
+
+    # ── Таблиця ──
+    st.markdown("### 📋 Всі SKU — статус")
+    show_df = df_inv[['sku','asin','available','inbound','velocity','dos','price','recommended','value','alert_type']].copy()
+    show_df.columns = ['SKU','ASIN','Avail','Inbound','Velocity','DoS','Price','Рек.','Вартість','Статус']
+
+    def color_status(val):
+        if val == 'CRITICAL': return 'background-color:#2b0d0d;color:#ef4444'
+        if val == 'WARNING':  return 'background-color:#2b2400;color:#f59e0b'
+        return 'background-color:#0d2b1e;color:#22c55e'
+
+    st.dataframe(show_df.style.applymap(color_status, subset=['Статус'])
+                 .format({'Price':'${:.2f}','Вартість':'${:,.0f}','Velocity':'{:.2f}','DoS':'{:.0f}'}),
+                 width="stretch", hide_index=True, height=400)
+
+    st.markdown("---")
+
+    # ── Історія ──
+    st.markdown("### 📊 Історія рішень")
+    df_dec = load_decisions()
+    if not df_dec.empty:
+        c1,c2,c3 = st.columns(3)
+        c1.metric("✅ YES",     len(df_dec[df_dec['decision']=='YES']))
+        c2.metric("❌ NO",      len(df_dec[df_dec['decision']=='NO']))
+        c3.metric("⏳ PENDING", len(df_dec[df_dec['decision']=='PENDING']))
+        st.dataframe(df_dec[['created_at','sku','alert_type','recommendation','decision','decided_at']],
+                     width="stretch", hide_index=True, height=300)
+    else:
+        st.info("Рішень ще немає — запусти аналіз вище")
+
 def show_scraper_manager():
     _scr_init()
     _scr_flush()
@@ -5475,6 +5720,7 @@ elif report_choice == "📝 Листинги (Listings)":      show_listings()
 elif report_choice == "💲 Pricing / BuyBox":         show_pricing()
 elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "📋 Податки (Tax)":            show_tax(t)
+elif report_choice == "📦 Restock Agent":            show_restock_agent(t)
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
