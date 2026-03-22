@@ -4487,33 +4487,34 @@ def show_fba_operations():
     nc_count         = len(df_nc)
 
     # ── Hero ──
+    nc_span = (f'<span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">⚠️ NonCompl <b style="color:#F44336">{nc_count}</b></span>') if nc_count > 0 else ""
     st.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border:1px solid #2d2d4a;
             border-radius:12px;padding:20px 28px;margin-bottom:16px;
             display:flex;align-items:center;gap:32px;flex-wrap:wrap">
   <div>
-    <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+    <div style="font-size:12px;color:#aaa;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
       📦 FBA Operations
     </div>
     <div style="font-size:48px;font-weight:900;color:#5B9BD5;font-family:monospace;line-height:1">
       {total_shipments:,}
     </div>
-    <div style="font-size:12px;color:#666;margin-top:6px">відвантажень всього</div>
+    <div style="font-size:12px;color:#aaa;margin-top:6px">відвантажень всього</div>
   </div>
   <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       🚀 Active <b style="color:#4CAF50">{active_ship}</b>
     </span>
-    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px">
-      ✅ Closed <b style="color:#888">{closed_ship}</b>
+    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      ✅ Closed <b style="color:#aaa">{closed_ship}</b>
     </span>
-    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       📬 Отримано <b style="color:#5B9BD5">{total_units_recv:,}</b> / {total_units_sent:,}
     </span>
-    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       🗑 Removals <b style="color:#FFC107">{total_removals}</b>
     </span>
-    {('<span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">⚠️ NonCompl <b style="color:#F44336">' + str(nc_count) + '</b></span>') if nc_count > 0 else ""}
+    {nc_span}
   </div>
 </div>""", unsafe_allow_html=True)
 
