@@ -3336,7 +3336,11 @@ def show_returns(t=None):
 </div>""", unsafe_allow_html=True)
 
     # ── Інсайти ──
-    insights_returns(df_f, rr)
+    df_for_insights = df_f.copy()
+    if sku_c and sku_c != 'SKU':       df_for_insights['SKU']    = df_for_insights[sku_c]
+    if reason_c and reason_c != 'Reason': df_for_insights['Reason'] = df_for_insights[reason_c]
+    if 'Return Value' not in df_for_insights.columns: df_for_insights['Return Value'] = 0
+    insights_returns(df_for_insights, rr)
 
     st.markdown("---")
 
@@ -4061,5 +4065,4 @@ elif report_choice == "👑 User Management":          show_admin_panel()
 elif report_choice == "ℹ️ Про додаток":              show_about()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
