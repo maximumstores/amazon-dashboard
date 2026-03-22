@@ -2786,7 +2786,7 @@ def show_overview(df_filtered, t, selected_date):
     # ══════════════════════════════════════
     # 1. ФІНАНСИ (з finance_events, 30 днів)
     # ══════════════════════════════════════
-    net=gross=fees=refs=promos=0; fin_orders=0
+    net=gross=fees=refs=promos=adj=0; fin_orders=0
     try:
         with engine.connect() as conn:
             fr = pd.read_sql(text("""
@@ -2802,7 +2802,7 @@ def show_overview(df_filtered, t, selected_date):
                   SUM(CASE WHEN event_type='Adjustment'
                       THEN NULLIF(amount,'')::numeric ELSE 0 END) AS adj
                 FROM finance_events
-                WHERE posted_date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE posted_date::date >= CURRENT_DATE - INTERVAL '30 days'
             """), conn).iloc[0]
             gross = float(fr["gross"] or 0)
             fees  = float(fr["fees"]  or 0)
@@ -2971,6 +2971,60 @@ def show_overview(df_filtered, t, selected_date):
                 st.plotly_chart(fig_top, width="stretch")
         except Exception as e:
             st.info(f"Немає даних: {e}")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════
+    # ТРЕНДИ
+    # ══════════════════════════════════════
+    st.markdown("#### 📈 Тренди (30 днів)")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Денна виручка**")
+        try:
+            with engine.connect() as conn:
+                df_daily = pd.read_sql(text(
+                    "SELECT purchase_date::date AS d, "
+                    "SUM(item_price::numeric) AS rev "
+                    "FROM orders "
+                    "WHERE purchase_date::date >= CURRENT_DATE - INTERVAL '30 days' "
+                    "AND item_price ~ '^[0-9.]+$' "
+                    "GROUP BY 1 ORDER BY 1"
+                ), conn)
+            if not df_daily.empty:
+                fig_d = go.Figure(go.Bar(
+                    x=df_daily["d"], y=df_daily["rev"],
+                    marker_color="#4CAF50", opacity=0.85,
+                    text=[_fmt(v) for v in df_daily["rev"]], textposition="outside"
+                ))
+                fig_d.update_layout(height=240, margin=dict(l=0,r=0,t=10,b=0),
+                                    yaxis=dict(tickprefix="$", tickformat=".2s"))
+                st.plotly_chart(fig_d, width="stretch")
+        except Exception as e:
+            st.info(str(e))
+
+    with col2:
+        st.markdown("**Щоденні замовлення**")
+        try:
+            with engine.connect() as conn:
+                df_ord_d = pd.read_sql(text(
+                    "SELECT purchase_date::date AS d, COUNT(DISTINCT amazon_order_id) AS cnt "
+                    "FROM orders "
+                    "WHERE purchase_date::date >= CURRENT_DATE - INTERVAL '30 days' "
+                    "GROUP BY 1 ORDER BY 1"
+                ), conn)
+            if not df_ord_d.empty:
+                fig_od = go.Figure(go.Scatter(
+                    x=df_ord_d["d"], y=df_ord_d["cnt"],
+                    mode="lines+markers",
+                    line=dict(color="#5B9BD5", width=2),
+                    fill="tozeroy", fillcolor="rgba(91,155,213,0.15)"
+                ))
+                fig_od.update_layout(height=240, margin=dict(l=0,r=0,t=10,b=0))
+                st.plotly_chart(fig_od, width="stretch")
+        except Exception as e:
+            st.info(str(e))
 
     st.markdown("---")
 
