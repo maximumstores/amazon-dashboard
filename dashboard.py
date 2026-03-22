@@ -3754,6 +3754,213 @@ def _scr_flush():
             except: break
 
 
+def show_listings():
+    st.markdown("### 📝 Листинги (Listings)")
+    engine = get_engine()
+
+    # ── Sidebar фільтри ──
+    search_q    = st.sidebar.text_input("🔍 SKU / ASIN / Назва", "", key="lst_search")
+    sel_mp      = st.sidebar.selectbox("🌍 Marketplace:", ["Всі", "Amazon.com", "Amazon.ca", "Amazon.de", "Amazon.co.uk"], key="lst_mp")
+    sel_fc      = st.sidebar.selectbox("📦 Fulfillment:", ["Всі", "FBA (AMAZON_NA)", "FBM (DEFAULT)"], key="lst_fc")
+    sel_status  = st.sidebar.selectbox("📊 Статус:", ["Всі", "Active", "Inactive"], key="lst_status")
+
+    # ── Завантаження ──
+    try:
+        with engine.connect() as conn:
+            df_all  = pd.read_sql(text("SELECT * FROM listings_all"),      conn)
+            df_cat  = pd.read_sql(text("SELECT asin, brand, main_image_url, sales_rank, sales_rank_category, color, size, product_type FROM catalog_items"), conn)
+            cnt_open = pd.read_sql(text("SELECT COUNT(*) as cnt FROM listings_open"),     conn).iloc[0]['cnt']
+            cnt_inact= pd.read_sql(text("SELECT COUNT(*) as cnt FROM listings_inactive"), conn).iloc[0]['cnt']
+    except Exception as e:
+        st.error(f"Помилка: {e}"); return
+
+    if df_all.empty:
+        st.warning("listings_all порожня"); return
+
+    # нормалізуємо
+    df_all['price']    = pd.to_numeric(df_all['price'].replace('', None), errors='coerce').fillna(0)
+    df_all['quantity'] = pd.to_numeric(df_all['quantity'].replace('', None), errors='coerce').fillna(0)
+    df_all['open_date']= pd.to_datetime(df_all['open_date'], errors='coerce')
+
+    # join з catalog
+    df = df_all.merge(df_cat, left_on='asin1', right_on='asin', how='left')
+
+    # фільтри
+    df_f = df.copy()
+    if search_q:
+        mask = (df_f['seller_sku'].astype(str).str.contains(search_q, case=False, na=False) |
+                df_f['asin1'].astype(str).str.contains(search_q, case=False, na=False) |
+                df_f['item_name'].astype(str).str.contains(search_q, case=False, na=False))
+        df_f = df_f[mask]
+    if sel_mp != "Всі":
+        df_f = df_f[df_f['marketplace'].astype(str).str.contains(sel_mp.replace("Amazon.",""), case=False, na=False)]
+    if sel_fc == "FBA (AMAZON_NA)":
+        df_f = df_f[df_f['fulfillment_channel'].astype(str).str.contains("AMAZON", case=False, na=False)]
+    elif sel_fc == "FBM (DEFAULT)":
+        df_f = df_f[~df_f['fulfillment_channel'].astype(str).str.contains("AMAZON", case=False, na=False)]
+    if sel_status == "Active":
+        df_f = df_f[df_f['status'].astype(str).str.lower() == 'active']
+    elif sel_status == "Inactive":
+        df_f = df_f[df_f['status'].astype(str).str.lower() != 'active']
+
+    # KPI
+    total       = len(df_f)
+    active_cnt  = int((df_f['status'].astype(str).str.lower() == 'active').sum())
+    inactive_cnt= total - active_cnt
+    avg_price   = df_f[df_f['price'] > 0]['price'].mean()
+    fba_cnt     = int(df_f['fulfillment_channel'].astype(str).str.contains("AMAZON", case=False, na=False).sum())
+    fbm_cnt     = total - fba_cnt
+    unique_asins= df_f['asin1'].nunique()
+
+    # ── Hero Card ──
+    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border:1px solid #2d2d4a;
+            border-radius:12px;padding:20px 28px;margin-bottom:16px;
+            display:flex;align-items:center;gap:32px;flex-wrap:wrap">
+  <div>
+    <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+      📝 Каталог листингів
+    </div>
+    <div style="font-size:48px;font-weight:900;color:#5B9BD5;font-family:monospace;line-height:1">
+      {total:,}
+    </div>
+    <div style="font-size:12px;color:#666;margin-top:6px">{unique_asins} унікальних ASIN · avg ${avg_price:.2f}</div>
+  </div>
+  <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+      ✅ Active <b style="color:#4CAF50">{active_cnt:,}</b>
+    </span>
+    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      ❌ Inactive <b style="color:#F44336">{inactive_cnt:,}</b>
+    </span>
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+      📦 FBA <b style="color:#5B9BD5">{fba_cnt:,}</b>
+    </span>
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      🏪 FBM <b style="color:#FFC107">{fbm_cnt:,}</b>
+    </span>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    # ── Інсайти ──
+    _icols = st.columns(3)
+    active_pct = active_cnt/total*100 if total > 0 else 0
+    if active_pct >= 80:   _em, _col = "🟢", "#0d2b1e"
+    elif active_pct >= 50: _em, _col = "🟡", "#2b2400"
+    else:                  _em, _col = "🔴", "#2b0d0d"
+    with _icols[0]: insight_card(_em, "Активних листингів",
+        f"<b>{active_cnt}</b> з {total} ({active_pct:.0f}%) активні", _col)
+    fba_pct = fba_cnt/total*100 if total > 0 else 0
+    with _icols[1]: insight_card("📦", "FBA vs FBM",
+        f"FBA: <b>{fba_cnt}</b> ({fba_pct:.0f}%) · FBM: <b>{fbm_cnt}</b> ({100-fba_pct:.0f}%)", "#1a1a2e")
+    with _icols[2]: insight_card("💰", "Середня ціна",
+        f"Avg: <b>${avg_price:.2f}</b> · {total} SKU в каталозі", "#1e293b")
+
+    st.markdown("---")
+
+    # ── Чарти ──
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("#### 📊 По маркетплейсах")
+        mp_cnt = df_f['marketplace'].value_counts().reset_index()
+        mp_cnt.columns = ['Marketplace', 'Count']
+        fig = px.pie(mp_cnt, values='Count', names='Marketplace', hole=0.4,
+                     color_discrete_sequence=px.colors.qualitative.Set2)
+        fig.update_layout(height=320)
+        st.plotly_chart(fig, width="stretch")
+
+    with col2:
+        st.markdown("#### 📊 Active vs Inactive по marketplace")
+        status_mp = df_f.groupby(['marketplace','status']).size().reset_index(name='cnt')
+        fig2 = px.bar(status_mp, x='marketplace', y='cnt', color='status',
+                      color_discrete_map={'Active':'#4CAF50','Inactive':'#F44336'},
+                      barmode='stack', height=320)
+        fig2.update_layout(margin=dict(l=0,r=0,t=10,b=0))
+        st.plotly_chart(fig2, width="stretch")
+
+    # ── Ціновий розподіл ──
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("#### 💰 Розподіл цін")
+        df_prices = df_f[df_f['price'] > 0]
+        if not df_prices.empty:
+            fig3 = px.histogram(df_prices, x='price', nbins=30,
+                                color_discrete_sequence=['#5B9BD5'], height=300)
+            fig3.update_layout(margin=dict(l=0,r=0,t=10,b=0), xaxis_title="Ціна $")
+            st.plotly_chart(fig3, width="stretch")
+
+    with col2:
+        if 'sales_rank' in df_f.columns and df_f['sales_rank'].notna().any():
+            st.markdown("#### 📈 BSR (Sales Rank) топ 15")
+            df_bsr = df_f[df_f['sales_rank'].notna() & (df_f['sales_rank'] > 0)].nsmallest(15, 'sales_rank')
+            if not df_bsr.empty:
+                fig4 = go.Figure(go.Bar(
+                    x=df_bsr['sales_rank'], y=df_bsr['seller_sku'], orientation='h',
+                    marker_color='#4CAF50',
+                    text=[f"#{int(v):,}" for v in df_bsr['sales_rank']], textposition='outside'
+                ))
+                fig4.update_layout(height=380, yaxis={'categoryorder':'total descending'},
+                                   xaxis_title="BSR (менше = краще)",
+                                   margin=dict(l=0,r=80,t=10,b=0))
+                st.plotly_chart(fig4, width="stretch")
+        else:
+            st.markdown("#### 🎨 По Size/Color")
+            if 'size' in df_f.columns and df_f['size'].notna().any():
+                sz = df_f['size'].value_counts().head(10).reset_index()
+                sz.columns = ['Size', 'Count']
+                fig4 = px.bar(sz, x='Count', y='Size', orientation='h',
+                              color='Count', color_continuous_scale='Blues', height=320)
+                fig4.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig4, width="stretch")
+
+    # ── Таблиця ──
+    st.markdown("---")
+    st.markdown("#### 📋 Каталог листингів")
+
+    # вибираємо що показати
+    show_cols = ['seller_sku','asin1','item_name','price','quantity','status',
+                 'fulfillment_channel','marketplace','open_date']
+    if 'brand' in df_f.columns:        show_cols.append('brand')
+    if 'size' in df_f.columns:         show_cols.append('size')
+    if 'color' in df_f.columns:        show_cols.append('color')
+    if 'sales_rank' in df_f.columns:   show_cols.append('sales_rank')
+    if 'main_image_url' in df_f.columns: show_cols.append('main_image_url')
+
+    show_cols = [c for c in show_cols if c in df_f.columns]
+    df_show = df_f[show_cols].sort_values('price', ascending=False).head(500).reset_index(drop=True)
+
+    col_cfg = {
+        'seller_sku':       st.column_config.TextColumn("SKU"),
+        'asin1':            st.column_config.TextColumn("ASIN"),
+        'item_name':        st.column_config.TextColumn("Назва", width="large"),
+        'price':            st.column_config.NumberColumn("Ціна $", format="$%.2f"),
+        'quantity':         st.column_config.NumberColumn("Qty"),
+        'status':           st.column_config.TextColumn("Статус"),
+        'fulfillment_channel': st.column_config.TextColumn("FC"),
+        'marketplace':      st.column_config.TextColumn("MP"),
+        'open_date':        st.column_config.DatetimeColumn("Open Date", format="YYYY-MM-DD"),
+        'brand':            st.column_config.TextColumn("Brand"),
+        'size':             st.column_config.TextColumn("Size"),
+        'color':            st.column_config.TextColumn("Color"),
+        'sales_rank':       st.column_config.NumberColumn("BSR", format="%d"),
+        'main_image_url':   st.column_config.ImageColumn("Фото", width="small"),
+    }
+
+    st.dataframe(df_show, column_config=col_cfg,
+                 width="stretch", hide_index=True, height=500)
+    st.caption(f"Показано {len(df_show):,} з {len(df_f):,} листингів")
+    st.download_button("📥 CSV", df_f[show_cols].to_csv(index=False).encode(), "listings.csv", "text/csv")
+
+    # ── AI ──
+    ctx = f"""Listings: {total} SKU | Active: {active_cnt} | Inactive: {inactive_cnt} | FBA: {fba_cnt} | Avg price: ${avg_price:.2f}"""
+    show_ai_chat(ctx, [
+        "Які SKU inactive більше 90 днів — можна деактивувати?",
+        "Де найвищий BSR (найкращий rank)?",
+        "Які FBM листинги варто перевести на FBA?",
+    ], "listings")
+
+
 def show_scraper_manager():
     _scr_init()
     _scr_flush()
@@ -3982,6 +4189,7 @@ main_nav = [
     "🛒 Продажи (Orders)",
     "📦 Склад (Inventory)",
     "🔙 Повернення (Returns)",
+    "📝 Листинги (Listings)",
     "⭐ Amazon Reviews",
 ]
 
@@ -4038,6 +4246,7 @@ elif report_choice == "💰 Фінанси (Settlements)":   show_settlements(t)
 elif report_choice == "🛒 Продажи (Orders)":         show_orders(t)
 elif report_choice == "📦 Склад (Inventory)":        show_inventory_unified()
 elif report_choice == "🔙 Повернення (Returns)":                  show_returns(t)
+elif report_choice == "📝 Листинги (Listings)":      show_listings()
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
