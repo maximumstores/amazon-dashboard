@@ -3974,6 +3974,270 @@ def show_listings():
     ], "listings")
 
 
+def show_pricing():
+    st.markdown("### 💲 Pricing / Buy Box")
+    engine = get_engine()
+
+    # ── Завантаження ──
+    try:
+        with engine.connect() as conn:
+            df_curr  = pd.read_sql(text("SELECT * FROM pricing_current ORDER BY snapshot_time DESC"), conn)
+            df_bb    = pd.read_sql(text("SELECT * FROM pricing_buybox ORDER BY snapshot_time DESC"), conn)
+            df_comp  = pd.read_sql(text("SELECT * FROM pricing_competitive ORDER BY snapshot_time DESC"), conn)
+            df_off   = pd.read_sql(text("SELECT * FROM pricing_offers ORDER BY snapshot_time DESC"), conn)
+    except Exception as e:
+        st.error(f"Помилка: {e}"); return
+
+    # нормалізуємо числові
+    for df, cols in [
+        (df_curr,  ['listing_price','landed_price','shipping_price','regular_price','business_price']),
+        (df_bb,    ['price']),
+        (df_comp,  ['listing_price','landed_price','shipping']),
+        (df_off,   ['price','listing_price','shipping']),
+    ]:
+        for c in cols:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c].replace('', None), errors='coerce').fillna(0)
+
+    # is_buybox_winner → bool
+    for df in [df_bb, df_off]:
+        if 'is_buybox_winner' in df.columns:
+            df['is_buybox_winner'] = df['is_buybox_winner'].astype(str).str.lower().isin(['true','1','yes'])
+
+    # ── KPI ──
+    total_asins   = df_curr['asin'].nunique() if not df_curr.empty else 0
+    bb_winner_cnt = int(df_bb['is_buybox_winner'].sum()) if not df_bb.empty else 0
+    bb_total      = len(df_bb)
+    bb_pct        = bb_winner_cnt / bb_total * 100 if bb_total > 0 else 0
+    avg_price     = df_curr['listing_price'].mean() if not df_curr.empty else 0
+    snap_time     = str(df_curr['snapshot_time'].max())[:16] if not df_curr.empty else "—"
+
+    bb_color = "#4CAF50" if bb_pct >= 80 else "#FFC107" if bb_pct >= 50 else "#F44336"
+    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border:1px solid #2d2d4a;
+            border-radius:12px;padding:20px 28px;margin-bottom:16px;
+            display:flex;align-items:center;gap:32px;flex-wrap:wrap">
+  <div>
+    <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+      🏆 Buy Box Win Rate
+    </div>
+    <div style="font-size:48px;font-weight:900;color:{bb_color};font-family:monospace;line-height:1">
+      {bb_pct:.0f}%
+    </div>
+    <div style="font-size:12px;color:#666;margin-top:6px">Snapshot: {snap_time}</div>
+  </div>
+  <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px">
+      🏆 BB Winners <b style="color:#4CAF50">{bb_winner_cnt}</b> / {bb_total}
+    </span>
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px">
+      📦 ASINs <b style="color:#5B9BD5">{total_asins}</b>
+    </span>
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      💰 Avg Price <b style="color:#FFC107">${avg_price:.2f}</b>
+    </span>
+    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px">
+      ❌ BB Lost <b style="color:#F44336">{bb_total - bb_winner_cnt}</b>
+    </span>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    # ── Інсайти ──
+    _ic = st.columns(3)
+    if bb_pct >= 80:   _em, _col = "🟢", "#0d2b1e"
+    elif bb_pct >= 50: _em, _col = "🟡", "#2b2400"
+    else:              _em, _col = "🔴", "#2b0d0d"
+    with _ic[0]: insight_card(_em, "Buy Box Win Rate",
+        f"Виграємо Buy Box у <b>{bb_pct:.0f}%</b> ({bb_winner_cnt}/{bb_total} ASIN)", _col)
+
+    lost_bb = df_bb[~df_bb['is_buybox_winner']] if not df_bb.empty else pd.DataFrame()
+    with _ic[1]: insight_card("⚠️", "Buy Box програш",
+        f"<b>{len(lost_bb)} ASIN</b> без Buy Box — перевір ціну та репрайсер", "#2b2400" if len(lost_bb) < 5 else "#2b0d0d")
+
+    # Різниця нашої ціни vs competitor
+    if not df_comp.empty and not df_curr.empty:
+        merged = df_curr.merge(df_comp[['asin','listing_price']].rename(columns={'listing_price':'comp_price'}),
+                               on='asin', how='inner')
+        if not merged.empty:
+            merged['price_diff'] = merged['listing_price'] - merged['comp_price']
+            over_cnt = int((merged['price_diff'] > 1).sum())
+            with _ic[2]: insight_card("💸", "Вища за конкурента",
+                f"<b>{over_cnt} ASIN</b> — наша ціна вища за competitive price на $1+", "#2b2400" if over_cnt > 0 else "#0d2b1e")
+        else:
+            with _ic[2]: insight_card("💰", "Competitive", "Немає даних для порівняння", "#1e293b")
+    else:
+        with _ic[2]: insight_card("💰", "Avg Listing Price", f"<b>${avg_price:.2f}</b>", "#1e293b")
+
+    st.markdown("---")
+
+    # ── ТАБИ ──
+    tabs = st.tabs(["🏆 Buy Box", "💰 Current Prices", "📊 Competitive", "📋 All Offers"])
+
+    # ── TAB 1: Buy Box ──
+    with tabs[0]:
+        if df_bb.empty:
+            st.info("Немає даних pricing_buybox")
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("#### 🏆 Buy Box статус по ASIN")
+                bb_status = df_bb.groupby('asin').agg(
+                    is_winner=('is_buybox_winner','max'),
+                    price=('price','mean'),
+                    fulfillment=('fulfillment','first')
+                ).reset_index()
+                bb_status['Статус'] = bb_status['is_winner'].map({True:'✅ Winner', False:'❌ Lost'})
+                bb_status = bb_status.sort_values('is_winner', ascending=False)
+
+                colors_bb = ['#4CAF50' if w else '#F44336' for w in bb_status['is_winner']]
+                fig = go.Figure(go.Bar(
+                    x=bb_status['price'], y=bb_status['asin'], orientation='h',
+                    marker_color=colors_bb,
+                    text=[f"${v:.2f} {'✅' if w else '❌'}" for v,w in zip(bb_status['price'], bb_status['is_winner'])],
+                    textposition='outside'
+                ))
+                fig.update_layout(height=max(350, len(bb_status)*35),
+                                  xaxis_title="Ціна $",
+                                  yaxis={'categoryorder':'total ascending'},
+                                  margin=dict(l=0,r=80,t=10,b=0))
+                st.plotly_chart(fig, width="stretch")
+
+            with col2:
+                st.markdown("#### 📊 Buy Box по Fulfillment")
+                bb_fc = df_bb.groupby(['fulfillment','is_buybox_winner']).size().reset_index(name='cnt')
+                bb_fc['label'] = bb_fc['is_buybox_winner'].map({True:'Winner',False:'Lost'})
+                fig2 = px.bar(bb_fc, x='fulfillment', y='cnt', color='label',
+                              color_discrete_map={'Winner':'#4CAF50','Lost':'#F44336'},
+                              barmode='stack', height=380)
+                st.plotly_chart(fig2, width="stretch")
+
+            st.markdown("#### 📋 Buy Box деталі")
+            st.dataframe(
+                bb_status.rename(columns={'asin':'ASIN','price':'Price','fulfillment':'FC','Статус':'BB Status'})
+                    .style.format({'Price':'${:.2f}'}),
+                width="stretch", hide_index=True
+            )
+            st.download_button("📥 CSV", df_bb.to_csv(index=False).encode(), "buybox.csv", "text/csv")
+
+    # ── TAB 2: Current Prices ──
+    with tabs[1]:
+        if df_curr.empty:
+            st.info("Немає даних pricing_current")
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("#### 💰 Listing Price по ASIN")
+                pc = df_curr[df_curr['listing_price'] > 0].copy()
+                pc = pc.merge(df_bb[['asin','is_buybox_winner']].drop_duplicates('asin'), on='asin', how='left')
+                pc['is_buybox_winner'] = pc['is_buybox_winner'].fillna(False)
+                colors_p = ['#4CAF50' if w else '#5B9BD5' for w in pc['is_buybox_winner']]
+                fig3 = go.Figure(go.Bar(
+                    x=pc['listing_price'], y=pc['asin'], orientation='h',
+                    marker_color=colors_p,
+                    text=[f"${v:.2f}" for v in pc['listing_price']], textposition='outside'
+                ))
+                fig3.update_layout(height=max(350, len(pc)*30),
+                                   yaxis={'categoryorder':'total ascending'},
+                                   margin=dict(l=0,r=60,t=10,b=0))
+                st.plotly_chart(fig3, width="stretch")
+                st.caption("🟢 = Buy Box Winner")
+
+            with col2:
+                st.markdown("#### 💰 Regular vs Business Price")
+                pr = df_curr[(df_curr['regular_price'] > 0) | (df_curr['business_price'] > 0)].copy()
+                if not pr.empty:
+                    fig4 = go.Figure()
+                    fig4.add_trace(go.Bar(name='Regular', x=pr['asin'], y=pr['regular_price'], marker_color='#5B9BD5'))
+                    fig4.add_trace(go.Bar(name='Business', x=pr['asin'], y=pr['business_price'], marker_color='#AB47BC'))
+                    fig4.update_layout(barmode='group', height=380, xaxis_tickangle=-45)
+                    st.plotly_chart(fig4, width="stretch")
+                else:
+                    st.info("Regular/Business price відсутні")
+
+            show_c = [c for c in ['asin','sku','listing_price','landed_price','regular_price','business_price','fulfillment','marketplace','status'] if c in df_curr.columns]
+            st.dataframe(df_curr[show_c].style.format({c:'${:.2f}' for c in ['listing_price','landed_price','regular_price','business_price'] if c in df_curr.columns}),
+                         width="stretch", hide_index=True)
+            st.download_button("📥 CSV", df_curr.to_csv(index=False).encode(), "pricing_current.csv", "text/csv")
+
+    # ── TAB 3: Competitive ──
+    with tabs[2]:
+        if df_comp.empty:
+            st.info("Немає даних pricing_competitive")
+        else:
+            # join наша ціна vs competitive
+            merged_comp = df_curr[['asin','listing_price']].merge(
+                df_comp[['asin','listing_price','landed_price','number_of_offers']].rename(
+                    columns={'listing_price':'comp_price','landed_price':'comp_landed'}),
+                on='asin', how='outer'
+            )
+            merged_comp['our_price']  = merged_comp['listing_price'].fillna(0)
+            merged_comp['comp_price'] = merged_comp['comp_price'].fillna(0)
+            merged_comp['diff']       = merged_comp['our_price'] - merged_comp['comp_price']
+            merged_comp['diff_pct']   = (merged_comp['diff'] / merged_comp['comp_price'] * 100).fillna(0)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("#### 💸 Наша ціна vs Competitive")
+                mc = merged_comp[merged_comp['our_price'] > 0].copy()
+                fig5 = go.Figure()
+                fig5.add_trace(go.Bar(name='Our Price',  x=mc['asin'], y=mc['our_price'],  marker_color='#5B9BD5'))
+                fig5.add_trace(go.Bar(name='Competitor', x=mc['asin'], y=mc['comp_price'], marker_color='#F44336', opacity=0.7))
+                fig5.update_layout(barmode='group', height=380, xaxis_tickangle=-45)
+                st.plotly_chart(fig5, width="stretch")
+
+            with col2:
+                st.markdown("#### 📊 Різниця ціни (%)")
+                mc_sorted = mc.sort_values('diff_pct', ascending=True)
+                colors_diff = ['#F44336' if v > 5 else '#FFC107' if v > 0 else '#4CAF50' for v in mc_sorted['diff_pct']]
+                fig6 = go.Figure(go.Bar(
+                    x=mc_sorted['diff_pct'], y=mc_sorted['asin'], orientation='h',
+                    marker_color=colors_diff,
+                    text=[f"{v:+.1f}%" for v in mc_sorted['diff_pct']], textposition='outside'
+                ))
+                fig6.add_vline(x=0, line_dash="dash", line_color="#888")
+                fig6.update_layout(height=max(350,len(mc_sorted)*35), xaxis_title="% різниця (+ = ми дорожче)",
+                                   margin=dict(l=0,r=60,t=10,b=0))
+                st.plotly_chart(fig6, width="stretch")
+
+            st.dataframe(merged_comp.style.format({'our_price':'${:.2f}','comp_price':'${:.2f}','diff':'${:+.2f}','diff_pct':'{:+.1f}%'}),
+                         width="stretch", hide_index=True)
+            st.download_button("📥 CSV", df_comp.to_csv(index=False).encode(), "competitive.csv", "text/csv")
+
+    # ── TAB 4: All Offers ──
+    with tabs[3]:
+        if df_off.empty:
+            st.info("Немає даних pricing_offers")
+        else:
+            st.markdown(f"#### 📋 Всі офери ({len(df_off)} записів)")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("##### 📦 По offer_type")
+                ot = df_off['offer_type'].value_counts().reset_index()
+                ot.columns = ['Type','Count']
+                fig7 = px.pie(ot, values='Count', names='Type', hole=0.4, height=300)
+                st.plotly_chart(fig7, width="stretch")
+            with col2:
+                st.markdown("##### 🏆 BB Winners в офферах")
+                bbo = df_off['is_buybox_winner'].value_counts().reset_index()
+                bbo.columns = ['Winner','Count']
+                fig8 = px.pie(bbo, values='Count', names='Winner', hole=0.4, height=300,
+                              color_discrete_sequence=['#4CAF50','#F44336'])
+                st.plotly_chart(fig8, width="stretch")
+
+            show_o = [c for c in ['asin','offer_type','fulfillment','price','listing_price','shipping','is_buybox_winner','total_offer_count','seller_id'] if c in df_off.columns]
+            st.dataframe(df_off[show_o].style.format({c:'${:.2f}' for c in ['price','listing_price','shipping'] if c in df_off.columns}),
+                         width="stretch", hide_index=True)
+            st.download_button("📥 CSV", df_off.to_csv(index=False).encode(), "offers.csv", "text/csv")
+
+    # ── AI ──
+    ctx = f"""Pricing/BuyBox: {total_asins} ASINs | BB Win Rate: {bb_pct:.0f}% ({bb_winner_cnt}/{bb_total}) | Avg Price: ${avg_price:.2f} | Lost BB: {bb_total-bb_winner_cnt}"""
+    show_ai_chat(ctx, [
+        "Які ASIN програють Buy Box — яка ціна у конкурента?",
+        "Де наша ціна вища за competitive price?",
+        "Які ASIN варто знизити ціну для виграшу Buy Box?",
+    ], "pricing")
+
+
 def show_scraper_manager():
     _scr_init()
     _scr_flush()
@@ -4203,6 +4467,7 @@ main_nav = [
     "📦 Склад (Inventory)",
     "🔙 Повернення (Returns)",
     "📝 Листинги (Listings)",
+    "💲 Pricing / BuyBox",
     "⭐ Amazon Reviews",
 ]
 
@@ -4260,6 +4525,7 @@ elif report_choice == "🛒 Продажи (Orders)":         show_orders(t)
 elif report_choice == "📦 Склад (Inventory)":        show_inventory_unified()
 elif report_choice == "🔙 Повернення (Returns)":                  show_returns(t)
 elif report_choice == "📝 Листинги (Listings)":      show_listings()
+elif report_choice == "💲 Pricing / BuyBox":         show_pricing()
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
