@@ -2986,7 +2986,7 @@ def show_overview(df_filtered, t, selected_date):
         try:
             with engine.connect() as conn:
                 df_daily = pd.read_sql(text(
-                    "SELECT purchase_date::date AS d, "
+                    "SELECT SUBSTRING(purchase_date,1,10)::date AS d, "
                     "SUM(item_price::numeric) AS rev "
                     "FROM orders "
                     "WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days' "
@@ -3010,7 +3010,7 @@ def show_overview(df_filtered, t, selected_date):
         try:
             with engine.connect() as conn:
                 df_ord_d = pd.read_sql(text(
-                    "SELECT purchase_date::date AS d, COUNT(DISTINCT amazon_order_id) AS cnt "
+                    "SELECT SUBSTRING(purchase_date,1,10)::date AS d, COUNT(DISTINCT amazon_order_id) AS cnt "
                     "FROM orders "
                     "WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days' "
                     "GROUP BY 1 ORDER BY 1"
