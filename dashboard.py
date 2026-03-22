@@ -2986,25 +2986,23 @@ def show_overview(df_filtered, t, selected_date):
             with engine.connect() as conn:
                 df_ret_trend = pd.read_sql(text("""
                     SELECT
-                        SUBSTRING(r.return_date::text,1,7) AS month,
-                        COUNT(DISTINCT r.order_id) AS returns,
-                        COUNT(DISTINCT o.amazon_order_id) AS orders
-                    FROM fba_returns r
-                    LEFT JOIN orders o ON SUBSTRING(o.purchase_date,1,7) = SUBSTRING(r.return_date::text,1,7)
-                    WHERE SUBSTRING(r.return_date::text,1,10)::date >= CURRENT_DATE - INTERVAL '6 months'
+                        SUBSTRING(return_date::text,1,7) AS month,
+                        COUNT(*) AS returns
+                    FROM fba_returns
+                    WHERE SUBSTRING(return_date::text,1,10)::date >= CURRENT_DATE - INTERVAL '6 months'
                     GROUP BY 1 ORDER BY 1
                 """), conn)
             if not df_ret_trend.empty:
-                df_ret_trend['rr'] = (df_ret_trend['returns'] / df_ret_trend['orders'].replace(0,1) * 100).round(1)
-                colors_ret = ['#F44336' if v > 10 else '#FFC107' if v > 5 else '#4CAF50' for v in df_ret_trend['rr']]
+                colors_ret = ['#F44336'] * len(df_ret_trend)
                 fig_ret = go.Figure(go.Bar(
-                    x=df_ret_trend['month'], y=df_ret_trend['rr'],
-                    marker_color=colors_ret,
-                    text=[f"{v:.1f}%" for v in df_ret_trend['rr']], textposition='outside'
+                    x=df_ret_trend['month'], y=df_ret_trend['returns'],
+                    marker_color='#F44336',
+                    text=df_ret_trend['returns'], textposition='outside'
                 ))
-                fig_ret.add_hline(y=8, line_dash="dash", line_color="#FFC107", annotation_text="8% норма")
-                fig_ret.update_layout(height=220, margin=dict(l=0,r=0,t=20,b=0), yaxis_title="Return Rate %")
+                fig_ret.update_layout(height=220, margin=dict(l=0,r=0,t=20,b=0), yaxis_title="Returns count")
                 st.plotly_chart(fig_ret, width="stretch")
+            else:
+                st.info("Немає даних за 6 місяців")
         except Exception as e:
             st.info(str(e))
 
@@ -3070,7 +3068,7 @@ def show_overview(df_filtered, t, selected_date):
                 "FROM fba_shipments s "
                 "LEFT JOIN fba_shipment_items i ON s.shipment_id = i.shipment_id "
                 "WHERE s.shipment_status IN ('WORKING','SHIPPED','IN_TRANSIT','RECEIVING') "
-                "GROUP BY 1,2,3,4 ORDER BY s.created_at DESC LIMIT 10"
+                "GROUP BY 1,2,3,4 ORDER BY MAX(s.created_at) DESC LIMIT 10"
             ), conn)
         if not df_inb.empty:
             df_inb['received'] = df_inb['received'].fillna(0).astype(int)
@@ -3112,7 +3110,7 @@ def show_overview(df_filtered, t, selected_date):
                                     yaxis=dict(tickprefix="$", tickformat=".2s"))
                 st.plotly_chart(fig_d, width="stretch")
         except Exception as e:
-            st.info(str(e))
+            st.error(f"Виручка: {e}")
 
     with col2:
         st.markdown("**Щоденні замовлення**")
@@ -3134,7 +3132,7 @@ def show_overview(df_filtered, t, selected_date):
                 fig_od.update_layout(height=240, margin=dict(l=0,r=0,t=10,b=0))
                 st.plotly_chart(fig_od, width="stretch")
         except Exception as e:
-            st.info(str(e))
+            st.error(f"Замовлення: {e}")
 
     st.markdown("---")
 
