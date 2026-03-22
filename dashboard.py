@@ -3262,10 +3262,9 @@ def show_returns(t=None):
     if qty_c:
         df_f[qty_c] = pd.to_numeric(df_f[qty_c], errors='coerce').fillna(1)
 
-    # ── Return Value через orders ──
+    # ── Return Value через orders (item_price по SKU) ──
     try:
         with engine.connect() as conn:
-            # шукаємо колонки orders
             oc = pd.read_sql(text(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name='orders' ORDER BY ordinal_position"
@@ -3274,8 +3273,8 @@ def show_returns(t=None):
             sku_o_col = next((c for c in oc if c.lower() in ('sku','seller_sku')), None)
             if price_col and sku_o_col and sku_c:
                 prices = pd.read_sql(text(
-                    f'SELECT "{sku_o_col}" as sku, AVG(NULLIF("{price_col}",'')::numeric) as price '
-                    f'FROM orders GROUP BY 1'
+                    f"SELECT "{sku_o_col}" as sku, AVG(NULLIF("{price_col}",'')::numeric) as price "
+                    f"FROM orders WHERE NULLIF("{price_col}",'') IS NOT NULL GROUP BY 1"
                 ), conn)
                 price_map = prices.set_index('sku')['price'].to_dict()
                 df_f['_price'] = df_f[sku_c].map(price_map).fillna(0)
@@ -3399,25 +3398,6 @@ def show_returns(t=None):
                 fig5.update_layout(height=350)
                 st.plotly_chart(fig5, width="stretch")
         st.markdown("---")
-
-    # ── Таблиця ──
-    st.markdown("#### 📋 Деталі повернень")
-    show_cols = [c for c in [date_c, sku_c, col_map.get('asin'), qty_c,
-                             reason_c, status_c, col_map.get('order_id'), '_price', 'Return Value']
-                 if c and c in df_f.columns]
-    st.dataframe(
-        df_f[show_cols].rename(columns={date_c: 'Return Date', sku_c: 'SKU',
-                                         qty_c: 'Qty', reason_c: 'Reason',
-                                         status_c: 'Status', '_price': 'Price'})
-                        .sort_values('Return Date', ascending=False).head(500)
-                        .style.format({'Price': '${:.2f}', 'Return Value': '${:.2f}'}),
-        width="stretch", hide_index=True, height=400
-    )
-    st.download_button(
-        t.get("ret_download", "📥 CSV"),
-        df_f.to_csv(index=False).encode('utf-8'),
-        "returns.csv", "text/csv"
-    )
 
     # ── Таблиця ──
     st.markdown("---")
