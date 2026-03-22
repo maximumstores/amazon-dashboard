@@ -68,153 +68,6 @@ def load_chat_history(session_id, section):
 
 
 
-# ══════════════════════════════════════════
-# 🔌 API MODE — ?api=endpoint&key=SECRET
-# Приклад: https://merino-bi.streamlit.app/?api=inventory&key=YOUR_KEY
-# ══════════════════════════════════════════
-import json as _json
-
-def _api_response(data):
-    """Відповідь у JSON через st.code щоб можна було парсити."""
-    st.set_page_config(page_title="API", layout="centered")
-    st.markdown("```json")
-    st.code(_json.dumps(data, default=str, ensure_ascii=False, indent=2), language="json")
-    st.stop()
-
-_qp = st.query_params
-_API_KEY = os.getenv("API_KEY", "merino2024")
-
-if "api" in _qp:
-    _endpoint = _qp.get("api", "")
-    _key      = _qp.get("key", "")
-
-    if _key != _API_KEY:
-        _api_response({"error": "Unauthorized", "hint": "Pass ?key=YOUR_API_KEY"})
-
-    _engine = get_engine()
-
-    # ── GET /inventory ──
-    if _endpoint == "inventory":
-        try:
-            with _engine.connect() as _c:
-                _df = pd.read_sql(text("SELECT * FROM fba_inventory"), _c)
-            _api_response({"status":"ok","count":len(_df),"data":_df.to_dict(orient="records")})
-        except Exception as e:
-            _api_response({"error": str(e)})
-
-    # ── GET /finance ──
-    elif _endpoint == "finance":
-        _days = int(_qp.get("days", 30))
-        try:
-            with _engine.connect() as _c:
-                _r = pd.read_sql(text(f"""
-                    SELECT
-                        SUM(CASE WHEN event_type='Shipment' AND charge_type='Principal' THEN NULLIF(amount,'')::numeric ELSE 0 END) AS gross,
-                        SUM(CASE WHEN event_type IN ('ShipmentFee','RefundFee') THEN NULLIF(amount,'')::numeric ELSE 0 END) AS fees,
-                        SUM(CASE WHEN event_type='Refund' AND charge_type='Principal' THEN NULLIF(amount,'')::numeric ELSE 0 END) AS refunds,
-                        SUM(CASE WHEN event_type='ShipmentPromo' THEN NULLIF(amount,'')::numeric ELSE 0 END) AS promos,
-                        SUM(CASE WHEN event_type='Adjustment' THEN NULLIF(amount,'')::numeric ELSE 0 END) AS adjustments,
-                        COUNT(*) AS transactions
-                    FROM finance_events
-                    WHERE posted_date >= CURRENT_DATE - INTERVAL '{_days} days'
-                """), _c).iloc[0]
-            gross = float(_r['gross'] or 0)
-            fees  = float(_r['fees']  or 0)
-            refs  = float(_r['refunds'] or 0)
-            promos= float(_r['promos'] or 0)
-            adj   = float(_r['adjustments'] or 0)
-            net   = gross + fees + refs + promos + adj
-            _api_response({"status":"ok","period_days":_days,"gross":round(gross,2),
-                "fees":round(fees,2),"refunds":round(refs,2),"promos":round(promos,2),
-                "adjustments":round(adj,2),"net":round(net,2),
-                "margin_pct":round(net/gross*100,1) if gross>0 else 0,
-                "transactions":int(_r['transactions'])})
-        except Exception as e:
-            _api_response({"error": str(e)})
-
-    # ── GET /orders ──
-    elif _endpoint == "orders":
-        _days = int(_qp.get("days", 30))
-        try:
-            with _engine.connect() as _c:
-                _df = pd.read_sql(text(
-                    f"SELECT amazon_order_id, purchase_date, sku, item_price, quantity, order_status "
-                    f"FROM orders WHERE purchase_date >= CURRENT_DATE - INTERVAL '{_days} days' "
-                    f"ORDER BY purchase_date DESC LIMIT 1000"
-                ), _c)
-            _api_response({"status":"ok","period_days":_days,"count":len(_df),
-                           "data":_df.to_dict(orient="records")})
-        except Exception as e:
-            _api_response({"error": str(e)})
-
-    # ── GET /buybox ──
-    elif _endpoint == "buybox":
-        try:
-            with _engine.connect() as _c:
-                _df = pd.read_sql(text(
-                    "SELECT asin, sku, is_buybox_winner, price, fulfillment, marketplace "
-                    "FROM pricing_buybox ORDER BY snapshot_time DESC"
-                ), _c)
-            winners = int((_df['is_buybox_winner'].astype(str).str.lower() == 'true').sum())
-            _api_response({"status":"ok","total":len(_df),"winners":winners,
-                           "win_rate_pct":round(winners/len(_df)*100,1) if len(_df)>0 else 0,
-                           "data":_df.to_dict(orient="records")})
-        except Exception as e:
-            _api_response({"error": str(e)})
-
-    # ── GET /alerts ──
-    elif _endpoint == "alerts":
-        alerts = []
-        try:
-            with _engine.connect() as _c:
-                # Low Stock
-                _inv = pd.read_sql(text("SELECT * FROM fba_inventory"), _c)
-                for col in ['Available','Price','Velocity']:
-                    if col in _inv.columns:
-                        _inv[col] = pd.to_numeric(_inv[col].replace('',''), errors='coerce').fillna(0)
-                if 'Velocity' in _inv.columns and 'Available' in _inv.columns:
-                    _risk = _inv[_inv['Velocity'] > 0].copy()
-                    _risk['days'] = (_risk['Available'] / _risk['Velocity']).round(0)
-                    for _, row in _risk[_risk['days'] < 14].iterrows():
-                        alerts.append({"type":"LOW_STOCK","sku":row.get('SKU',''),"days_left":int(row['days']),"available":int(row['Available'])})
-                # Lost BuyBox
-                _bb = pd.read_sql(text("SELECT asin, sku, price FROM pricing_buybox WHERE is_buybox_winner = false OR is_buybox_winner = 'False'"), _c)
-                for _, row in _bb.iterrows():
-                    alerts.append({"type":"LOST_BUYBOX","asin":row['asin'],"sku":row.get('sku',''),"price":float(row.get('price',0))})
-        except Exception as e:
-            alerts.append({"type":"ERROR","message":str(e)})
-        _api_response({"status":"ok","alerts_count":len(alerts),"alerts":alerts})
-
-    # ── GET /reviews ──
-    elif _endpoint == "reviews":
-        _limit = int(_qp.get("limit", 100))
-        _rating = _qp.get("rating", "")
-        try:
-            where = f"WHERE rating <= {_rating}" if _rating else ""
-            with _engine.connect() as _c:
-                _df = pd.read_sql(text(
-                    f"SELECT asin, domain, rating, title, review_date "
-                    f"FROM amazon_reviews {where} "
-                    f"ORDER BY review_date DESC LIMIT {_limit}"
-                ), _c)
-            _api_response({"status":"ok","count":len(_df),"data":_df.to_dict(orient="records")})
-        except Exception as e:
-            _api_response({"error": str(e)})
-
-    # ── GET /endpoints (документація) ──
-    elif _endpoint == "help":
-        _api_response({"status":"ok","base_url":"https://YOUR_APP.streamlit.app","auth":"?key=API_KEY",
-            "endpoints":{
-                "inventory": "?api=inventory&key=K → всі SKU з залишками",
-                "finance":   "?api=finance&key=K&days=30 → P&L за період",
-                "orders":    "?api=orders&key=K&days=30 → замовлення",
-                "buybox":    "?api=buybox&key=K → Buy Box статус",
-                "alerts":    "?api=alerts&key=K → Low Stock + Lost BB",
-                "reviews":   "?api=reviews&key=K&limit=100&rating=2 → відгуки",
-            }})
-    else:
-        _api_response({"error": f"Unknown endpoint: {_endpoint}", "hint": "Use ?api=help for docs"})
-
 st.set_page_config(page_title="Amazon FBA Ultimate BI", layout="wide", page_icon="📦")
 ensure_ai_chat_table()
 
@@ -615,6 +468,154 @@ def get_engine():
 
 # DATA LOADERS
 # ============================================
+
+# ══════════════════════════════════════════
+# 🔌 API MODE — ?api=endpoint&key=SECRET
+# Приклад: https://merino-bi.streamlit.app/?api=inventory&key=YOUR_KEY
+# ══════════════════════════════════════════
+import json as _json
+
+def _api_response(data):
+    """Відповідь у JSON через st.code щоб можна було парсити."""
+    st.set_page_config(page_title="API", layout="centered")
+    st.markdown("```json")
+    st.code(_json.dumps(data, default=str, ensure_ascii=False, indent=2), language="json")
+    st.stop()
+
+_qp = st.query_params
+_API_KEY = os.getenv("API_KEY", "merino2024")
+
+if "api" in _qp:
+    _endpoint = _qp.get("api", "")
+    _key      = _qp.get("key", "")
+
+    if _key != _API_KEY:
+        _api_response({"error": "Unauthorized", "hint": "Pass ?key=YOUR_API_KEY"})
+
+    _engine = get_engine()
+
+    # ── GET /inventory ──
+    if _endpoint == "inventory":
+        try:
+            with _engine.connect() as _c:
+                _df = pd.read_sql(text("SELECT * FROM fba_inventory"), _c)
+            _api_response({"status":"ok","count":len(_df),"data":_df.to_dict(orient="records")})
+        except Exception as e:
+            _api_response({"error": str(e)})
+
+    # ── GET /finance ──
+    elif _endpoint == "finance":
+        _days = int(_qp.get("days", 30))
+        try:
+            with _engine.connect() as _c:
+                _r = pd.read_sql(text(f"""
+                    SELECT
+                        SUM(CASE WHEN event_type='Shipment' AND charge_type='Principal' THEN NULLIF(amount,'')::numeric ELSE 0 END) AS gross,
+                        SUM(CASE WHEN event_type IN ('ShipmentFee','RefundFee') THEN NULLIF(amount,'')::numeric ELSE 0 END) AS fees,
+                        SUM(CASE WHEN event_type='Refund' AND charge_type='Principal' THEN NULLIF(amount,'')::numeric ELSE 0 END) AS refunds,
+                        SUM(CASE WHEN event_type='ShipmentPromo' THEN NULLIF(amount,'')::numeric ELSE 0 END) AS promos,
+                        SUM(CASE WHEN event_type='Adjustment' THEN NULLIF(amount,'')::numeric ELSE 0 END) AS adjustments,
+                        COUNT(*) AS transactions
+                    FROM finance_events
+                    WHERE posted_date >= CURRENT_DATE - INTERVAL '{_days} days'
+                """), _c).iloc[0]
+            gross = float(_r['gross'] or 0)
+            fees  = float(_r['fees']  or 0)
+            refs  = float(_r['refunds'] or 0)
+            promos= float(_r['promos'] or 0)
+            adj   = float(_r['adjustments'] or 0)
+            net   = gross + fees + refs + promos + adj
+            _api_response({"status":"ok","period_days":_days,"gross":round(gross,2),
+                "fees":round(fees,2),"refunds":round(refs,2),"promos":round(promos,2),
+                "adjustments":round(adj,2),"net":round(net,2),
+                "margin_pct":round(net/gross*100,1) if gross>0 else 0,
+                "transactions":int(_r['transactions'])})
+        except Exception as e:
+            _api_response({"error": str(e)})
+
+    # ── GET /orders ──
+    elif _endpoint == "orders":
+        _days = int(_qp.get("days", 30))
+        try:
+            with _engine.connect() as _c:
+                _df = pd.read_sql(text(
+                    f"SELECT amazon_order_id, purchase_date, sku, item_price, quantity, order_status "
+                    f"FROM orders WHERE purchase_date >= CURRENT_DATE - INTERVAL '{_days} days' "
+                    f"ORDER BY purchase_date DESC LIMIT 1000"
+                ), _c)
+            _api_response({"status":"ok","period_days":_days,"count":len(_df),
+                           "data":_df.to_dict(orient="records")})
+        except Exception as e:
+            _api_response({"error": str(e)})
+
+    # ── GET /buybox ──
+    elif _endpoint == "buybox":
+        try:
+            with _engine.connect() as _c:
+                _df = pd.read_sql(text(
+                    "SELECT asin, sku, is_buybox_winner, price, fulfillment, marketplace "
+                    "FROM pricing_buybox ORDER BY snapshot_time DESC"
+                ), _c)
+            winners = int((_df['is_buybox_winner'].astype(str).str.lower() == 'true').sum())
+            _api_response({"status":"ok","total":len(_df),"winners":winners,
+                           "win_rate_pct":round(winners/len(_df)*100,1) if len(_df)>0 else 0,
+                           "data":_df.to_dict(orient="records")})
+        except Exception as e:
+            _api_response({"error": str(e)})
+
+    # ── GET /alerts ──
+    elif _endpoint == "alerts":
+        alerts = []
+        try:
+            with _engine.connect() as _c:
+                # Low Stock
+                _inv = pd.read_sql(text("SELECT * FROM fba_inventory"), _c)
+                for col in ['Available','Price','Velocity']:
+                    if col in _inv.columns:
+                        _inv[col] = pd.to_numeric(_inv[col].replace('',''), errors='coerce').fillna(0)
+                if 'Velocity' in _inv.columns and 'Available' in _inv.columns:
+                    _risk = _inv[_inv['Velocity'] > 0].copy()
+                    _risk['days'] = (_risk['Available'] / _risk['Velocity']).round(0)
+                    for _, row in _risk[_risk['days'] < 14].iterrows():
+                        alerts.append({"type":"LOW_STOCK","sku":row.get('SKU',''),"days_left":int(row['days']),"available":int(row['Available'])})
+                # Lost BuyBox
+                _bb = pd.read_sql(text("SELECT asin, sku, price FROM pricing_buybox WHERE is_buybox_winner = false OR is_buybox_winner = 'False'"), _c)
+                for _, row in _bb.iterrows():
+                    alerts.append({"type":"LOST_BUYBOX","asin":row['asin'],"sku":row.get('sku',''),"price":float(row.get('price',0))})
+        except Exception as e:
+            alerts.append({"type":"ERROR","message":str(e)})
+        _api_response({"status":"ok","alerts_count":len(alerts),"alerts":alerts})
+
+    # ── GET /reviews ──
+    elif _endpoint == "reviews":
+        _limit = int(_qp.get("limit", 100))
+        _rating = _qp.get("rating", "")
+        try:
+            where = f"WHERE rating <= {_rating}" if _rating else ""
+            with _engine.connect() as _c:
+                _df = pd.read_sql(text(
+                    f"SELECT asin, domain, rating, title, review_date "
+                    f"FROM amazon_reviews {where} "
+                    f"ORDER BY review_date DESC LIMIT {_limit}"
+                ), _c)
+            _api_response({"status":"ok","count":len(_df),"data":_df.to_dict(orient="records")})
+        except Exception as e:
+            _api_response({"error": str(e)})
+
+    # ── GET /endpoints (документація) ──
+    elif _endpoint == "help":
+        _api_response({"status":"ok","base_url":"https://YOUR_APP.streamlit.app","auth":"?key=API_KEY",
+            "endpoints":{
+                "inventory": "?api=inventory&key=K → всі SKU з залишками",
+                "finance":   "?api=finance&key=K&days=30 → P&L за період",
+                "orders":    "?api=orders&key=K&days=30 → замовлення",
+                "buybox":    "?api=buybox&key=K → Buy Box статус",
+                "alerts":    "?api=alerts&key=K → Low Stock + Lost BB",
+                "reviews":   "?api=reviews&key=K&limit=100&rating=2 → відгуки",
+            }})
+    else:
+        _api_response({"error": f"Unknown endpoint: {_endpoint}", "hint": "Use ?api=help for docs"})
+
 
 @st.cache_data(ttl=60)
 def load_data():
