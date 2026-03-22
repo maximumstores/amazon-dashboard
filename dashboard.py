@@ -2571,64 +2571,81 @@ Low Stock <14д: {low14_cnt} | Low Stock <30д: {low30_cnt} | OOS: {oos_cnt} | I
 
 def show_etl_status():
     st.markdown("### 📊 ETL Status — стан завантажувачів")
-    st.caption("Актуальні дані з БД")
+    st.caption("Актуальні дані з БД · автооновлення при заході на сторінку")
 
-    import psycopg2, datetime as _dt
-    try:
-        conn = psycopg2.connect(os.environ.get("DATABASE_URL", ""))
-        cur = conn.cursor()
+    engine = get_engine()
+    import datetime as _dt
 
-        def q(sql):
-            try:
-                cur.execute(sql)
-                r = cur.fetchone()
-                return (r[0], r[1]) if r else (0, None)
-            except Exception:
-                conn.rollback()
-                return (0, None)
+    def q(sql):
+        try:
+            with engine.connect() as conn:
+                r = pd.read_sql(text(sql), conn).iloc[0]
+                return int(r.iloc[0] or 0), r.iloc[1]
+        except:
+            return 0, None
 
-        sql_settlements = 'SELECT COUNT(*), MAX(TO_DATE("Posted Date", \'DD.MM.YYYY\')) FROM settlements WHERE "Posted Date" != \'\''
-        sql_orders      = 'SELECT COUNT(*), MAX(CAST("Order Date" AS TIMESTAMP)) FROM orders'
-        sql_returns     = 'SELECT COUNT(*), MAX(return_date) FROM fba_returns'
-        sql_fba         = 'SELECT COUNT(*), MAX(created_at) FROM fba_inventory'
-        sql_st          = "SELECT COUNT(*), MAX(CAST(report_date AS DATE)) FROM spapi.sales_traffic WHERE report_date != ''"
-        sql_rev         = 'SELECT COUNT(*), MAX(created_at) FROM amazon_reviews'
-
-        modules = [
-            ("📦 FBA Inventory",   "fba_inventory",       q(sql_fba),         "3× / день"),
-            ("🏦 Settlements",     "settlements",         q(sql_settlements), "3× / день"),
-            ("🛒 Orders",          "orders",              q(sql_orders),      "2× / день"),
-            ("🔙 Повернення (Returns)",         "returns",             q(sql_returns),     "1× / день"),
-            ("📈 Трафик (Sales & Traffic)", "spapi.sales_traffic", q(sql_st),          "2× / день"),
-            ("⭐ Reviews",         "amazon_reviews",      q(sql_rev),         "за запитом"),
-            ("📣 Advertising",     "advertising",         (0, None),          "—"),
-        ]
-        cur.close()
-        conn.close()
-    except Exception as e:
-        st.error(f"DB помилка: {e}")
-        return
+    modules = [
+        ("📦 FBA Inventory",        "fba_inventory",              q("SELECT COUNT(*), MAX(created_at) FROM fba_inventory"),                                             "3× / день"),
+        ("🏦 Finance Events",       "finance_events",             q("SELECT COUNT(*), MAX(posted_date) FROM finance_events"),                                           "3× / день"),
+        ("💳 Settlements",          "settlements",                q("SELECT COUNT(*), MAX(posted_date) FROM settlements"),                                              "3× / день"),
+        ("🛒 Orders",               "orders",                     q("SELECT COUNT(*), MAX(purchase_date) FROM orders"),                                                 "2× / день"),
+        ("🔙 Returns",              "fba_returns",                q("SELECT COUNT(*), MAX(return_date::text) FROM fba_returns"),                                        "1× / день"),
+        ("📈 Sales & Traffic",      "spapi.sales_traffic",        q("SELECT COUNT(*), MAX(report_date) FROM spapi.sales_traffic WHERE report_date != ''"),            "2× / день"),
+        ("⭐ Reviews",              "amazon_reviews",             q("SELECT COUNT(*), MAX(created_at) FROM amazon_reviews"),                                            "за запитом"),
+        ("📦 Shipments",            "fba_shipments",              q("SELECT COUNT(*), MAX(created_at) FROM fba_shipments"),                                             "1× / день"),
+        ("📦 Shipment Items",       "fba_shipment_items",         q("SELECT COUNT(*), MAX(created_at) FROM fba_shipment_items"),                                        "1× / день"),
+        ("🗑 Removals",             "fba_removals",               q("SELECT COUNT(*), MAX(created_at) FROM fba_removals"),                                              "1× / день"),
+        ("💲 Pricing Current",      "pricing_current",            q("SELECT COUNT(*), MAX(created_at) FROM pricing_current"),                                           "3× / день"),
+        ("🏆 Pricing BuyBox",       "pricing_buybox",             q("SELECT COUNT(*), MAX(created_at) FROM pricing_buybox"),                                            "3× / день"),
+        ("📊 Pricing Competitive",  "pricing_competitive",        q("SELECT COUNT(*), MAX(created_at) FROM pricing_competitive"),                                       "3× / день"),
+        ("📋 Listings All",         "listings_all",               q("SELECT COUNT(*), MAX(created_at) FROM listings_all"),                                              "1× / день"),
+        ("📋 Listings Open",        "listings_open",              q("SELECT COUNT(*), MAX(created_at) FROM listings_open"),                                             "1× / день"),
+        ("📗 Catalog Items",        "catalog_items",              q("SELECT COUNT(*), MAX(created_at) FROM catalog_items"),                                             "1× / день"),
+        ("⚠️ Non-Compliance",       "fba_inbound_noncompliance",  q("SELECT COUNT(*), MAX(created_at) FROM fba_inbound_noncompliance"),                                "1× / день"),
+        ("🤖 Agent Decisions",      "agent_decisions",            q("SELECT COUNT(*), MAX(created_at) FROM agent_decisions"),                                           "за подією"),
+    ]
 
     now = _dt.datetime.now(_dt.timezone.utc).date()
-    data = []
+    data = []; ok_cnt = warn_cnt = empty_cnt = 0
+
     for name, table, (cnt, last), freq in modules:
         if cnt and cnt > 0:
             try:
-                last_date = last.date() if hasattr(last, 'date') else _dt.date.fromisoformat(str(last)[:10])
-                delta = (now - last_date).days
-                age = "сьогодні" if delta == 0 else f"{delta}д тому"
-                status = "✅ OK" if delta <= 1 else "⚠️ Застарів"
-            except Exception:
-                age = str(last)[:10] if last else "—"
-                status = "✅ OK"
-            data.append({"Модуль": name, "Таблиця": table, "Рядків": f"{cnt:,}",
-                         "Останнє оновлення": age, "Частота": freq, "Статус": status})
+                last_str = str(last)[:10] if last else ""
+                last_date = _dt.date.fromisoformat(last_str) if last_str else None
+                if last_date:
+                    delta = (now - last_date).days
+                    age = "сьогодні" if delta == 0 else f"{delta}д тому"
+                    if delta == 0:   status = "✅ OK";         ok_cnt += 1
+                    elif delta <= 2: status = "🟡 Увага";     warn_cnt += 1
+                    else:            status = "🔴 Застарів";  warn_cnt += 1
+                else:
+                    age = "—"; status = "✅ OK"; ok_cnt += 1
+            except:
+                age = str(last)[:10] if last else "—"; status = "✅ OK"; ok_cnt += 1
+            data.append({"Модуль": name, "Таблиця": table, "Рядків": f"{cnt:,}", "Останнє": age, "Частота": freq, "Статус": status})
         else:
-            data.append({"Модуль": name, "Таблиця": table, "Рядків": "—",
-                         "Останнє оновлення": "—", "Частота": freq, "Статус": "⏳ Немає даних"})
+            data.append({"Модуль": name, "Таблиця": table, "Рядків": "—", "Останнє": "—", "Частота": freq, "Статус": "⏳ Порожня"})
+            empty_cnt += 1
 
-    import pandas as _pd
-    st.dataframe(_pd.DataFrame(data), width='stretch', hide_index=True)
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric("✅ OK",         ok_cnt)
+    c2.metric("⚠️ Увага",     warn_cnt)
+    c3.metric("⏳ Порожні",   empty_cnt)
+    c4.metric("📊 Таблиць",   len(modules))
+
+    def color_status(val):
+        if "OK" in str(val):       return "color:#4CAF50"
+        if "Увага" in str(val):    return "color:#FFC107"
+        if "Застарів" in str(val): return "color:#F44336;font-weight:bold"
+        return "color:#888"
+
+    st.dataframe(pd.DataFrame(data).style.applymap(color_status, subset=["Статус"]),
+                 width="stretch", hide_index=True, height=min(50+len(data)*35, 650))
+
+    if warn_cnt > 0:   st.warning(f"⚠️ {warn_cnt} таблиць не оновлювались більше 1 дня")
+    if empty_cnt > 0:  st.info(f"⏳ {empty_cnt} таблиць порожні")
+    if ok_cnt == len(modules): st.success("✅ Всі завантажувачі працюють нормально!")
 
 
 def show_api_docs():
