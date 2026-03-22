@@ -12,3 +12,5 @@ xlrd
 pyarrow
 requests
 matplotlib
+fastapi
+uvicorn
