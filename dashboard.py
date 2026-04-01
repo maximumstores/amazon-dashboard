@@ -708,7 +708,7 @@ def load_sales_traffic():
     try:
         conn = psycopg2.connect(db_url, connect_timeout=10)
         cur  = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cur.execute("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC")
+        cur.execute("SELECT * FROM public.sales_traffic ORDER BY date DESC")
         rows    = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
         cur.close()
