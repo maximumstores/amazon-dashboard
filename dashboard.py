@@ -1131,7 +1131,7 @@ def show_overview_insights(df_inventory):
  
             # Merge з velocity з orders (реальний sold за 30д)
             if not df_ord.empty and "SKU" in df_inv.columns:
-                last_30 = df_ord[df_ord["day"] >= (pd.Timestamp.now().normalize() - pd.Timedelta(days=30))]
+                last_30 = df_ord[pd.to_datetime(df_ord["day"]) >= (pd.Timestamp.now().normalize() - pd.Timedelta(days=30))]
                 sold_30 = last_30.groupby("sku")["units"].sum().to_dict()
                 rev_30  = last_30.groupby("sku")["revenue"].sum().to_dict()
                 df_inv["sold_30d"]    = df_inv["SKU"].map(sold_30).fillna(0).astype(int)
