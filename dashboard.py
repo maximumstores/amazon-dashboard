@@ -4147,6 +4147,7 @@ def show_pricing():
         "Де наша ціна вища за competitive price?",
         "Які ASIN варто знизити ціну для виграшу Buy Box?",
     ], "pricing")
+
 def show_fba_operations():
     st.markdown("### 📦 FBA Operations")
     engine = get_engine()
