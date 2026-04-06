@@ -1063,914 +1063,275 @@ def show_overview_insights(df_inventory):
             insights_orders(df_o30 if not df_o30.empty else df_orders)
         else: st.info("🛒 Дані замовлень відсутні.")
 
+    # ── TAB 4: Inventory Health ──
     with tabs[4]:
-        if not df_returns.empty:
-            max_d  = df_returns['Return Date'].max()
-            df_r30 = df_returns[df_returns['Return Date'] >= max_d - dt.timedelta(days=30)]
-            insights_returns(df_r30 if not df_r30.empty else df_returns, return_rate)
-        else: st.info("📦 Дані повернень відсутні.")
-
-    with tabs[5]:
-        if not df_reviews.empty: insights_reviews(df_reviews, asin=None)
-        else: st.info("⭐ Дані відгуків відсутні.")
-
-
-# ============================================
-# ⭐ REVIEWS MODULE
-# ============================================
-
-def make_amazon_url(domain, asin):
-    return f"https://www.amazon.{domain}/dp/{asin}"
-
-
-def show_global_insights(df, has_domain):
-    st.markdown(f"### {t['rev_auto_insights']}")
-
-    asin_stats, dom_stats = None, None
-
-    if 'asin' in df.columns:
-        asin_stats = df.groupby('asin').agg(
-            Reviews=('rating', 'count'),
-            Rating=('rating', 'mean'),
-            Neg=('rating', lambda x: (x <= 2).sum()),
-        ).reset_index()
-        asin_stats['Neg %'] = (asin_stats['Neg'] / asin_stats['Reviews'] * 100).round(1)
-        asin_stats = asin_stats[asin_stats['Reviews'] >= 5]
-
-    if has_domain and 'domain' in df.columns:
-        dom_stats = df.groupby('domain').agg(
-            Reviews=('rating', 'count'),
-            Rating=('rating', 'mean'),
-            Neg=('rating', lambda x: (x <= 2).sum()),
-        ).reset_index()
-        dom_stats['Neg %'] = (dom_stats['Neg'] / dom_stats['Reviews'] * 100).round(1)
-        dom_stats = dom_stats[dom_stats['Reviews'] >= 5]
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    if asin_stats is not None and not asin_stats.empty:
-        worst_a = asin_stats.loc[asin_stats['Neg %'].idxmax()]
-        best_a  = asin_stats.loc[asin_stats['Rating'].idxmax()]
-
-        worst_asin_country = ""
-        if has_domain and 'domain' in df.columns:
-            asin_dom = df[df['asin'] == worst_a['asin']].groupby('domain')['rating'].count()
-            if not asin_dom.empty:
-                top_dom = asin_dom.idxmax()
-                worst_asin_country = DOMAIN_LABELS.get(top_dom, top_dom)
-
-        best_asin_country = ""
-        if has_domain and 'domain' in df.columns:
-            asin_dom2 = df[df['asin'] == best_a['asin']].groupby('domain')['rating'].count()
-            if not asin_dom2.empty:
-                top_dom2 = asin_dom2.idxmax()
-                best_asin_country = DOMAIN_LABELS.get(top_dom2, top_dom2)
-
-        neg_pct = worst_a['Neg %']
-        bar_color = "#F44336" if neg_pct > 20 else "#FFC107"
-        country_line = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>🌍 {worst_asin_country}</div>" if worst_asin_country else ""
-
-        with col1:
-            st.markdown(f"""
-            <div style="background:#1e1e2e;border-left:5px solid {bar_color};border-radius:10px;padding:16px 20px;height:140px">
-              <div style="font-size:11px;color:#888;margin-bottom:4px">🔴 НАЙГІРШИЙ ASIN</div>
-              <div style="font-size:20px;font-weight:800;color:#fff;letter-spacing:1px">{worst_a['asin']}</div>
-              {country_line}
-              <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
-                <span style="color:#aaa;font-size:12px">⭐ {worst_a['Rating']:.2f}★</span>
-                <span style="color:{bar_color};font-size:12px;font-weight:700">🔴 {neg_pct:.1f}% neg</span>
-                <span style="color:#666;font-size:12px">{int(worst_a['Reviews'])} {t['rev_reviews_count']}</span>
-              </div>
-              <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
-                <div style="width:{min(neg_pct,100):.0f}%;background:{bar_color};border-radius:4px;height:5px"></div>
-              </div>
-            </div>""", unsafe_allow_html=True)
-
-        rating_color = "#4CAF50" if best_a['Rating'] >= 4.4 else "#FFC107"
-        country_line2 = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>🌍 {best_asin_country}</div>" if best_asin_country else ""
-        with col2:
-            st.markdown(f"""
-            <div style="background:#1e1e2e;border-left:5px solid {rating_color};border-radius:10px;padding:16px 20px;height:140px">
-              <div style="font-size:11px;color:#888;margin-bottom:4px">🟢 НАЙКРАЩИЙ ASIN</div>
-              <div style="font-size:20px;font-weight:800;color:#fff;letter-spacing:1px">{best_a['asin']}</div>
-              {country_line2}
-              <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
-                <span style="color:{rating_color};font-size:12px;font-weight:700">⭐ {best_a['Rating']:.2f}★</span>
-                <span style="color:#aaa;font-size:12px">🔴 {best_a['Neg %']:.1f}% neg</span>
-                <span style="color:#666;font-size:12px">{int(best_a['Reviews'])} {t['rev_reviews_count']}</span>
-              </div>
-              <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
-                <div style="width:{((best_a['Rating']-1)/4*100):.0f}%;background:{rating_color};border-radius:4px;height:5px"></div>
-              </div>
-            </div>""", unsafe_allow_html=True)
-
-    if dom_stats is not None and not dom_stats.empty:
-        worst_d = dom_stats.loc[dom_stats['Neg %'].idxmax()]
-        best_d  = dom_stats.loc[dom_stats['Rating'].idxmax()]
-        worst_label = DOMAIN_LABELS.get(worst_d['domain'], worst_d['domain'])
-        best_label  = DOMAIN_LABELS.get(best_d['domain'], best_d['domain'])
-
-        worst_country_asin = ""
-        if 'asin' in df.columns:
-            df_wdom = df[df['domain'] == worst_d['domain']]
-            if not df_wdom.empty:
-                per_asin = df_wdom.groupby('asin').agg(
-                    Neg=('rating', lambda x: (x<=2).sum()),
-                    Reviews=('rating','count')
-                ).reset_index()
-                per_asin['Neg %'] = per_asin['Neg'] / per_asin['Reviews'] * 100
-                per_asin = per_asin[per_asin['Reviews'] >= 3]
-                if not per_asin.empty:
-                    worst_country_asin = per_asin.loc[per_asin['Neg %'].idxmax(), 'asin']
-
-        best_country_asin = ""
-        if 'asin' in df.columns:
-            df_bdom = df[df['domain'] == best_d['domain']]
-            if not df_bdom.empty:
-                per_asin2 = df_bdom.groupby('asin').agg(
-                    Rating=('rating','mean'), Reviews=('rating','count')
-                ).reset_index()
-                per_asin2 = per_asin2[per_asin2['Reviews'] >= 3]
-                if not per_asin2.empty:
-                    best_country_asin = per_asin2.loc[per_asin2['Rating'].idxmax(), 'asin']
-
-        neg_pct = worst_d['Neg %']
-        bar_color = "#F44336" if neg_pct > 20 else "#FFC107"
-        asin_line_w = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>{t['rev_main_asin']} {worst_country_asin}</div>" if worst_country_asin else ""
-        asin_line_b = f"<div style='font-size:11px;color:#aaa;margin-top:2px'>{t['rev_main_asin']} {best_country_asin}</div>" if best_country_asin else ""
-
-        with col3:
-            st.markdown(f"""
-            <div style="background:#1e1e2e;border-left:5px solid {bar_color};border-radius:10px;padding:16px 20px;height:140px">
-              <div style="font-size:11px;color:#888;margin-bottom:4px">🔴 НАЙГІРША КРАЇНА</div>
-              <div style="font-size:18px;font-weight:800;color:#fff">{worst_label}</div>
-              {asin_line_w}
-              <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
-                <span style="color:#aaa;font-size:12px">⭐ {worst_d['Rating']:.2f}★</span>
-                <span style="color:{bar_color};font-size:12px;font-weight:700">🔴 {neg_pct:.1f}% neg</span>
-                <span style="color:#666;font-size:12px">{int(worst_d['Reviews'])} {t['rev_reviews_count']}</span>
-              </div>
-              <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
-                <div style="width:{min(neg_pct,100):.0f}%;background:{bar_color};border-radius:4px;height:5px"></div>
-              </div>
-            </div>""", unsafe_allow_html=True)
-
-        rating_color = "#4CAF50" if best_d['Rating'] >= 4.4 else "#FFC107"
-        with col4:
-            st.markdown(f"""
-            <div style="background:#1e1e2e;border-left:5px solid {rating_color};border-radius:10px;padding:16px 20px;height:140px">
-              <div style="font-size:11px;color:#888;margin-bottom:4px">🟢 НАЙКРАЩА КРАЇНА</div>
-              <div style="font-size:18px;font-weight:800;color:#fff">{best_label}</div>
-              {asin_line_b}
-              <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
-                <span style="color:{rating_color};font-size:12px;font-weight:700">⭐ {best_d['Rating']:.2f}★</span>
-                <span style="color:#aaa;font-size:12px">🔴 {best_d['Neg %']:.1f}% neg</span>
-                <span style="color:#666;font-size:12px">{int(best_d['Reviews'])} {t['rev_reviews_count']}</span>
-              </div>
-              <div style="margin-top:10px;background:#2a2a3e;border-radius:4px;height:5px">
-                <div style="width:{((best_d['Rating']-1)/4*100):.0f}%;background:{rating_color};border-radius:4px;height:5px"></div>
-              </div>
-            </div>""", unsafe_allow_html=True)
-
-
-def show_single_asin_detail(df_asin, asin, has_domain):
-    total = len(df_asin)
-    if total == 0:
-        st.info("Немає відгуків по цьому ASIN.")
-        return
-
-    avg_r   = df_asin['rating'].mean()
-    neg_cnt = int((df_asin['rating'] <= 2).sum())
-    pos_cnt = int((df_asin['rating'] >= 4).sum())
-    neg_pct = neg_cnt / total * 100
-
-    r_color = "#4CAF50" if avg_r >= 4.4 else "#FFC107" if avg_r >= 4.0 else "#F44336"
-    n_color = "#4CAF50" if neg_pct <= 10 else "#FFC107" if neg_pct <= 20 else "#F44336"
-
-    st.markdown(f"""
-    <div style="background:#1e1e2e;border-radius:12px;padding:18px 24px;margin-bottom:16px;display:flex;gap:40px;align-items:center">
-      <div>
-        <div style="font-size:11px;color:#888">ASIN</div>
-        <div style="font-size:20px;font-weight:800;color:#fff;letter-spacing:1px">{asin}</div>
-      </div>
-      <div>
-        <div style="font-size:11px;color:#888">Середній рейтинг</div>
-        <div style="font-size:28px;font-weight:800;color:{r_color}">{avg_r:.2f}★</div>
-      </div>
-      <div>
-        <div style="font-size:11px;color:#888">Всього відгуків</div>
-        <div style="font-size:28px;font-weight:800;color:#fff">{total}</div>
-      </div>
-      <div>
-        <div style="font-size:11px;color:#888">🔴 Негативних</div>
-        <div style="font-size:28px;font-weight:800;color:{n_color}">{neg_pct:.1f}%</div>
-      </div>
-      <div>
-        <div style="font-size:11px;color:#888">🟢 Позитивних</div>
-        <div style="font-size:28px;font-weight:800;color:#4CAF50">{pos_cnt/total*100:.1f}%</div>
-      </div>
-    </div>""", unsafe_allow_html=True)
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("#### ⭐ Розподіл зірок")
-        star_counts = df_asin['rating'].value_counts().reindex([5,4,3,2,1]).fillna(0).reset_index()
-        star_counts.columns = ['Stars', 'Count']
-        star_counts['Pct'] = (star_counts['Count'] / total * 100).round(1)
-        star_counts['label'] = star_counts['Stars'].astype(str) + '★'
-        color_map = {5:'#4CAF50',4:'#8BC34A',3:'#FFC107',2:'#FF9800',1:'#F44336'}
-        fig = go.Figure(go.Bar(
-            x=star_counts['Count'], y=star_counts['label'], orientation='h',
-            marker_color=[color_map.get(int(s),'#888') for s in star_counts['Stars']],
-            text=[f"{c:.0f} ({p:.0f}%)" for c,p in zip(star_counts['Count'], star_counts['Pct'])],
-            textposition='outside'
-        ))
-        fig.update_layout(
-            yaxis=dict(categoryorder='array', categoryarray=['1★','2★','3★','4★','5★']),
-            height=260, margin=dict(l=5,r=60,t=10,b=10)
-        )
-        st.plotly_chart(fig, width="stretch")
-
-    with col2:
-        if has_domain and 'domain' in df_asin.columns and df_asin['domain'].nunique() > 1:
-            st.markdown("#### 🌍 Рейтинг по країнах для цього ASIN")
-            dom_s = df_asin.groupby('domain').agg(
-                Reviews=('rating','count'), Rating=('rating','mean'),
-                Neg=('rating', lambda x: (x<=2).sum())
-            ).reset_index()
-            dom_s['Neg %'] = (dom_s['Neg']/dom_s['Reviews']*100).round(1)
-            dom_s['Country'] = dom_s['domain'].map(lambda x: DOMAIN_LABELS.get(x, x))
-            dom_s = dom_s.sort_values('Rating', ascending=True)
-            colors = ['#F44336' if r<4.0 else '#FFC107' if r<4.4 else '#4CAF50' for r in dom_s['Rating']]
-            fig2 = go.Figure(go.Bar(
-                x=dom_s['Rating'], y=dom_s['Country'], orientation='h',
-                marker_color=colors,
-                text=[f"{r:.2f}★  {n:.0f}% neg" for r,n in zip(dom_s['Rating'], dom_s['Neg %'])],
-                textposition='outside'
-            ))
-            fig2.add_vline(x=4.0, line_dash="dash", line_color="orange")
-            fig2.update_layout(height=260, xaxis_range=[1,5.8], margin=dict(l=5,r=80,t=10,b=10))
-            st.plotly_chart(fig2, width="stretch")
+        st.markdown("#### 🏥 Stock Overview — Залишки + Velocity")
+ 
+        try:
+            with engine.connect() as conn:
+                # Інвентар
+                df_inv = pd.read_sql(text('SELECT * FROM fba_inventory'), conn)
+                # Продажі за 90 днів
+                df_ord = pd.read_sql(text("""
+                    SELECT sku,
+                        SUBSTRING(purchase_date,1,10)::date AS day,
+                        COUNT(DISTINCT amazon_order_id) AS orders,
+                        SUM(CASE WHEN quantity ~ '^[0-9]+$' THEN quantity::numeric ELSE 1 END) AS units,
+                        SUM(CASE WHEN item_price ~ '^[0-9.]+$' THEN item_price::numeric ELSE 0 END) AS revenue
+                    FROM orders
+                    WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '90 days'
+                      AND purchase_date IS NOT NULL AND purchase_date != ''
+                    GROUP BY 1, 2
+                    ORDER BY 2 DESC
+                """), conn)
+                # Listings для active/inactive
+                try:
+                    df_lst = pd.read_sql(text(
+                        "SELECT seller_sku AS sku, status, fulfillment_channel FROM listings_all"
+                    ), conn)
+                except:
+                    df_lst = pd.DataFrame()
+        except Exception as e:
+            st.error(f"Помилка: {e}")
+            df_inv = pd.DataFrame()
+            df_ord = pd.DataFrame()
+            df_lst = pd.DataFrame()
+ 
+        if df_inv.empty:
+            st.warning("Немає даних inventory")
         else:
-            st.markdown("#### 📊 Рейтинг по часу")
-            if 'review_date' in df_asin.columns:
-                df_time = df_asin.dropna(subset=['review_date']).copy()
-                df_time['month'] = df_time['review_date'].dt.to_period('M').astype(str)
-                monthly = df_time.groupby('month')['rating'].mean().reset_index()
-                fig_t = px.line(monthly, x='month', y='rating', markers=True)
-                fig_t.add_hline(y=4.0, line_dash='dash', line_color='orange')
-                fig_t.update_layout(height=260, yaxis_range=[1,5])
-                st.plotly_chart(fig_t, width="stretch")
-
-    st.markdown("#### 🔴 Останні негативні відгуки (1-2★)")
-    neg_df = df_asin[df_asin['rating'] <= 2].sort_values('review_date', ascending=False).head(5)
-    if not neg_df.empty:
-        for _, row in neg_df.iterrows():
-            domain_str = f" · {DOMAIN_LABELS.get(row.get('domain',''), row.get('domain',''))}" if 'domain' in neg_df.columns else ""
-            date_str = str(row['review_date'])[:10] if pd.notna(row.get('review_date')) else ''
-            stars = '★' * int(row['rating']) + '☆' * (5 - int(row['rating']))
-            title = row.get('title', '') or ''
-            content = (row.get('content', '') or '')[:300]
-            st.markdown(f"""
-            <div style="background:#1e1e2e;border-left:4px solid #F44336;border-radius:8px;padding:12px 16px;margin-bottom:8px">
-              <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-                <span style="color:#F44336;font-weight:700">{stars}</span>
-                <span style="color:#666;font-size:12px">{date_str}{domain_str}</span>
-              </div>
-              <div style="color:#fff;font-weight:600;margin-bottom:4px">{title}</div>
-              <div style="color:#aaa;font-size:13px;line-height:1.5">{content}{"..." if len(row.get("content","") or "") > 300 else ""}</div>
-            </div>""", unsafe_allow_html=True)
-    else:
-        st.success("🎉 Негативних відгуків немає!")
-
-
-def show_asin_links_table(df, has_domain):
-    st.markdown("### 🔗 Всі ASINи — огляд по країнах")
-    st.caption(t["rev_click_hint"])
-
-    if 'asin' not in df.columns:
-        st.info("Немає даних про ASINи.")
-        return None, None
-
-    date_col = None
-    for c in ['review_date', 'scraped_at', 'created_at', 'date']:
-        if c in df.columns:
-            date_col = c
-            break
-
-    if has_domain and 'domain' in df.columns:
-        agg_dict = dict(
-            Reviews=('rating', 'count'),
-            Rating=('rating', 'mean'),
-            Neg=('rating', lambda x: (x <= 2).sum()),
-        )
-        if date_col:
-            agg_dict['Остання дата'] = (date_col, 'max')
-        combos = df.groupby(['asin', 'domain']).agg(**agg_dict).reset_index()
-        combos['Neg %'] = (combos['Neg'] / combos['Reviews'] * 100).round(1)
-        combos['Country'] = combos['domain'].map(lambda x: DOMAIN_LABELS.get(x, f'🌍 {x}'))
-        combos['🔗 Amazon'] = combos.apply(
-            lambda r: f"https://www.amazon.{r['domain']}/dp/{r['asin']}", axis=1
-        )
-        combos = combos.sort_values(['Neg %'], ascending=False)
-        cols_to_take = ['asin', 'Country', 'Reviews', 'Rating', 'Neg %']
-        if date_col: cols_to_take.append('Остання дата')
-        cols_to_take += ['domain', '🔗 Amazon']
-        table_df = combos[cols_to_take].rename(
-            columns={'asin': 'ASIN', 'domain': '_domain'}
-        ).reset_index(drop=True)
-    else:
-        agg_dict = dict(
-            Reviews=('rating', 'count'),
-            Rating=('rating', 'mean'),
-            Neg=('rating', lambda x: (x <= 2).sum()),
-        )
-        if date_col:
-            agg_dict['Остання дата'] = (date_col, 'max')
-        asin_stats = df.groupby('asin').agg(**agg_dict).reset_index()
-        asin_stats['Neg %'] = (asin_stats['Neg'] / asin_stats['Reviews'] * 100).round(1)
-        asin_stats['🔗 Amazon'] = asin_stats['asin'].apply(lambda a: f"https://www.amazon.com/dp/{a}")
-        asin_stats['_domain'] = 'com'
-        cols_to_take = ['asin', 'Reviews', 'Rating', 'Neg %']
-        if date_col: cols_to_take.append('Остання дата')
-        cols_to_take += ['_domain', '🔗 Amazon']
-        table_df = asin_stats[cols_to_take].rename(
-            columns={'asin': 'ASIN'}
-        ).reset_index(drop=True)
-
-    table_df['Rating'] = table_df['Rating'].round(2)
-
-    if 'Остання дата' in table_df.columns:
-        table_df['Остання дата'] = pd.to_datetime(table_df['Остання дата'], errors='coerce').dt.strftime('%Y-%m-%d')
-
-    st.dataframe(
-        table_df.drop(columns=['_domain']),
-        column_config={
-            "🔗 Amazon": st.column_config.LinkColumn("🔗 Amazon", display_text="Відкрити →"),
-            "Rating": st.column_config.NumberColumn("⭐ Rating", format="%.2f ★"),
-            "Остання дата": st.column_config.TextColumn("📅 Остання дата"),
-            "Neg %": st.column_config.NumberColumn("🔴 Neg %", format="%.1f%%"),
-            "Reviews": st.column_config.NumberColumn("📝 Відгуків"),
-        },
-        width="stretch",
-        hide_index=True,
-        height=min(400, 45 + len(table_df) * 35),
-    )
-
-    st.caption(t["rev_select_hint"])
-
-    sel_col, country_col = st.columns([2, 2])
-
-    with country_col:
-        if '_domain' in table_df.columns:
-            all_domains = sorted(table_df['_domain'].dropna().unique().tolist())
-            domain_options = ["🌍 " + t.get("all_countries", "All")] + [
-                DOMAIN_LABELS.get(d, d) for d in all_domains
-            ]
-            sel_domain = st.selectbox("🌍 Країна:", domain_options, key="asin_jump_domain")
-            if sel_domain != domain_options[0]:
-                chosen_domain = all_domains[domain_options.index(sel_domain) - 1]
-                filtered_for_select = table_df[table_df['_domain'] == chosen_domain]
+            # Нормалізуємо inventory
+            for c in ["Available","Price","Velocity","Inbound","Reserved"]:
+                if c in df_inv.columns:
+                    df_inv[c] = pd.to_numeric(df_inv[c].replace("", None), errors="coerce").fillna(0)
+            if "SKU" not in df_inv.columns:
+                for c in df_inv.columns:
+                    if c.lower() in ("sku","seller_sku"):
+                        df_inv.rename(columns={c: "SKU"}, inplace=True)
+                        break
+ 
+            # Merge з listings status
+            if not df_lst.empty and "SKU" in df_inv.columns:
+                df_lst["status"] = df_lst["status"].astype(str).str.lower()
+                status_map = df_lst.groupby("sku")["status"].first().to_dict()
+                df_inv["listing_status"] = df_inv["SKU"].map(status_map).fillna("unknown")
             else:
-                chosen_domain = None
-                filtered_for_select = table_df
-        else:
-            filtered_for_select = table_df
-            chosen_domain = None
-
-    asin_list = filtered_for_select['ASIN'].unique().tolist()
-
-    with sel_col:
-        def asin_label(asin):
-            rows = filtered_for_select[filtered_for_select['ASIN'] == asin]
-            if not rows.empty and '_domain' in rows.columns:
-                dom = rows.iloc[0]['_domain']
-                flag = DOMAIN_LABELS.get(dom, dom).split()[0] if dom else ""
-                return f"{flag} {asin}" if flag else asin
-            return asin
-
-        asin_labels = [t["rev_not_selected"]] + [asin_label(a) for a in asin_list]
-        asin_map    = {asin_label(a): a for a in asin_list}
-
-        chosen_label = st.selectbox(t["rev_goto_asin"], asin_labels, key="asin_table_jump")
-
-    not_selected_values = {"— не вибрано —", "— not selected —", "— не выбрано —"}
-    if chosen_label and chosen_label not in not_selected_values:
-        chosen = asin_map.get(chosen_label, chosen_label)
-        matched = table_df[table_df['ASIN'] == chosen]
-        if chosen_domain:
-            matched = matched[matched['_domain'] == chosen_domain]
-        if matched.empty:
-            matched = table_df[table_df['ASIN'] == chosen]
-        if not matched.empty:
-            row = matched.iloc[0]
-            return chosen, row['_domain']
-
-    return None, None
-
-
-def show_reviews(t):
-    df_all = load_reviews()
-    if df_all.empty:
-        st.warning("⚠️ Не знайдено даних про відгуки. Перевірте ETL-скрипт (Apify → Postgres).")
-        return
-
-    has_domain = 'domain' in df_all.columns
-
-
-    selected_domains = []
-    if has_domain:
-        all_domains = sorted(df_all['domain'].dropna().unique().tolist())
-        domain_display_list = [DOMAIN_LABELS.get(d, f'🌍 {d}') for d in all_domains]
-        display_to_code = {DOMAIN_LABELS.get(d, f'🌍 {d}'): d for d in all_domains}
-        sel_domain_display = st.sidebar.multiselect(
-            t["rev_country_filter"], domain_display_list, default=[], key="rev_domain"
-        )
-        selected_domains = [display_to_code[d] for d in sel_domain_display if d in display_to_code]
-
-    jumped_asin = st.session_state.pop('rev_asin_jump', None)
-
-    df_for_asin = df_all.copy()
-    if selected_domains:
-        df_for_asin = df_for_asin[df_for_asin['domain'].isin(selected_domains)]
-    asins = sorted(df_for_asin['asin'].dropna().unique().tolist()) if 'asin' in df_for_asin.columns else []
-    asin_options = ['🌐 Всі ASINи'] + asins
-
-    default_asin_idx = 0
-    if jumped_asin and jumped_asin in asins:
-        default_asin_idx = asin_options.index(jumped_asin)
-        st.session_state.pop('rev_asin', None)
-
-    sel_raw = st.sidebar.selectbox("📦 ASIN:", asin_options, index=default_asin_idx, key="rev_asin")
-    selected_asin = None if sel_raw == '🌐 Всі ASINи' else sel_raw
-
-    star_filter = st.sidebar.multiselect(t["rev_star_filter"], [5, 4, 3, 2, 1], default=[], key="rev_stars")
-
-    if selected_asin and has_domain:
-        st.sidebar.markdown("**🔗 Відкрити на Amazon:**")
-        asin_domains = sorted(df_all[df_all['asin'] == selected_asin]['domain'].dropna().unique().tolist())
-        for dom in asin_domains:
-            url = make_amazon_url(dom, selected_asin)
-            flag = DOMAIN_LABELS.get(dom, '🌍').split(' ')[0]
-            label = DOMAIN_LABELS.get(dom, dom).split('(')[0].strip()
-            st.sidebar.markdown(f"[{flag} {label}]({url})")
-        st.sidebar.markdown("---")
-        if st.sidebar.button(t["rev_back"], width="stretch"):
-            st.session_state['rev_asin_jump'] = None
-            st.rerun()
-
-    df = df_all.copy()
-    if selected_domains:
-        df = df[df['domain'].isin(selected_domains)]
-    if selected_asin:
-        df = df[df['asin'] == selected_asin]
-    if star_filter:
-        df = df[df['rating'].isin(star_filter)]
-
-    if df.empty:
-        st.warning("Немає відгуків за цими фільтрами.")
-        return
-
-    asin_label    = selected_asin if selected_asin else t["all_asins"]
-    country_label = ", ".join([DOMAIN_LABELS.get(d, d) for d in selected_domains]) if selected_domains else t["all_countries"]
-
-    if selected_asin is not None:
-        if st.button(t["rev_back"], key="back_top", type="secondary"):
-            st.session_state.pop("rev_asin", None)
-            st.rerun()
-
-    if selected_asin:
-        first_domain = df['domain'].dropna().iloc[0] if has_domain and not df.empty else 'com'
-        amazon_url = make_amazon_url(first_domain, selected_asin)
-        st.markdown(
-            f"### {t['reviews_title']} — "
-            f"<a href='{amazon_url}' target='_blank' style='color:#5B9BD5'>{selected_asin} 🔗</a>"
-            f" | 🌍 {country_label}",
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(f"### {t['reviews_title']} — {asin_label} | 🌍 {country_label}")
-
-    total_revs   = len(df)
-    avg_rating   = df['rating'].mean()
-    verified_pct = df['is_verified'].mean() * 100 if 'is_verified' in df.columns and total_revs > 0 else 0
-    neg_count    = int((df['rating'] <= 2).sum())
-    pos_count    = int((df['rating'] >= 4).sum())
-    total_asins  = df['asin'].nunique() if 'asin' in df.columns else 0
-    total_asins_db = df_all['asin'].nunique() if 'asin' in df_all.columns else 0
-
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric(t["total_reviews"],      f"{total_revs:,}")
-    c2.metric(t["rev_asins_in_filter"], f"{total_asins:,}",
-              delta=f"з {total_asins_db} в базі" if total_asins != total_asins_db else None,
-              delta_color="off")
-    c3.metric(t["avg_review_rating"],  f"{avg_rating:.2f} ⭐")
-    c4.metric(t["verified_pct"],       f"{verified_pct:.1f}%")
-    c5.metric("🔴 Негативних (1-2★)",  f"{neg_count:,}")
-    c6.metric("🟢 Позитивних (4-5★)",  f"{pos_count:,}")
-
-    st.markdown("---")
-    show_global_insights(df_all if selected_asin is None else df, has_domain)
-    st.markdown("---")
-
-    if selected_asin is not None:
-        show_single_asin_detail(df, selected_asin, has_domain)
-        st.markdown("---")
-        if st.button(t["rev_back"], key="back_bottom", type="secondary"):
-            st.session_state.pop("rev_asin", None)
-            st.rerun()
-
-    if has_domain and selected_asin is None:
-        st.markdown(f"### {t['rev_country_analysis']}")
-
-        domain_stats = df.groupby('domain').agg(
-            Reviews=('rating', 'count'),
-            Rating=('rating', 'mean'),
-            Neg=('rating', lambda x: (x <= 2).sum()),
-            Pos=('rating', lambda x: (x >= 4).sum()),
-        ).reset_index()
-        domain_stats['Neg %'] = (domain_stats['Neg'] / domain_stats['Reviews'] * 100).round(1)
-        domain_stats['Pos %'] = (domain_stats['Pos'] / domain_stats['Reviews'] * 100).round(1)
-        domain_stats['Country'] = domain_stats['domain'].map(lambda x: DOMAIN_LABELS.get(x, f'🌍 {x}'))
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown(f"#### {t['rev_rating_by_country']}")
-            ds_sort = domain_stats.sort_values('Rating', ascending=True)
-            colors = ['#F44336' if r < 4.0 else '#FFC107' if r < 4.4 else '#4CAF50' for r in ds_sort['Rating']]
-            fig = go.Figure(go.Bar(
-                x=ds_sort['Rating'], y=ds_sort['Country'], orientation='h',
-                marker_color=colors,
-                text=[f"{v:.2f}★" for v in ds_sort['Rating']], textposition='outside'
-            ))
-            fig.add_vline(x=4.0, line_dash="dash", line_color="orange", annotation_text="4.0")
-            fig.update_layout(height=max(280, len(ds_sort) * 50), xaxis_range=[1, 5.5],
-                              margin=dict(l=10, r=60, t=20, b=20))
-            st.plotly_chart(fig, width="stretch")
-
-        with col2:
-            st.markdown(f"#### {t['rev_neg_by_country']}")
-            ds_neg = domain_stats.sort_values('Neg %', ascending=False)
-            neg_colors = ['#F44336' if v > 20 else '#FFC107' if v > 10 else '#4CAF50' for v in ds_neg['Neg %']]
-            fig2 = go.Figure(go.Bar(
-                x=ds_neg['Neg %'], y=ds_neg['Country'], orientation='h',
-                marker_color=neg_colors,
-                text=[f"{v:.1f}%" for v in ds_neg['Neg %']], textposition='outside'
-            ))
-            fig2.update_layout(height=max(280, len(ds_neg) * 50), margin=dict(l=10, r=60, t=20, b=20))
-            st.plotly_chart(fig2, width="stretch")
-
-        with col3:
-            st.markdown(f"#### {t['rev_count_by_country']}")
-            fig3 = px.pie(domain_stats, values='Reviews', names='Country', hole=0.4,
-                          color_discrete_sequence=px.colors.qualitative.Set3)
-            fig3.update_layout(height=max(280, len(domain_stats) * 50))
-            st.plotly_chart(fig3, width="stretch")
-
-        st.markdown(f"#### {t['rev_table_by_country']}")
-        disp = domain_stats[['Country', 'Reviews', 'Rating', 'Neg %', 'Pos %']].sort_values('Rating', ascending=False)
-        st.dataframe(
-            disp.style
-                .format({'Rating': '{:.2f}', 'Neg %': '{:.1f}%', 'Pos %': '{:.1f}%'})
-                .background_gradient(subset=['Rating'], cmap='RdYlGn')
-                .background_gradient(subset=['Neg %'], cmap='RdYlGn_r'),
-            width="stretch"
-        )
-
-        if 'asin' in df.columns and df['domain'].nunique() > 1:
+                df_inv["listing_status"] = "unknown"
+ 
+            # Merge з velocity з orders (реальний sold за 30д)
+            if not df_ord.empty and "SKU" in df_inv.columns:
+                last_30 = df_ord[df_ord["day"] >= (pd.Timestamp.now().normalize() - pd.Timedelta(days=30))]
+                sold_30 = last_30.groupby("sku")["units"].sum().to_dict()
+                rev_30  = last_30.groupby("sku")["revenue"].sum().to_dict()
+                df_inv["sold_30d"]    = df_inv["SKU"].map(sold_30).fillna(0).astype(int)
+                df_inv["revenue_30d"] = df_inv["SKU"].map(rev_30).fillna(0)
+                df_inv["velocity_real"] = (df_inv["sold_30d"] / 30).round(2)
+                df_inv["dos_real"] = (df_inv["Available"] / df_inv["velocity_real"].replace(0, float("nan"))).round(0).fillna(0)
+            else:
+                df_inv["sold_30d"] = 0
+                df_inv["revenue_30d"] = 0
+                df_inv["velocity_real"] = 0
+                df_inv["dos_real"] = 0
+ 
+            df_inv["stock_value"] = df_inv["Available"] * df_inv["Price"]
+ 
+            # ── KPI ──
+            active_cnt   = int((df_inv["listing_status"] == "active").sum())
+            inactive_cnt = int((df_inv["listing_status"] != "active").sum())
+            total_avail  = int(df_inv["Available"].sum())
+            total_value  = df_inv["stock_value"].sum()
+            total_sold   = int(df_inv["sold_30d"].sum())
+            oos_cnt      = int((df_inv["Available"] == 0).sum())
+            low14_cnt    = int(((df_inv["dos_real"] > 0) & (df_inv["dos_real"] < 14)).sum())
+ 
+            c1,c2,c3,c4,c5,c6 = st.columns(6)
+            c1.metric("✅ Active", f"{active_cnt}")
+            c2.metric("❌ Inactive", f"{inactive_cnt}")
+            c3.metric("📦 Available", f"{total_avail:,}")
+            c4.metric("💰 Stock Value", f"${total_value:,.0f}")
+            c5.metric("🛒 Sold 30д", f"{total_sold:,}")
+            c6.metric("🔴 OOS", f"{oos_cnt}")
+ 
+            # ── Інсайти ──
+            _ic = st.columns(3)
+            if low14_cnt > 0:
+                with _ic[0]: insight_card("🔴", "Low Stock",
+                    f"<b>{low14_cnt} SKU</b> закінчаться за <b><14 днів</b>", "#2b0d0d")
+            else:
+                with _ic[0]: insight_card("🟢", "Запаси",
+                    "Всі активні SKU мають 14+ днів запасу", "#0d2b1e")
+            active_pct = active_cnt / (active_cnt + inactive_cnt) * 100 if (active_cnt + inactive_cnt) > 0 else 0
+            with _ic[1]: insight_card("📊", "Active Rate",
+                f"<b>{active_pct:.0f}%</b> листингів активні ({active_cnt}/{active_cnt+inactive_cnt})",
+                "#0d2b1e" if active_pct >= 80 else "#2b2400")
+            turnover = total_avail / (total_sold / 30) if total_sold > 0 else 999
+            with _ic[2]: insight_card("🔄", "Оборотність",
+                f"Запас на <b>{turnover:.0f} днів</b> при поточному темпі продажів",
+                "#0d2b1e" if turnover < 90 else "#2b2400" if turnover < 180 else "#2b0d0d")
+ 
             st.markdown("---")
-            st.markdown(t["rev_heatmap"])
-            st.caption(t["rev_heatmap_hint"])
-
-            pivot = df.groupby(['asin', 'domain'])['rating'].mean().reset_index()
-            pivot_table = pivot.pivot(index='asin', columns='domain', values='rating')
-            pivot_table.columns = [DOMAIN_LABELS.get(c, f'🌍 {c}') for c in pivot_table.columns]
-
-            fig_heat = go.Figure(data=go.Heatmap(
-                z=pivot_table.values,
-                x=list(pivot_table.columns),
-                y=list(pivot_table.index),
-                colorscale='RdYlGn',
-                zmin=1, zmax=5,
-                text=[[f"{v:.2f}" if not pd.isna(v) else "—" for v in row] for row in pivot_table.values],
-                texttemplate="%{text}",
-                colorbar=dict(title="★ Рейтинг"),
-            ))
-            fig_heat.update_layout(
-                height=max(350, len(pivot_table) * 45 + 100),
-                xaxis_title="Країна", yaxis_title="ASIN",
-                margin=dict(l=20, r=20, t=30, b=20)
-            )
-            st.plotly_chart(fig_heat, width="stretch")
-            st.caption("🟢 ≥4.4★ відмінно · 🟡 4.0–4.4★ норма · 🔴 <4.0★ проблема")
-
-        st.markdown("---")
-
-    if selected_asin is None:
-        clicked_asin, clicked_domain = show_asin_links_table(df, has_domain)
-        if clicked_asin:
-            st.session_state['rev_asin_jump'] = clicked_asin
-            st.rerun()
-        st.markdown("---")
-
-    if selected_asin is None and 'asin' in df.columns:
-        st.markdown(t["rev_asin_compare"])
-
-        asin_stats = df.groupby('asin').agg(
-            Reviews=('rating', 'count'),
-            Rating=('rating', 'mean'),
-            Neg=('rating', lambda x: (x <= 2).sum()),
-            Pos=('rating', lambda x: (x >= 4).sum()),
-        ).reset_index()
-        asin_stats.columns = ['ASIN', 'Відгуків', 'Рейтинг', 'Негативних', 'Позитивних']
-        asin_stats['Neg %'] = (asin_stats['Негативних'] / asin_stats['Відгуків'] * 100).round(1)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("#### ⭐ Середній рейтинг по ASINах")
-            asin_sort = asin_stats.sort_values('Рейтинг', ascending=True)
-            colors = ['#F44336' if r < 4.0 else '#FFC107' if r < 4.4 else '#4CAF50' for r in asin_sort['Рейтинг']]
-            fig = go.Figure(go.Bar(
-                x=asin_sort['Рейтинг'], y=asin_sort['ASIN'], orientation='h',
-                marker_color=colors,
-                text=[f"{v:.2f}★" for v in asin_sort['Рейтинг']], textposition='outside'
-            ))
-            fig.add_vline(x=4.0, line_dash="dash", line_color="orange", annotation_text="Поріг 4.0")
-            fig.update_layout(height=max(300, len(asin_sort) * 38), xaxis_range=[1, 5.5])
-            st.plotly_chart(fig, width="stretch")
-
-        with col2:
-            st.markdown("#### 🔴 % Негативних по ASINах")
-            asin_neg = asin_stats.sort_values('Neg %', ascending=False)
-            neg_colors = ['#F44336' if v > 20 else '#FFC107' if v > 10 else '#4CAF50' for v in asin_neg['Neg %']]
-            fig2 = go.Figure(go.Bar(
-                x=asin_neg['Neg %'], y=asin_neg['ASIN'], orientation='h',
-                marker_color=neg_colors,
-                text=[f"{v:.1f}%" for v in asin_neg['Neg %']], textposition='outside'
-            ))
-            fig2.update_layout(height=max(300, len(asin_neg) * 38))
-            st.plotly_chart(fig2, width="stretch")
-
-        st.markdown("#### 📋 Зведена таблиця по ASINах")
-        st.dataframe(
-            asin_stats.sort_values('Рейтинг').style
-                .format({'Рейтинг': '{:.2f}', 'Neg %': '{:.1f}%'})
-                .background_gradient(subset=['Рейтинг'], cmap='RdYlGn')
-                .background_gradient(subset=['Neg %'], cmap='RdYlGn_r'),
-            width="stretch"
-        )
-
-        if 'product_attributes' in df.columns:
-            st.markdown("---")
-            st.markdown("### 🎨 Які варіанти (Size / Color) збирають негатив?")
-
-            df_attr = df.copy()
-            df_attr['product_attributes'] = df_attr['product_attributes'].fillna('').astype(str)
-
-            def parse_attr(s):
-                size, color = None, None
-                for part in s.split(','):
-                    part = part.strip()
-                    if part.lower().startswith('size:'):
-                        size = part.split(':', 1)[1].strip()
-                    elif part.lower().startswith('color:'):
-                        color = part.split(':', 1)[1].strip()
-                return pd.Series({'Size': size or 'N/A', 'Color': color or 'N/A'})
-
-            parsed = df_attr['product_attributes'].apply(parse_attr)
-            df_attr = pd.concat([df_attr.reset_index(drop=True), parsed], axis=1)
-
+ 
+            # ══════════════════════════════════
+            # 1. STOCK TABLE — Active / Inactive
+            # ══════════════════════════════════
+            st.markdown("##### 📦 Таблиця залишків (Active / Inactive)")
+ 
+            status_filter = st.selectbox("Фільтр:", ["Всі", "Active", "Inactive", "OOS", "Low Stock <14д"], key="health_filter")
+            df_show = df_inv.copy()
+            if status_filter == "Active":
+                df_show = df_show[df_show["listing_status"] == "active"]
+            elif status_filter == "Inactive":
+                df_show = df_show[df_show["listing_status"] != "active"]
+            elif status_filter == "OOS":
+                df_show = df_show[df_show["Available"] == 0]
+            elif status_filter == "Low Stock <14д":
+                df_show = df_show[(df_show["dos_real"] > 0) & (df_show["dos_real"] < 14)]
+ 
+            show_cols = [c for c in ["SKU","ASIN","Available","Price","stock_value",
+                         "sold_30d","revenue_30d","velocity_real","dos_real","listing_status"]
+                         if c in df_show.columns]
+            rename = {"stock_value":"💰 Value","sold_30d":"🛒 Sold 30д",
+                      "revenue_30d":"💰 Rev 30д","velocity_real":"⚡ Vel/день",
+                      "dos_real":"📅 DoS","listing_status":"Status"}
+ 
+            df_tbl = df_show[show_cols].rename(columns=rename).sort_values("📅 DoS").head(300)
+            fmt = {}
+            if "Price" in df_tbl.columns: fmt["Price"] = "${:.2f}"
+            if "💰 Value" in df_tbl.columns: fmt["💰 Value"] = "${:,.0f}"
+            if "💰 Rev 30д" in df_tbl.columns: fmt["💰 Rev 30д"] = "${:,.0f}"
+            if "📅 DoS" in df_tbl.columns: fmt["📅 DoS"] = "{:.0f}"
+ 
+            def color_status(val):
+                if val == "active": return "color:#4CAF50"
+                return "color:#F44336"
+ 
+            styled = df_tbl.style.format(fmt)
+            if "Status" in df_tbl.columns:
+                styled = styled.applymap(color_status, subset=["Status"])
+            st.dataframe(styled, width="stretch", hide_index=True, height=400)
+            st.caption(f"{len(df_tbl)} з {len(df_show)} SKU")
+ 
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown("#### 📏 Рейтинг по Size")
-                size_stats = df_attr[df_attr['Size'] != 'N/A'].groupby('Size').agg(
-                    Відгуків=('rating', 'count'),
-                    Рейтинг=('rating', 'mean'),
-                    Neg=('rating', lambda x: (x <= 2).sum()),
-                ).reset_index()
-                size_stats['Neg %'] = (size_stats['Neg'] / size_stats['Відгуків'] * 100).round(1)
-                size_stats = size_stats[size_stats['Відгуків'] >= 3].sort_values('Рейтинг', ascending=True)
-                if not size_stats.empty:
-                    colors_s = ['#F44336' if r < 3.5 else '#FFC107' if r < 4.2 else '#4CAF50' for r in size_stats['Рейтинг']]
-                    fig_s = go.Figure(go.Bar(
-                        x=size_stats['Рейтинг'], y=size_stats['Size'], orientation='h',
-                        marker_color=colors_s,
-                        text=[f"{r:.2f}★ ({n:.0f}% neg)" for r, n in zip(size_stats['Рейтинг'], size_stats['Neg %'])],
-                        textposition='outside',
-                    ))
-                    fig_s.add_vline(x=4.0, line_dash="dash", line_color="orange")
-                    fig_s.update_layout(height=max(280, len(size_stats) * 40), xaxis_range=[1, 5.8])
-                    st.plotly_chart(fig_s, width="stretch")
-                else:
-                    st.info("Недостатньо даних по розмірах")
-
+                st.markdown("##### 📊 Active vs Inactive")
+                status_cnt = df_inv["listing_status"].value_counts().reset_index()
+                status_cnt.columns = ["Status", "Count"]
+                fig_s = px.pie(status_cnt, values="Count", names="Status", hole=0.4,
+                               color_discrete_map={"active":"#4CAF50","inactive":"#F44336","unknown":"#888"},
+                               height=300)
+                st.plotly_chart(fig_s, width="stretch")
+ 
             with col2:
-                st.markdown("#### 🎨 Рейтинг по Color")
-                color_stats = df_attr[df_attr['Color'] != 'N/A'].groupby('Color').agg(
-                    Відгуків=('rating', 'count'),
-                    Рейтинг=('rating', 'mean'),
-                    Neg=('rating', lambda x: (x <= 2).sum()),
-                ).reset_index()
-                color_stats['Neg %'] = (color_stats['Neg'] / color_stats['Відгуків'] * 100).round(1)
-                color_stats = color_stats[color_stats['Відгуків'] >= 3].sort_values('Рейтинг', ascending=True)
-                if not color_stats.empty:
-                    colors_c = ['#F44336' if r < 3.5 else '#FFC107' if r < 4.2 else '#4CAF50' for r in color_stats['Рейтинг']]
-                    fig_c = go.Figure(go.Bar(
-                        x=color_stats['Рейтинг'], y=color_stats['Color'], orientation='h',
-                        marker_color=colors_c,
-                        text=[f"{r:.2f}★ ({n:.0f}% neg)" for r, n in zip(color_stats['Рейтинг'], color_stats['Neg %'])],
-                        textposition='outside',
+                st.markdown("##### 🏆 Топ 10 SKU по вартості")
+                top_val = df_inv[df_inv["stock_value"] > 0].nlargest(10, "stock_value")
+                if not top_val.empty:
+                    fig_v = go.Figure(go.Bar(
+                        x=top_val["stock_value"], y=top_val["SKU"], orientation="h",
+                        marker_color="#5B9BD5",
+                        text=[f"${v:,.0f}" for v in top_val["stock_value"]], textposition="outside"
                     ))
-                    fig_c.add_vline(x=4.0, line_dash="dash", line_color="orange")
-                    fig_c.update_layout(height=max(280, len(color_stats) * 40), xaxis_range=[1, 5.8])
-                    st.plotly_chart(fig_c, width="stretch")
+                    fig_v.update_layout(height=300, yaxis={"categoryorder":"total ascending"},
+                                        margin=dict(l=0,r=80,t=10,b=0))
+                    st.plotly_chart(fig_v, width="stretch")
+ 
+            st.markdown("---")
+ 
+            # ══════════════════════════════════
+            # 2. SALES VELOCITY — по днях / тижнях
+            # ══════════════════════════════════
+            st.markdown("##### 📈 Продажі по днях / тижнях")
+ 
+            if not df_ord.empty:
+                gran = st.radio("Гранулярність:", ["День", "Тиждень"], horizontal=True, key="vel_gran")
+ 
+                df_vel = df_ord.copy()
+                df_vel["day"] = pd.to_datetime(df_vel["day"])
+ 
+                if gran == "Тиждень":
+                    df_agg = df_vel.resample("W", on="day").agg(
+                        {"orders":"sum","units":"sum","revenue":"sum"}).reset_index()
                 else:
-                    st.info("Недостатньо даних по кольорах")
-
-            st.markdown("#### ⚠️ Топ проблемних варіантів (рейтинг < 4.0, мін. 3 відгуки)")
-            df_v = df_attr[df_attr['Size'] != 'N/A'].copy()
-            group_cols = ['asin', 'Size', 'Color'] if 'asin' in df_v.columns else ['Size', 'Color']
-            var_group = df_v.groupby(group_cols).agg(
-                Відгуків=('rating', 'count'),
-                Рейтинг=('rating', 'mean'),
-                Neg=('rating', lambda x: (x <= 2).sum()),
-            ).reset_index()
-            var_group['Neg %'] = (var_group['Neg'] / var_group['Відгуків'] * 100).round(1)
-            problem = var_group[(var_group['Рейтинг'] < 4.0) & (var_group['Відгуків'] >= 3)].sort_values('Neg %', ascending=False).head(20)
-            if not problem.empty:
+                    df_agg = df_vel.groupby("day").agg(
+                        {"orders":"sum","units":"sum","revenue":"sum"}).reset_index()
+ 
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"###### 🛒 Units sold ({gran})")
+                    fig_u = go.Figure()
+                    fig_u.add_trace(go.Bar(x=df_agg["day"], y=df_agg["units"],
+                                           marker_color="#4CAF50", opacity=0.85,
+                                           text=df_agg["units"].astype(int), textposition="outside"))
+                    # MA-7
+                    if gran == "День" and len(df_agg) >= 7:
+                        ma = df_agg["units"].rolling(7, min_periods=1).mean()
+                        fig_u.add_trace(go.Scatter(x=df_agg["day"], y=ma,
+                                                   mode="lines", name="MA-7",
+                                                   line=dict(color="#FFC107", width=2, dash="dot")))
+                    fig_u.update_layout(height=320, margin=dict(l=0,r=0,t=10,b=0), showlegend=True)
+                    st.plotly_chart(fig_u, width="stretch")
+ 
+                with col2:
+                    st.markdown(f"###### 💰 Revenue ({gran})")
+                    fig_r = go.Figure()
+                    fig_r.add_trace(go.Bar(x=df_agg["day"], y=df_agg["revenue"],
+                                           marker_color="#5B9BD5", opacity=0.85,
+                                           text=[f"${v:,.0f}" for v in df_agg["revenue"]], textposition="outside"))
+                    if gran == "День" and len(df_agg) >= 7:
+                        ma_r = df_agg["revenue"].rolling(7, min_periods=1).mean()
+                        fig_r.add_trace(go.Scatter(x=df_agg["day"], y=ma_r,
+                                                   mode="lines", name="MA-7",
+                                                   line=dict(color="#FFC107", width=2, dash="dot")))
+                    fig_r.update_layout(height=320, margin=dict(l=0,r=0,t=10,b=0),
+                                        yaxis=dict(tickprefix="$"), showlegend=True)
+                    st.plotly_chart(fig_r, width="stretch")
+ 
+                # По SKU velocity
+                st.markdown("##### 🏆 Топ 15 SKU по продажах (30д)")
+                sku_vel = df_vel[df_vel["day"] >= (pd.Timestamp.now().normalize() - pd.Timedelta(days=30))]
+                sku_agg = sku_vel.groupby("sku").agg(
+                    units=("units","sum"), revenue=("revenue","sum"), orders=("orders","sum")
+                ).reset_index().nlargest(15, "units")
+ 
+                if not sku_agg.empty:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fig_su = go.Figure(go.Bar(
+                            x=sku_agg["units"], y=sku_agg["sku"], orientation="h",
+                            marker_color="#4CAF50",
+                            text=[f"{int(v):,}" for v in sku_agg["units"]], textposition="outside"
+                        ))
+                        fig_su.update_layout(height=max(300, len(sku_agg)*35),
+                                             yaxis={"categoryorder":"total ascending"},
+                                             title="Units sold", margin=dict(l=0,r=60,t=30,b=0))
+                        st.plotly_chart(fig_su, width="stretch")
+ 
+                    with col2:
+                        fig_sr = go.Figure(go.Bar(
+                            x=sku_agg["revenue"], y=sku_agg["sku"], orientation="h",
+                            marker_color="#5B9BD5",
+                            text=[f"${v:,.0f}" for v in sku_agg["revenue"]], textposition="outside"
+                        ))
+                        fig_sr.update_layout(height=max(300, len(sku_agg)*35),
+                                             yaxis={"categoryorder":"total ascending"},
+                                             title="Revenue $", margin=dict(l=0,r=60,t=30,b=0))
+                        st.plotly_chart(fig_sr, width="stretch")
+ 
+                # Таблиця velocity
+                st.markdown("##### 📋 Velocity таблиця (всі SKU з продажами)")
+                sku_all = sku_vel.groupby("sku").agg(
+                    units=("units","sum"), revenue=("revenue","sum"), orders=("orders","sum")
+                ).reset_index()
+                sku_all["vel/день"] = (sku_all["units"] / 30).round(2)
+                sku_all = sku_all.sort_values("units", ascending=False)
                 st.dataframe(
-                    problem.style
-                        .format({'Рейтинг': '{:.2f}', 'Neg %': '{:.1f}%'})
-                        .background_gradient(subset=['Рейтинг'], cmap='RdYlGn')
-                        .background_gradient(subset=['Neg %'], cmap='RdYlGn_r'),
-                    width="stretch"
+                    sku_all.rename(columns={"sku":"SKU","units":"Units 30д","revenue":"Revenue 30д","orders":"Orders"})
+                        .style.format({"Revenue 30д":"${:,.0f}","vel/день":"{:.2f}"}),
+                    width="stretch", hide_index=True, height=400
                 )
+                st.download_button("📥 CSV Velocity",
+                    sku_all.to_csv(index=False).encode(), "velocity_30d.csv", "text/csv")
             else:
-                st.success("🎉 Всі варіанти мають рейтинг >= 4.0")
-
-        st.markdown("---")
-        st.markdown(t["rev_star_dist"])
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(f"#### {t['star_dist']}")
-        star_counts = df['rating'].value_counts().reindex([5, 4, 3, 2, 1]).fillna(0).reset_index()
-        star_counts.columns = ['Зірки', 'Кількість']
-        star_counts['label'] = star_counts['Зірки'].astype(str) + '★'
-        color_map = {5: '#4CAF50', 4: '#8BC34A', 3: '#FFC107', 2: '#FF9800', 1: '#F44336'}
-        fig_stars = go.Figure(go.Bar(
-            x=star_counts['Кількість'], y=star_counts['label'], orientation='h',
-            marker_color=[color_map.get(int(s), '#888') for s in star_counts['Зірки']],
-            text=star_counts['Кількість'], textposition='outside'
-        ))
-        fig_stars.update_layout(
-            yaxis=dict(categoryorder='array', categoryarray=['1★', '2★', '3★', '4★', '5★']),
-            height=300, margin=dict(l=10, r=40, t=20, b=20)
-        )
-        st.plotly_chart(fig_stars, width="stretch")
-
-    with col2:
-        st.markdown(f"#### {t['worst_asin']}")
-        bad = df_all[df_all['rating'] <= 2]
-        if selected_domains and has_domain:
-            bad = bad[bad['domain'].isin(selected_domains)]
-        if 'asin' in bad.columns and not bad.empty:
-            bad_asins = bad['asin'].value_counts().head(8).reset_index()
-            bad_asins.columns = ['ASIN', 'Негативних']
-            fig_bad = px.bar(bad_asins, x='ASIN', y='Негативних', text='Негативних',
-                             color='Негативних', color_continuous_scale='Reds')
-            fig_bad.update_layout(height=300, showlegend=False)
-            st.plotly_chart(fig_bad, width="stretch")
-        else:
-            st.success("🎉 Негативних відгуків не знайдено!")
-
-    insights_reviews(df, asin=selected_asin)
-
-    neg_examples = df[df['rating'] <= 2][['asin', 'domain', 'rating', 'title', 'content']].head(10).to_string() if not df.empty else ""
-    ctx_rev = f"""Amazon Reviews аналіз:
-- Всього відгуків: {len(df)} | Середній рейтинг: {df['rating'].mean():.2f}★
-- Негативних (1-2★): {int((df['rating']<=2).sum())} | Позитивних (4-5★): {int((df['rating']>=4).sum())}
-- ASIN: {selected_asin or 'всі'} | Країни: {', '.join(selected_domains) if selected_domains else 'всі'}
-Приклади негативних відгуків:
-{neg_examples}"""
-    show_ai_chat(ctx_rev, [
-        "Які ASIN мають рейтинг нижче 3.5★? Скільки негативних?",
-        "Які топ-3 скарги по відгуках за останній місяць?",
-        "Порівняй рейтинги по країнах — де найгірше?",
-    ], "reviews")
-
-    st.markdown("---")
-    st.markdown(t["rev_texts"])
-    st.caption(t["rev_sort_hint"])
-
-    display_cols = ['review_date', 'asin', 'domain', 'rating', 'title', 'content', 'product_attributes', 'author', 'is_verified']
-
-    fa, fb, fc = st.columns([3, 2, 1])
-
-    with fb:
-        if has_domain:
-            dl_domains_raw = sorted(df['domain'].dropna().unique().tolist())
-            dl_domain_opts = ["🌍 " + t.get("all_countries", "All")] + [DOMAIN_LABELS.get(d, d) for d in dl_domains_raw]
-            dl_domain_label = st.selectbox("🌍 Країна:", dl_domain_opts, key="dl_domain_filter")
-            dl_domain_idx = dl_domain_opts.index(dl_domain_label) - 1
-            dl_domain = dl_domains_raw[dl_domain_idx] if dl_domain_idx >= 0 else None
-        else:
-            dl_domain = None
-
-    with fa:
-        if 'asin' in df.columns:
-            df_for_dl = df[df['domain'] == dl_domain] if dl_domain else df
-            asin_opts = sorted(df_for_dl['asin'].dropna().unique().tolist())
-            dl_asins_selected = st.multiselect(
-                "📦 ASIN (мультивибір):",
-                options=asin_opts,
-                default=[],
-                placeholder="Всі ASINи — або вибери скільки завгодно",
-                key="dl_asin_multi"
-            )
-        else:
-            dl_asins_selected = []
-
-    df_dl = df.copy()
-    if dl_domain:
-        df_dl = df_dl[df_dl['domain'] == dl_domain]
-    if dl_asins_selected:
-        df_dl = df_dl[df_dl['asin'].isin(dl_asins_selected)]
-
-    with fc:
-        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
-        n_asins_info = f"{len(dl_asins_selected)} ASIN" if dl_asins_selected else "всі"
-        st.caption(f"📊 {len(df_dl)} відгуків ({n_asins_info})")
-
-    if dl_asins_selected and len(dl_asins_selected) > 1 and 'asin' in df_dl.columns:
-        with st.expander(f"📊 Порівняння вибраних {len(dl_asins_selected)} ASINів", expanded=True):
-            cmp = df_dl.groupby('asin').agg(
-                Відгуків=('rating', 'count'),
-                Рейтинг=('rating', 'mean'),
-                Neg=('rating', lambda x: (x <= 2).sum()),
-                Pos=('rating', lambda x: (x >= 4).sum()),
-            ).reset_index()
-            cmp['Neg %'] = (cmp['Neg'] / cmp['Відгуків'] * 100).round(1)
-            cmp['Pos %'] = (cmp['Pos'] / cmp['Відгуків'] * 100).round(1)
-            cmp = cmp.sort_values('Рейтинг', ascending=False)
-
-            col_c1, col_c2 = st.columns(2)
-            with col_c1:
-                colors_cmp = ['#F44336' if r < 4.0 else '#FFC107' if r < 4.4 else '#4CAF50' for r in cmp['Рейтинг']]
-                fig_cmp = go.Figure(go.Bar(
-                    x=cmp['Рейтинг'], y=cmp['asin'], orientation='h',
-                    marker_color=colors_cmp,
-                    text=[f"{r:.2f}★" for r in cmp['Рейтинг']],
-                    textposition='outside'
-                ))
-                fig_cmp.add_vline(x=4.0, line_dash="dash", line_color="orange")
-                fig_cmp.update_layout(height=max(250, len(cmp) * 40), xaxis_range=[1, 5.5],
-                                      title="⭐ Рейтинг", margin=dict(l=5, r=50, t=30, b=10))
-                st.plotly_chart(fig_cmp, width="stretch")
-
-            with col_c2:
-                neg_colors_cmp = ['#F44336' if v > 20 else '#FFC107' if v > 10 else '#4CAF50' for v in cmp['Neg %']]
-                fig_neg = go.Figure(go.Bar(
-                    x=cmp['Neg %'], y=cmp['asin'], orientation='h',
-                    marker_color=neg_colors_cmp,
-                    text=[f"{v:.1f}%" for v in cmp['Neg %']],
-                    textposition='outside'
-                ))
-                fig_neg.update_layout(height=max(250, len(cmp) * 40),
-                                      title="🔴 % Негативних", margin=dict(l=5, r=50, t=30, b=10))
-                st.plotly_chart(fig_neg, width="stretch")
-
-            st.dataframe(
-                cmp[['asin', 'Відгуків', 'Рейтинг', 'Neg %', 'Pos %']].style
-                    .format({'Рейтинг': '{:.2f}', 'Neg %': '{:.1f}%', 'Pos %': '{:.1f}%'})
-                    .background_gradient(subset=['Рейтинг'], cmap='RdYlGn')
-                    .background_gradient(subset=['Neg %'], cmap='RdYlGn_r'),
-                width='stretch', hide_index=True
-            )
-
-    df_table = balanced_reviews(df_dl, max_per_star=100).sort_values('rating', ascending=True)
-    available_cols = [c for c in display_cols if c in df_table.columns]
-    dl_cols = [c for c in display_cols if c in df_dl.columns]
-
-    st.dataframe(df_table[available_cols], width="stretch", height=450)
-
-    star_summary = df_table['rating'].value_counts().sort_index(ascending=False)
-    summary_str  = " | ".join([f"{s}★: {c}" for s, c in star_summary.items()])
-    st.caption(t["rev_shown"].format(n=len(df_table), total=len(df_dl)) + f" · {summary_str}")
-
-    col1, col2 = st.columns(2)
-    dl_label = "_".join(dl_asins_selected) if dl_asins_selected else asin_label
-    with col1:
-        st.download_button(t["rev_dl_balanced"],
-            df_table[available_cols].to_csv(index=False).encode('utf-8'),
-            f"reviews_balanced_{dl_label}.csv", "text/csv")
-        st.caption(t["rev_dl_balanced_hint"])
-    with col2:
-        st.download_button(t["rev_dl_all"],
-            df_all[dl_cols].to_csv(index=False).encode('utf-8'),
-            f"reviews_full_{dl_label}.csv", "text/csv")
-        st.caption(t["rev_dl_all_hint"])
+                st.warning("Немає даних orders за 90 днів")
 
 
 # ============================================
