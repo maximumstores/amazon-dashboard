@@ -1063,6 +1063,17 @@ def show_overview_insights(df_inventory):
             insights_orders(df_o30 if not df_o30.empty else df_orders)
         else: st.info("🛒 Дані замовлень відсутні.")
 
+    with tabs[4]:
+        if not df_returns.empty:
+            max_d  = df_returns['Return Date'].max()
+            df_r30 = df_returns[df_returns['Return Date'] >= max_d - dt.timedelta(days=30)]
+            insights_returns(df_r30 if not df_r30.empty else df_returns, return_rate)
+        else: st.info("📦 Дані повернень відсутні.")
+
+    with tabs[5]:
+        if not df_reviews.empty: insights_reviews(df_reviews, asin=None)
+        else: st.info("⭐ Дані відгуків відсутні.")
+
     # ── TAB 4: Inventory Health ──
     with tabs[4]:
         st.markdown("#### 🏥 Stock Overview — Залишки + Velocity")
