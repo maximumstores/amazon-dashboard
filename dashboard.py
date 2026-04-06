@@ -4495,7 +4495,7 @@ def show_fba_operations():
 
             styled_h = df_tbl_h.style.format(fmt_h)
             if "Status" in df_tbl_h.columns:
-                styled_h = styled_h.applymap(color_status_h, subset=["Status"])
+                styled_h = styled_h.map(color_status_h, subset=["Status"])
             st.dataframe(styled_h, width="stretch", hide_index=True, height=400)
             st.caption(f"{len(df_tbl_h)} з {len(df_show_h)} SKU")
 
