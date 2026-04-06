@@ -4237,7 +4237,7 @@ def show_fba_operations():
     st.markdown("---")
 
     # ── Таби ──
-    tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance", "🏥 Inventory Health", "📊 Adjustments"])
+    tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance", "🏥 Inventory Health"]) 
 
     # ── TAB 0: Shipments ──
     with tabs[0]:
