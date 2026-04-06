@@ -4866,7 +4866,7 @@ def show_fba_operations():
     st.markdown("---")
 
     # ── Таби ──
-    tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance"])
+    tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance", "🏥 Inventory Health", "📊 Adjustments"])
 
     # ── TAB 1: Shipments ──
     with tabs[0]:
@@ -4987,6 +4987,205 @@ def show_fba_operations():
             st.dataframe(df_nc[show_nc], width="stretch", hide_index=True)
             st.download_button("📥 CSV Non-Compliance", df_nc.to_csv(index=False).encode(), "noncompliance.csv", "text/csv")
 
+    # ── TAB 4: Inventory Health ──
+    with tabs[4]:
+        st.markdown("#### 🏥 Inventory Health — Aging, Days of Supply, Storage Costs")
+        try:
+            with engine.connect() as conn:
+                df_health = pd.read_sql(text("SELECT * FROM fba_inventory_health ORDER BY snapshot_date DESC"), conn)
+        except Exception as e:
+            st.error(f"fba_inventory_health: {e}")
+            df_health = pd.DataFrame()
+ 
+        if df_health.empty:
+            st.info("⏳ Запусти `python 13_fba_operations_loader.py health` щоб завантажити дані")
+        else:
+            # Нормалізуємо числа
+            num_cols = ["available","inv_age_0_90","inv_age_91_180","inv_age_181_270",
+                        "inv_age_271_365","inv_age_365_plus","units_shipped_t7",
+                        "units_shipped_t30","units_shipped_t60","units_shipped_t90",
+                        "your_price","sales_rank","days_of_supply",
+                        "estimated_excess_qty","recommended_removal","estimated_storage_cost"]
+            for c in num_cols:
+                if c in df_health.columns:
+                    df_health[c] = pd.to_numeric(df_health[c].replace("", None), errors="coerce").fillna(0)
+ 
+            # KPI
+            total_sku     = df_health["sku"].nunique()
+            total_avail   = int(df_health["available"].sum())
+            total_excess  = int(df_health["estimated_excess_qty"].sum())
+            total_removal = int(df_health["recommended_removal"].sum())
+            total_storage = df_health["estimated_storage_cost"].sum()
+ 
+            c1,c2,c3,c4,c5 = st.columns(5)
+            c1.metric("📦 SKU", f"{total_sku:,}")
+            c2.metric("✅ Available", f"{total_avail:,}")
+            c3.metric("⚠️ Excess", f"{total_excess:,}")
+            c4.metric("🗑 Рек. Removal", f"{total_removal:,}")
+            c5.metric("💸 Storage Cost", f"${total_storage:,.0f}")
+ 
+            # Aging chart
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("##### 📦 Aging — одиниці по віку")
+                age_labels = ["0-90д","91-180д","181-270д","271-365д","365+д"]
+                age_cols_list = ["inv_age_0_90","inv_age_91_180","inv_age_181_270",
+                                 "inv_age_271_365","inv_age_365_plus"]
+                age_vals = [df_health[c].sum() for c in age_cols_list if c in df_health.columns]
+                age_colors = ["#4CAF50","#FFC107","#FF9800","#F44336","#B71C1C"]
+                if age_vals:
+                    fig_age = go.Figure(go.Bar(
+                        x=age_labels[:len(age_vals)], y=age_vals,
+                        marker_color=age_colors[:len(age_vals)],
+                        text=[f"{int(v):,}" for v in age_vals], textposition="outside"
+                    ))
+                    fig_age.update_layout(height=320, margin=dict(l=0,r=0,t=10,b=0))
+                    st.plotly_chart(fig_age, width="stretch")
+ 
+            with col2:
+                st.markdown("##### 💸 Storage Cost по віку")
+                if "your_price" in df_health.columns:
+                    age_vals_cost = []
+                    for c in age_cols_list:
+                        if c in df_health.columns:
+                            age_vals_cost.append((df_health[c] * df_health["your_price"]).sum())
+                    if age_vals_cost:
+                        fig_cost = go.Figure(go.Pie(
+                            labels=age_labels[:len(age_vals_cost)], values=age_vals_cost,
+                            hole=0.4,
+                            marker=dict(colors=age_colors[:len(age_vals_cost)])
+                        ))
+                        fig_cost.update_layout(height=320)
+                        st.plotly_chart(fig_cost, width="stretch")
+ 
+            # Days of Supply chart
+            st.markdown("##### ⏳ Days of Supply — ризикові SKU")
+            df_dos = df_health[(df_health["days_of_supply"] > 0) & (df_health["days_of_supply"] < 60)]
+            if not df_dos.empty:
+                df_dos_sorted = df_dos.nsmallest(20, "days_of_supply")
+                colors_dos = ["#F44336" if v < 14 else "#FFC107" if v < 30 else "#4CAF50"
+                              for v in df_dos_sorted["days_of_supply"]]
+                fig_dos = go.Figure(go.Bar(
+                    x=df_dos_sorted["days_of_supply"], y=df_dos_sorted["sku"], orientation="h",
+                    marker_color=colors_dos,
+                    text=[f"{int(v)}д" for v in df_dos_sorted["days_of_supply"]], textposition="outside"
+                ))
+                fig_dos.add_vline(x=14, line_dash="dash", line_color="#F44336", annotation_text="14д ⚠️")
+                fig_dos.add_vline(x=30, line_dash="dash", line_color="#FFC107", annotation_text="30д")
+                fig_dos.update_layout(height=max(300, len(df_dos_sorted)*35),
+                                      yaxis={"categoryorder":"total ascending"},
+                                      margin=dict(l=0,r=80,t=10,b=0))
+                st.plotly_chart(fig_dos, width="stretch")
+            else:
+                st.success("✅ Всі SKU мають 60+ днів запасу")
+ 
+            # Excess & Removal рекомендації
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("##### ⚠️ Топ SKU з Excess Inventory")
+                df_exc = df_health[df_health["estimated_excess_qty"] > 0].nlargest(15, "estimated_excess_qty")
+                if not df_exc.empty:
+                    fig_exc = go.Figure(go.Bar(
+                        x=df_exc["estimated_excess_qty"], y=df_exc["sku"], orientation="h",
+                        marker_color="#FF9800",
+                        text=[f"{int(v):,}" for v in df_exc["estimated_excess_qty"]], textposition="outside"
+                    ))
+                    fig_exc.update_layout(height=max(300,len(df_exc)*35),
+                                          yaxis={"categoryorder":"total ascending"},
+                                          margin=dict(l=0,r=60,t=10,b=0))
+                    st.plotly_chart(fig_exc, width="stretch")
+                else:
+                    st.success("✅ Немає excess inventory")
+ 
+            with col2:
+                st.markdown("##### 🗑 Рекомендовано до видалення")
+                df_rem_rec = df_health[df_health["recommended_removal"] > 0].nlargest(15, "recommended_removal")
+                if not df_rem_rec.empty:
+                    fig_rem = go.Figure(go.Bar(
+                        x=df_rem_rec["recommended_removal"], y=df_rem_rec["sku"], orientation="h",
+                        marker_color="#F44336",
+                        text=[f"{int(v):,}" for v in df_rem_rec["recommended_removal"]], textposition="outside"
+                    ))
+                    fig_rem.update_layout(height=max(300,len(df_rem_rec)*35),
+                                          yaxis={"categoryorder":"total ascending"},
+                                          margin=dict(l=0,r=60,t=10,b=0))
+                    st.plotly_chart(fig_rem, width="stretch")
+                else:
+                    st.success("✅ Amazon не рекомендує видалення")
+ 
+            # Velocity
+            st.markdown("##### 🚀 Velocity (units shipped 30д vs 90д)")
+            df_vel = df_health[(df_health["units_shipped_t30"] > 0) | (df_health["units_shipped_t90"] > 0)]
+            if not df_vel.empty:
+                df_vel_top = df_vel.nlargest(15, "units_shipped_t30")
+                fig_vel = go.Figure()
+                fig_vel.add_trace(go.Bar(name="30д", x=df_vel_top["sku"], y=df_vel_top["units_shipped_t30"], marker_color="#4CAF50"))
+                fig_vel.add_trace(go.Bar(name="90д", x=df_vel_top["sku"], y=df_vel_top["units_shipped_t90"], marker_color="#5B9BD5", opacity=0.6))
+                fig_vel.update_layout(barmode="group", height=350, xaxis_tickangle=-30)
+                st.plotly_chart(fig_vel, width="stretch")
+ 
+            # Таблиця
+            st.markdown("##### 📋 Повна таблиця Inventory Health")
+            show_cols = [c for c in ["sku","asin","product_name","available","days_of_supply",
+                         "inv_age_0_90","inv_age_91_180","inv_age_181_270","inv_age_271_365","inv_age_365_plus",
+                         "units_shipped_t30","units_shipped_t90","your_price","sales_rank",
+                         "estimated_excess_qty","recommended_removal","estimated_storage_cost","alert"]
+                         if c in df_health.columns]
+            st.dataframe(df_health[show_cols].sort_values("days_of_supply").head(200),
+                         width="stretch", hide_index=True, height=400)
+            st.download_button("📥 CSV Inventory Health",
+                df_health.to_csv(index=False).encode(), "inventory_health.csv", "text/csv")
+ 
+    # ── TAB 5: Adjustments ──
+    with tabs[5]:
+        st.markdown("#### 📊 Inventory Adjustments (Lost / Damaged / Found)")
+        try:
+            with engine.connect() as conn:
+                df_adj = pd.read_sql(text("SELECT * FROM fba_adjustments ORDER BY adjusted_date DESC"), conn)
+        except Exception as e:
+            st.error(f"fba_adjustments: {e}")
+            df_adj = pd.DataFrame()
+ 
+        if df_adj.empty:
+            st.info("⏳ Запусти `python 13_fba_operations_loader.py reports` щоб завантажити")
+        else:
+            df_adj["quantity"] = pd.to_numeric(df_adj["quantity"].replace("", None), errors="coerce").fillna(0)
+            df_adj["adjusted_date"] = pd.to_datetime(df_adj["adjusted_date"], errors="coerce")
+ 
+            total_adj = len(df_adj)
+            lost      = df_adj[df_adj["reason"].astype(str).str.contains("Lost|Damaged", case=False, na=False)]
+            found     = df_adj[df_adj["reason"].astype(str).str.contains("Found", case=False, na=False)]
+ 
+            c1,c2,c3 = st.columns(3)
+            c1.metric("📊 Всього корекцій", f"{total_adj:,}")
+            c2.metric("❌ Lost/Damaged", f"{len(lost):,}")
+            c3.metric("✅ Found", f"{len(found):,}")
+ 
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("##### 📊 По причинах")
+                if "reason" in df_adj.columns:
+                    rc = df_adj["reason"].value_counts().head(10).reset_index()
+                    rc.columns = ["Reason", "Count"]
+                    fig_r = px.pie(rc, values="Count", names="Reason", hole=0.4, height=320)
+                    st.plotly_chart(fig_r, width="stretch")
+ 
+            with col2:
+                st.markdown("##### 📅 Тренд корекцій")
+                if df_adj["adjusted_date"].notna().any():
+                    daily_adj = df_adj.groupby(df_adj["adjusted_date"].dt.date).size().reset_index()
+                    daily_adj.columns = ["Date", "Count"]
+                    fig_d = px.bar(daily_adj, x="Date", y="Count", color_discrete_sequence=["#FF6B6B"], height=320)
+                    st.plotly_chart(fig_d, width="stretch")
+ 
+            st.markdown("##### 📋 Деталі")
+            show_a = [c for c in ["adjusted_date","sku","asin","quantity","reason",
+                       "disposition","fulfillment_center","product_name"]
+                       if c in df_adj.columns]
+            st.dataframe(df_adj[show_a].head(500), width="stretch", hide_index=True, height=400)
+            st.download_button("📥 CSV Adjustments",
+                df_adj.to_csv(index=False).encode(), "adjustments.csv", "text/csv")
+                
     # ── AI ──
     ctx = f"""FBA Operations: {total_shipments} shipments | Active: {active_ship} | Received: {recv_rate:.1f}% | Removals: {total_removals} ({removal_units} units) | NonCompliance: {nc_count}"""
     show_ai_chat(ctx, [
