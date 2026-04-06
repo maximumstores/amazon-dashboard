@@ -4148,7 +4148,6 @@ def show_pricing():
         "Які ASIN варто знизити ціну для виграшу Buy Box?",
     ], "pricing")
 
-
 def show_fba_operations():
     st.markdown("### 📦 FBA Operations")
     engine = get_engine()
@@ -4240,7 +4239,7 @@ def show_fba_operations():
     # ── Таби ──
     tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance", "🏥 Inventory Health", "📊 Adjustments"])
 
-    # ── TAB 1: Shipments ──
+    # ── TAB 0: Shipments ──
     with tabs[0]:
         col1, col2 = st.columns(2)
         with col1:
@@ -4268,17 +4267,16 @@ def show_fba_operations():
         show_s = [c for c in ["shipment_id","shipment_name","shipment_status","destination_fc",
                                "label_prep_type","confirmed_need_by_date","marketplace","created_at"]
                   if c in df_ship.columns]
-        
-        # sidebar filter
+
         statuses = ["Всі"] + sorted(df_ship["shipment_status"].dropna().unique().tolist()) if "shipment_status" in df_ship.columns else ["Всі"]
         sel_s = st.selectbox("Фільтр статус:", statuses, key="ship_status")
         df_s = df_ship[df_ship["shipment_status"] == sel_s] if sel_s != "Всі" else df_ship
-        
+
         st.dataframe(df_s[show_s].head(200), width="stretch", hide_index=True, height=400)
         st.caption(f"{len(df_s)} відвантажень")
         st.download_button("📥 CSV Shipments", df_ship.to_csv(index=False).encode(), "shipments.csv", "text/csv")
 
-    # ── TAB 2: Items ──
+    # ── TAB 1: Items ──
     with tabs[1]:
         col1, col2 = st.columns(2)
         with col1:
@@ -4297,7 +4295,6 @@ def show_fba_operations():
         with col2:
             st.markdown("#### 📊 Shipped vs Received")
             if "quantity_shipped" in df_items.columns and "quantity_received" in df_items.columns:
-                # per shipment
                 ship_agg = df_items.groupby("shipment_id").agg(
                     shipped=("quantity_shipped","sum"),
                     received=("quantity_received","sum")
@@ -4314,7 +4311,7 @@ def show_fba_operations():
         st.dataframe(df_items[show_i].head(500), width="stretch", hide_index=True, height=400)
         st.download_button("📥 CSV Items", df_items.to_csv(index=False).encode(), "shipment_items.csv", "text/csv")
 
-    # ── TAB 3: Removals ──
+    # ── TAB 2: Removals ──
     with tabs[2]:
         col1, col2 = st.columns(2)
         with col1:
@@ -4347,7 +4344,7 @@ def show_fba_operations():
         st.caption(f"{len(df_rem)} removal orders · {removal_units:,} одиниць")
         st.download_button("📥 CSV Removals", df_rem.to_csv(index=False).encode(), "removals.csv", "text/csv")
 
-    # ── TAB 4: Non-Compliance ──
+    # ── TAB 3: Non-Compliance ──
     with tabs[3]:
         if df_nc.empty:
             st.success("✅ Проблем з Non-Compliance немає!")
@@ -4359,155 +4356,262 @@ def show_fba_operations():
             st.dataframe(df_nc[show_nc], width="stretch", hide_index=True)
             st.download_button("📥 CSV Non-Compliance", df_nc.to_csv(index=False).encode(), "noncompliance.csv", "text/csv")
 
-    # ── TAB 4: Inventory Health ──
+    # ── TAB 4: Inventory Health (з fba_inventory + orders) ──
     with tabs[4]:
-        st.markdown("#### 🏥 Inventory Health — Aging, Days of Supply, Storage Costs")
+        st.markdown("#### 🏥 Stock Overview — Залишки + Velocity")
+
         try:
             with engine.connect() as conn:
-                df_health = pd.read_sql(text("SELECT * FROM fba_inventory_health ORDER BY snapshot_date DESC"), conn)
+                df_inv = pd.read_sql(text('SELECT * FROM fba_inventory'), conn)
+                df_ord = pd.read_sql(text("""
+                    SELECT sku,
+                        SUBSTRING(purchase_date,1,10)::date AS day,
+                        COUNT(DISTINCT amazon_order_id) AS orders,
+                        SUM(CASE WHEN quantity ~ '^[0-9]+$' THEN quantity::numeric ELSE 1 END) AS units,
+                        SUM(CASE WHEN item_price ~ '^[0-9.]+$' THEN item_price::numeric ELSE 0 END) AS revenue
+                    FROM orders
+                    WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '90 days'
+                      AND purchase_date IS NOT NULL AND purchase_date != ''
+                    GROUP BY 1, 2
+                    ORDER BY 2 DESC
+                """), conn)
+                try:
+                    df_lst = pd.read_sql(text(
+                        "SELECT seller_sku AS sku, status, fulfillment_channel FROM listings_all"
+                    ), conn)
+                except:
+                    df_lst = pd.DataFrame()
         except Exception as e:
-            st.error(f"fba_inventory_health: {e}")
-            df_health = pd.DataFrame()
- 
-        if df_health.empty:
-            st.info("⏳ Запусти `python 13_fba_operations_loader.py health` щоб завантажити дані")
+            st.error(f"Помилка: {e}")
+            df_inv = pd.DataFrame()
+            df_ord = pd.DataFrame()
+            df_lst = pd.DataFrame()
+
+        if df_inv.empty:
+            st.warning("Немає даних inventory")
         else:
-            # Нормалізуємо числа
-            num_cols = ["available","inv_age_0_90","inv_age_91_180","inv_age_181_270",
-                        "inv_age_271_365","inv_age_365_plus","units_shipped_t7",
-                        "units_shipped_t30","units_shipped_t60","units_shipped_t90",
-                        "your_price","sales_rank","days_of_supply",
-                        "estimated_excess_qty","recommended_removal","estimated_storage_cost"]
-            for c in num_cols:
-                if c in df_health.columns:
-                    df_health[c] = pd.to_numeric(df_health[c].replace("", None), errors="coerce").fillna(0)
- 
-            # KPI
-            total_sku     = df_health["sku"].nunique()
-            total_avail   = int(df_health["available"].sum())
-            total_excess  = int(df_health["estimated_excess_qty"].sum())
-            total_removal = int(df_health["recommended_removal"].sum())
-            total_storage = df_health["estimated_storage_cost"].sum()
- 
-            c1,c2,c3,c4,c5 = st.columns(5)
-            c1.metric("📦 SKU", f"{total_sku:,}")
-            c2.metric("✅ Available", f"{total_avail:,}")
-            c3.metric("⚠️ Excess", f"{total_excess:,}")
-            c4.metric("🗑 Рек. Removal", f"{total_removal:,}")
-            c5.metric("💸 Storage Cost", f"${total_storage:,.0f}")
- 
-            # Aging chart
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("##### 📦 Aging — одиниці по віку")
-                age_labels = ["0-90д","91-180д","181-270д","271-365д","365+д"]
-                age_cols_list = ["inv_age_0_90","inv_age_91_180","inv_age_181_270",
-                                 "inv_age_271_365","inv_age_365_plus"]
-                age_vals = [df_health[c].sum() for c in age_cols_list if c in df_health.columns]
-                age_colors = ["#4CAF50","#FFC107","#FF9800","#F44336","#B71C1C"]
-                if age_vals:
-                    fig_age = go.Figure(go.Bar(
-                        x=age_labels[:len(age_vals)], y=age_vals,
-                        marker_color=age_colors[:len(age_vals)],
-                        text=[f"{int(v):,}" for v in age_vals], textposition="outside"
-                    ))
-                    fig_age.update_layout(height=320, margin=dict(l=0,r=0,t=10,b=0))
-                    st.plotly_chart(fig_age, width="stretch")
- 
-            with col2:
-                st.markdown("##### 💸 Storage Cost по віку")
-                if "your_price" in df_health.columns:
-                    age_vals_cost = []
-                    for c in age_cols_list:
-                        if c in df_health.columns:
-                            age_vals_cost.append((df_health[c] * df_health["your_price"]).sum())
-                    if age_vals_cost:
-                        fig_cost = go.Figure(go.Pie(
-                            labels=age_labels[:len(age_vals_cost)], values=age_vals_cost,
-                            hole=0.4,
-                            marker=dict(colors=age_colors[:len(age_vals_cost)])
-                        ))
-                        fig_cost.update_layout(height=320)
-                        st.plotly_chart(fig_cost, width="stretch")
- 
-            # Days of Supply chart
-            st.markdown("##### ⏳ Days of Supply — ризикові SKU")
-            df_dos = df_health[(df_health["days_of_supply"] > 0) & (df_health["days_of_supply"] < 60)]
-            if not df_dos.empty:
-                df_dos_sorted = df_dos.nsmallest(20, "days_of_supply")
-                colors_dos = ["#F44336" if v < 14 else "#FFC107" if v < 30 else "#4CAF50"
-                              for v in df_dos_sorted["days_of_supply"]]
-                fig_dos = go.Figure(go.Bar(
-                    x=df_dos_sorted["days_of_supply"], y=df_dos_sorted["sku"], orientation="h",
-                    marker_color=colors_dos,
-                    text=[f"{int(v)}д" for v in df_dos_sorted["days_of_supply"]], textposition="outside"
-                ))
-                fig_dos.add_vline(x=14, line_dash="dash", line_color="#F44336", annotation_text="14д ⚠️")
-                fig_dos.add_vline(x=30, line_dash="dash", line_color="#FFC107", annotation_text="30д")
-                fig_dos.update_layout(height=max(300, len(df_dos_sorted)*35),
-                                      yaxis={"categoryorder":"total ascending"},
-                                      margin=dict(l=0,r=80,t=10,b=0))
-                st.plotly_chart(fig_dos, width="stretch")
+            for c in ["Available","Price","Velocity","Inbound","Reserved"]:
+                if c in df_inv.columns:
+                    df_inv[c] = pd.to_numeric(df_inv[c].replace("", None), errors="coerce").fillna(0)
+            if "SKU" not in df_inv.columns:
+                for c in df_inv.columns:
+                    if c.lower() in ("sku","seller_sku"):
+                        df_inv.rename(columns={c: "SKU"}, inplace=True)
+                        break
+
+            if not df_lst.empty and "SKU" in df_inv.columns:
+                df_lst["status"] = df_lst["status"].astype(str).str.lower()
+                status_map = df_lst.groupby("sku")["status"].first().to_dict()
+                df_inv["listing_status"] = df_inv["SKU"].map(status_map).fillna("unknown")
             else:
-                st.success("✅ Всі SKU мають 60+ днів запасу")
- 
-            # Excess & Removal рекомендації
+                df_inv["listing_status"] = "unknown"
+
+            if not df_ord.empty and "SKU" in df_inv.columns:
+                last_30 = df_ord[df_ord["day"] >= (pd.Timestamp.now().normalize() - pd.Timedelta(days=30))]
+                sold_30 = last_30.groupby("sku")["units"].sum().to_dict()
+                rev_30  = last_30.groupby("sku")["revenue"].sum().to_dict()
+                df_inv["sold_30d"]      = df_inv["SKU"].map(sold_30).fillna(0).astype(int)
+                df_inv["revenue_30d"]   = df_inv["SKU"].map(rev_30).fillna(0)
+                df_inv["velocity_real"] = (df_inv["sold_30d"] / 30).round(2)
+                df_inv["dos_real"]      = (df_inv["Available"] / df_inv["velocity_real"].replace(0, float("nan"))).round(0).fillna(0)
+            else:
+                df_inv["sold_30d"] = 0
+                df_inv["revenue_30d"] = 0
+                df_inv["velocity_real"] = 0
+                df_inv["dos_real"] = 0
+
+            df_inv["stock_value"] = df_inv["Available"] * df_inv["Price"]
+
+            # KPI
+            active_cnt   = int((df_inv["listing_status"] == "active").sum())
+            inactive_cnt = int((df_inv["listing_status"] != "active").sum())
+            total_avail  = int(df_inv["Available"].sum())
+            total_value  = df_inv["stock_value"].sum()
+            total_sold   = int(df_inv["sold_30d"].sum())
+            oos_cnt      = int((df_inv["Available"] == 0).sum())
+            low14_cnt    = int(((df_inv["dos_real"] > 0) & (df_inv["dos_real"] < 14)).sum())
+
+            c1,c2,c3,c4,c5,c6 = st.columns(6)
+            c1.metric("✅ Active", f"{active_cnt}")
+            c2.metric("❌ Inactive", f"{inactive_cnt}")
+            c3.metric("📦 Available", f"{total_avail:,}")
+            c4.metric("💰 Stock Value", f"${total_value:,.0f}")
+            c5.metric("🛒 Sold 30д", f"{total_sold:,}")
+            c6.metric("🔴 OOS", f"{oos_cnt}")
+
+            # Інсайти
+            _ic2 = st.columns(3)
+            if low14_cnt > 0:
+                with _ic2[0]: insight_card("🔴", "Low Stock",
+                    f"<b>{low14_cnt} SKU</b> закінчаться за <b><14 днів</b>", "#2b0d0d")
+            else:
+                with _ic2[0]: insight_card("🟢", "Запаси",
+                    "Всі активні SKU мають 14+ днів запасу", "#0d2b1e")
+            active_pct = active_cnt / (active_cnt + inactive_cnt) * 100 if (active_cnt + inactive_cnt) > 0 else 0
+            with _ic2[1]: insight_card("📊", "Active Rate",
+                f"<b>{active_pct:.0f}%</b> листингів активні ({active_cnt}/{active_cnt+inactive_cnt})",
+                "#0d2b1e" if active_pct >= 80 else "#2b2400")
+            turnover = total_avail / (total_sold / 30) if total_sold > 0 else 999
+            with _ic2[2]: insight_card("🔄", "Оборотність",
+                f"Запас на <b>{turnover:.0f} днів</b> при поточному темпі продажів",
+                "#0d2b1e" if turnover < 90 else "#2b2400" if turnover < 180 else "#2b0d0d")
+
+            st.markdown("---")
+
+            # Stock Table
+            st.markdown("##### 📦 Таблиця залишків (Active / Inactive)")
+            status_filter = st.selectbox("Фільтр:", ["Всі", "Active", "Inactive", "OOS", "Low Stock <14д"], key="health_filter_ops")
+            df_show_h = df_inv.copy()
+            if status_filter == "Active":
+                df_show_h = df_show_h[df_show_h["listing_status"] == "active"]
+            elif status_filter == "Inactive":
+                df_show_h = df_show_h[df_show_h["listing_status"] != "active"]
+            elif status_filter == "OOS":
+                df_show_h = df_show_h[df_show_h["Available"] == 0]
+            elif status_filter == "Low Stock <14д":
+                df_show_h = df_show_h[(df_show_h["dos_real"] > 0) & (df_show_h["dos_real"] < 14)]
+
+            show_cols_h = [c for c in ["SKU","ASIN","Available","Price","stock_value",
+                         "sold_30d","revenue_30d","velocity_real","dos_real","listing_status"]
+                         if c in df_show_h.columns]
+            rename_h = {"stock_value":"💰 Value","sold_30d":"🛒 Sold 30д",
+                      "revenue_30d":"💰 Rev 30д","velocity_real":"⚡ Vel/день",
+                      "dos_real":"📅 DoS","listing_status":"Status"}
+
+            df_tbl_h = df_show_h[show_cols_h].rename(columns=rename_h).sort_values("📅 DoS").head(300)
+            fmt_h = {}
+            if "Price" in df_tbl_h.columns: fmt_h["Price"] = "${:.2f}"
+            if "💰 Value" in df_tbl_h.columns: fmt_h["💰 Value"] = "${:,.0f}"
+            if "💰 Rev 30д" in df_tbl_h.columns: fmt_h["💰 Rev 30д"] = "${:,.0f}"
+            if "📅 DoS" in df_tbl_h.columns: fmt_h["📅 DoS"] = "{:.0f}"
+
+            def color_status_h(val):
+                if val == "active": return "color:#4CAF50"
+                return "color:#F44336"
+
+            styled_h = df_tbl_h.style.format(fmt_h)
+            if "Status" in df_tbl_h.columns:
+                styled_h = styled_h.applymap(color_status_h, subset=["Status"])
+            st.dataframe(styled_h, width="stretch", hide_index=True, height=400)
+            st.caption(f"{len(df_tbl_h)} з {len(df_show_h)} SKU")
+
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown("##### ⚠️ Топ SKU з Excess Inventory")
-                df_exc = df_health[df_health["estimated_excess_qty"] > 0].nlargest(15, "estimated_excess_qty")
-                if not df_exc.empty:
-                    fig_exc = go.Figure(go.Bar(
-                        x=df_exc["estimated_excess_qty"], y=df_exc["sku"], orientation="h",
-                        marker_color="#FF9800",
-                        text=[f"{int(v):,}" for v in df_exc["estimated_excess_qty"]], textposition="outside"
-                    ))
-                    fig_exc.update_layout(height=max(300,len(df_exc)*35),
-                                          yaxis={"categoryorder":"total ascending"},
-                                          margin=dict(l=0,r=60,t=10,b=0))
-                    st.plotly_chart(fig_exc, width="stretch")
-                else:
-                    st.success("✅ Немає excess inventory")
- 
+                st.markdown("##### 📊 Active vs Inactive")
+                status_cnt = df_inv["listing_status"].value_counts().reset_index()
+                status_cnt.columns = ["Status", "Count"]
+                fig_s = px.pie(status_cnt, values="Count", names="Status", hole=0.4,
+                               color_discrete_map={"active":"#4CAF50","inactive":"#F44336","unknown":"#888"},
+                               height=300)
+                st.plotly_chart(fig_s, width="stretch")
+
             with col2:
-                st.markdown("##### 🗑 Рекомендовано до видалення")
-                df_rem_rec = df_health[df_health["recommended_removal"] > 0].nlargest(15, "recommended_removal")
-                if not df_rem_rec.empty:
-                    fig_rem = go.Figure(go.Bar(
-                        x=df_rem_rec["recommended_removal"], y=df_rem_rec["sku"], orientation="h",
-                        marker_color="#F44336",
-                        text=[f"{int(v):,}" for v in df_rem_rec["recommended_removal"]], textposition="outside"
+                st.markdown("##### 🏆 Топ 10 SKU по вартості")
+                top_val = df_inv[df_inv["stock_value"] > 0].nlargest(10, "stock_value")
+                if not top_val.empty:
+                    fig_v = go.Figure(go.Bar(
+                        x=top_val["stock_value"], y=top_val["SKU"], orientation="h",
+                        marker_color="#5B9BD5",
+                        text=[f"${v:,.0f}" for v in top_val["stock_value"]], textposition="outside"
                     ))
-                    fig_rem.update_layout(height=max(300,len(df_rem_rec)*35),
-                                          yaxis={"categoryorder":"total ascending"},
-                                          margin=dict(l=0,r=60,t=10,b=0))
-                    st.plotly_chart(fig_rem, width="stretch")
+                    fig_v.update_layout(height=300, yaxis={"categoryorder":"total ascending"},
+                                        margin=dict(l=0,r=80,t=10,b=0))
+                    st.plotly_chart(fig_v, width="stretch")
+
+            st.markdown("---")
+
+            # Sales Velocity
+            st.markdown("##### 📈 Продажі по днях / тижнях")
+            if not df_ord.empty:
+                gran = st.radio("Гранулярність:", ["День", "Тиждень"], horizontal=True, key="vel_gran_ops")
+                df_vel = df_ord.copy()
+                df_vel["day"] = pd.to_datetime(df_vel["day"])
+
+                if gran == "Тиждень":
+                    df_agg = df_vel.resample("W", on="day").agg(
+                        {"orders":"sum","units":"sum","revenue":"sum"}).reset_index()
                 else:
-                    st.success("✅ Amazon не рекомендує видалення")
- 
-            # Velocity
-            st.markdown("##### 🚀 Velocity (units shipped 30д vs 90д)")
-            df_vel = df_health[(df_health["units_shipped_t30"] > 0) | (df_health["units_shipped_t90"] > 0)]
-            if not df_vel.empty:
-                df_vel_top = df_vel.nlargest(15, "units_shipped_t30")
-                fig_vel = go.Figure()
-                fig_vel.add_trace(go.Bar(name="30д", x=df_vel_top["sku"], y=df_vel_top["units_shipped_t30"], marker_color="#4CAF50"))
-                fig_vel.add_trace(go.Bar(name="90д", x=df_vel_top["sku"], y=df_vel_top["units_shipped_t90"], marker_color="#5B9BD5", opacity=0.6))
-                fig_vel.update_layout(barmode="group", height=350, xaxis_tickangle=-30)
-                st.plotly_chart(fig_vel, width="stretch")
- 
-            # Таблиця
-            st.markdown("##### 📋 Повна таблиця Inventory Health")
-            show_cols = [c for c in ["sku","asin","product_name","available","days_of_supply",
-                         "inv_age_0_90","inv_age_91_180","inv_age_181_270","inv_age_271_365","inv_age_365_plus",
-                         "units_shipped_t30","units_shipped_t90","your_price","sales_rank",
-                         "estimated_excess_qty","recommended_removal","estimated_storage_cost","alert"]
-                         if c in df_health.columns]
-            st.dataframe(df_health[show_cols].sort_values("days_of_supply").head(200),
-                         width="stretch", hide_index=True, height=400)
-            st.download_button("📥 CSV Inventory Health",
-                df_health.to_csv(index=False).encode(), "inventory_health.csv", "text/csv")
- 
+                    df_agg = df_vel.groupby("day").agg(
+                        {"orders":"sum","units":"sum","revenue":"sum"}).reset_index()
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"###### 🛒 Units sold ({gran})")
+                    fig_u = go.Figure()
+                    fig_u.add_trace(go.Bar(x=df_agg["day"], y=df_agg["units"],
+                                           marker_color="#4CAF50", opacity=0.85,
+                                           text=df_agg["units"].astype(int), textposition="outside"))
+                    if gran == "День" and len(df_agg) >= 7:
+                        ma = df_agg["units"].rolling(7, min_periods=1).mean()
+                        fig_u.add_trace(go.Scatter(x=df_agg["day"], y=ma,
+                                                   mode="lines", name="MA-7",
+                                                   line=dict(color="#FFC107", width=2, dash="dot")))
+                    fig_u.update_layout(height=320, margin=dict(l=0,r=0,t=10,b=0), showlegend=True)
+                    st.plotly_chart(fig_u, width="stretch")
+
+                with col2:
+                    st.markdown(f"###### 💰 Revenue ({gran})")
+                    fig_r = go.Figure()
+                    fig_r.add_trace(go.Bar(x=df_agg["day"], y=df_agg["revenue"],
+                                           marker_color="#5B9BD5", opacity=0.85,
+                                           text=[f"${v:,.0f}" for v in df_agg["revenue"]], textposition="outside"))
+                    if gran == "День" and len(df_agg) >= 7:
+                        ma_r = df_agg["revenue"].rolling(7, min_periods=1).mean()
+                        fig_r.add_trace(go.Scatter(x=df_agg["day"], y=ma_r,
+                                                   mode="lines", name="MA-7",
+                                                   line=dict(color="#FFC107", width=2, dash="dot")))
+                    fig_r.update_layout(height=320, margin=dict(l=0,r=0,t=10,b=0),
+                                        yaxis=dict(tickprefix="$"), showlegend=True)
+                    st.plotly_chart(fig_r, width="stretch")
+
+                # Топ SKU velocity
+                st.markdown("##### 🏆 Топ 15 SKU по продажах (30д)")
+                sku_vel = df_vel[df_vel["day"] >= (pd.Timestamp.now().normalize() - pd.Timedelta(days=30))]
+                sku_agg = sku_vel.groupby("sku").agg(
+                    units=("units","sum"), revenue=("revenue","sum"), orders=("orders","sum")
+                ).reset_index().nlargest(15, "units")
+
+                if not sku_agg.empty:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fig_su = go.Figure(go.Bar(
+                            x=sku_agg["units"], y=sku_agg["sku"], orientation="h",
+                            marker_color="#4CAF50",
+                            text=[f"{int(v):,}" for v in sku_agg["units"]], textposition="outside"
+                        ))
+                        fig_su.update_layout(height=max(300, len(sku_agg)*35),
+                                             yaxis={"categoryorder":"total ascending"},
+                                             title="Units sold", margin=dict(l=0,r=60,t=30,b=0))
+                        st.plotly_chart(fig_su, width="stretch")
+
+                    with col2:
+                        fig_sr = go.Figure(go.Bar(
+                            x=sku_agg["revenue"], y=sku_agg["sku"], orientation="h",
+                            marker_color="#5B9BD5",
+                            text=[f"${v:,.0f}" for v in sku_agg["revenue"]], textposition="outside"
+                        ))
+                        fig_sr.update_layout(height=max(300, len(sku_agg)*35),
+                                             yaxis={"categoryorder":"total ascending"},
+                                             title="Revenue $", margin=dict(l=0,r=60,t=30,b=0))
+                        st.plotly_chart(fig_sr, width="stretch")
+
+                # Velocity таблиця
+                st.markdown("##### 📋 Velocity таблиця (всі SKU з продажами)")
+                sku_all = sku_vel.groupby("sku").agg(
+                    units=("units","sum"), revenue=("revenue","sum"), orders=("orders","sum")
+                ).reset_index()
+                sku_all["vel/день"] = (sku_all["units"] / 30).round(2)
+                sku_all = sku_all.sort_values("units", ascending=False)
+                st.dataframe(
+                    sku_all.rename(columns={"sku":"SKU","units":"Units 30д","revenue":"Revenue 30д","orders":"Orders"})
+                        .style.format({"Revenue 30д":"${:,.0f}","vel/день":"{:.2f}"}),
+                    width="stretch", hide_index=True, height=400
+                )
+                st.download_button("📥 CSV Velocity",
+                    sku_all.to_csv(index=False).encode(), "velocity_30d.csv", "text/csv")
+            else:
+                st.warning("Немає даних orders за 90 днів")
+
     # ── TAB 5: Adjustments ──
     with tabs[5]:
         st.markdown("#### 📊 Inventory Adjustments (Lost / Damaged / Found)")
@@ -4515,24 +4619,24 @@ def show_fba_operations():
             with engine.connect() as conn:
                 df_adj = pd.read_sql(text("SELECT * FROM fba_adjustments ORDER BY adjusted_date DESC"), conn)
         except Exception as e:
-            st.error(f"fba_adjustments: {e}")
+            st.info(f"fba_adjustments: таблиця не існує або порожня")
             df_adj = pd.DataFrame()
- 
+
         if df_adj.empty:
-            st.info("⏳ Запусти `python 13_fba_operations_loader.py reports` щоб завантажити")
+            st.info("⏳ Дані adjustments відсутні (Amazon не видає цей звіт для вашого акаунту)")
         else:
             df_adj["quantity"] = pd.to_numeric(df_adj["quantity"].replace("", None), errors="coerce").fillna(0)
             df_adj["adjusted_date"] = pd.to_datetime(df_adj["adjusted_date"], errors="coerce")
- 
+
             total_adj = len(df_adj)
             lost      = df_adj[df_adj["reason"].astype(str).str.contains("Lost|Damaged", case=False, na=False)]
             found     = df_adj[df_adj["reason"].astype(str).str.contains("Found", case=False, na=False)]
- 
+
             c1,c2,c3 = st.columns(3)
             c1.metric("📊 Всього корекцій", f"{total_adj:,}")
             c2.metric("❌ Lost/Damaged", f"{len(lost):,}")
             c3.metric("✅ Found", f"{len(found):,}")
- 
+
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("##### 📊 По причинах")
@@ -4541,7 +4645,7 @@ def show_fba_operations():
                     rc.columns = ["Reason", "Count"]
                     fig_r = px.pie(rc, values="Count", names="Reason", hole=0.4, height=320)
                     st.plotly_chart(fig_r, width="stretch")
- 
+
             with col2:
                 st.markdown("##### 📅 Тренд корекцій")
                 if df_adj["adjusted_date"].notna().any():
@@ -4549,7 +4653,7 @@ def show_fba_operations():
                     daily_adj.columns = ["Date", "Count"]
                     fig_d = px.bar(daily_adj, x="Date", y="Count", color_discrete_sequence=["#FF6B6B"], height=320)
                     st.plotly_chart(fig_d, width="stretch")
- 
+
             st.markdown("##### 📋 Деталі")
             show_a = [c for c in ["adjusted_date","sku","asin","quantity","reason",
                        "disposition","fulfillment_center","product_name"]
@@ -4557,7 +4661,7 @@ def show_fba_operations():
             st.dataframe(df_adj[show_a].head(500), width="stretch", hide_index=True, height=400)
             st.download_button("📥 CSV Adjustments",
                 df_adj.to_csv(index=False).encode(), "adjustments.csv", "text/csv")
-                
+
     # ── AI ──
     ctx = f"""FBA Operations: {total_shipments} shipments | Active: {active_ship} | Received: {recv_rate:.1f}% | Removals: {total_removals} ({removal_units} units) | NonCompliance: {nc_count}"""
     show_ai_chat(ctx, [
