@@ -4616,55 +4616,6 @@ def show_fba_operations():
             else:
                 st.warning("Немає даних orders за 90 днів")
 
-    # ── TAB 5: Adjustments ──
-    with tabs[5]:
-        st.markdown("#### 📊 Inventory Adjustments (Lost / Damaged / Found)")
-        try:
-            with engine.connect() as conn:
-                df_adj = pd.read_sql(text("SELECT * FROM fba_adjustments ORDER BY adjusted_date DESC"), conn)
-        except Exception as e:
-            st.info(f"fba_adjustments: таблиця не існує або порожня")
-            df_adj = pd.DataFrame()
-
-        if df_adj.empty:
-            st.info("⏳ Дані adjustments відсутні (Amazon не видає цей звіт для вашого акаунту)")
-        else:
-            df_adj["quantity"] = pd.to_numeric(df_adj["quantity"].replace("", None), errors="coerce").fillna(0)
-            df_adj["adjusted_date"] = pd.to_datetime(df_adj["adjusted_date"], errors="coerce")
-
-            total_adj = len(df_adj)
-            lost      = df_adj[df_adj["reason"].astype(str).str.contains("Lost|Damaged", case=False, na=False)]
-            found     = df_adj[df_adj["reason"].astype(str).str.contains("Found", case=False, na=False)]
-
-            c1,c2,c3 = st.columns(3)
-            c1.metric("📊 Всього корекцій", f"{total_adj:,}")
-            c2.metric("❌ Lost/Damaged", f"{len(lost):,}")
-            c3.metric("✅ Found", f"{len(found):,}")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("##### 📊 По причинах")
-                if "reason" in df_adj.columns:
-                    rc = df_adj["reason"].value_counts().head(10).reset_index()
-                    rc.columns = ["Reason", "Count"]
-                    fig_r = px.pie(rc, values="Count", names="Reason", hole=0.4, height=320)
-                    st.plotly_chart(fig_r, width="stretch")
-
-            with col2:
-                st.markdown("##### 📅 Тренд корекцій")
-                if df_adj["adjusted_date"].notna().any():
-                    daily_adj = df_adj.groupby(df_adj["adjusted_date"].dt.date).size().reset_index()
-                    daily_adj.columns = ["Date", "Count"]
-                    fig_d = px.bar(daily_adj, x="Date", y="Count", color_discrete_sequence=["#FF6B6B"], height=320)
-                    st.plotly_chart(fig_d, width="stretch")
-
-            st.markdown("##### 📋 Деталі")
-            show_a = [c for c in ["adjusted_date","sku","asin","quantity","reason",
-                       "disposition","fulfillment_center","product_name"]
-                       if c in df_adj.columns]
-            st.dataframe(df_adj[show_a].head(500), width="stretch", hide_index=True, height=400)
-            st.download_button("📥 CSV Adjustments",
-                df_adj.to_csv(index=False).encode(), "adjustments.csv", "text/csv")
 
     # ── AI ──
     ctx = f"""FBA Operations: {total_shipments} shipments | Active: {active_ship} | Received: {recv_rate:.1f}% | Removals: {total_removals} ({removal_units} units) | NonCompliance: {nc_count}"""
