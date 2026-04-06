@@ -4147,7 +4147,6 @@ def show_pricing():
         "Де наша ціна вища за competitive price?",
         "Які ASIN варто знизити ціну для виграшу Buy Box?",
     ], "pricing")
-
 def show_fba_operations():
     st.markdown("### 📦 FBA Operations")
     engine = get_engine()
@@ -4421,6 +4420,10 @@ def show_fba_operations():
                 df_inv["dos_real"] = 0
 
             df_inv["stock_value"] = df_inv["Available"] * df_inv["Price"]
+
+            # Конвертуємо day → Timestamp (PostgreSQL повертає date object)
+            if not df_ord.empty and "day" in df_ord.columns:
+                df_ord["day"] = pd.to_datetime(df_ord["day"])
 
             # KPI
             active_cnt   = int((df_inv["listing_status"] == "active").sum())
