@@ -4406,6 +4406,10 @@ def show_fba_operations():
             else:
                 df_inv["listing_status"] = "unknown"
 
+            # Конвертуємо day → Timestamp (PostgreSQL повертає date object)
+            if not df_ord.empty and "day" in df_ord.columns:
+                df_ord["day"] = pd.to_datetime(df_ord["day"])
+
             if not df_ord.empty and "SKU" in df_inv.columns:
                 last_30 = df_ord[df_ord["day"] >= (pd.Timestamp.now().normalize() - pd.Timedelta(days=30))]
                 sold_30 = last_30.groupby("sku")["units"].sum().to_dict()
@@ -4421,10 +4425,6 @@ def show_fba_operations():
                 df_inv["dos_real"] = 0
 
             df_inv["stock_value"] = df_inv["Available"] * df_inv["Price"]
-
-            # Конвертуємо day → Timestamp (PostgreSQL повертає date object)
-            if not df_ord.empty and "day" in df_ord.columns:
-                df_ord["day"] = pd.to_datetime(df_ord["day"])
 
             # KPI
             active_cnt   = int((df_inv["listing_status"] == "active").sum())
