@@ -3852,7 +3852,7 @@ def show_listings():
     if 'main_image_url' in df_f.columns: show_cols.append('main_image_url')
 
     show_cols = [c for c in show_cols if c in df_f.columns]
-    df_show = df_f[show_cols].sort_values('price', ascending=False).head(500).reset_index(drop=True)
+    df_show = df_f[show_cols].sort_values('price', ascending=False).reset_index(drop=True)
 
     col_cfg = {
         'seller_sku':       st.column_config.TextColumn("SKU"),
