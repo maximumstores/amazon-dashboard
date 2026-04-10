@@ -3664,7 +3664,6 @@ def _scr_flush():
                     st.session_state.scr_cycles  = msg.get("total", 0)
             except: break
 
-
 def show_listings():
     st.markdown("### 📝 Листинги (Listings)")
     engine = get_engine()
@@ -3678,25 +3677,21 @@ def show_listings():
     # ── Завантаження ──
     try:
         with engine.connect() as conn:
-            df_all  = pd.read_sql(text("SELECT * FROM listings_all"),      conn)
-            df_cat  = pd.read_sql(text("SELECT asin, brand, main_image_url, sales_rank, sales_rank_category, color, size, product_type FROM catalog_items"), conn)
-            cnt_open = pd.read_sql(text("SELECT COUNT(*) as cnt FROM listings_open"),     conn).iloc[0]['cnt']
-            cnt_inact= pd.read_sql(text("SELECT COUNT(*) as cnt FROM listings_inactive"), conn).iloc[0]['cnt']
+            df_all = pd.read_sql(text("SELECT * FROM listings_all"), conn)
+            df_cat = pd.read_sql(text("SELECT asin, brand, main_image_url, sales_rank, sales_rank_category, color, size, product_type FROM catalog_items"), conn)
     except Exception as e:
         st.error(f"Помилка: {e}"); return
 
     if df_all.empty:
         st.warning("listings_all порожня"); return
 
-    # нормалізуємо
     df_all['price']    = pd.to_numeric(df_all['price'].replace('', None), errors='coerce').fillna(0)
     df_all['quantity'] = pd.to_numeric(df_all['quantity'].replace('', None), errors='coerce').fillna(0)
     df_all['open_date']= pd.to_datetime(df_all['open_date'], errors='coerce')
 
-    # join з catalog
     df = df_all.merge(df_cat, left_on='asin1', right_on='asin', how='left')
 
-    # фільтри
+    # ── Фільтри ──
     df_f = df.copy()
     if search_q:
         mask = (df_f['seller_sku'].astype(str).str.contains(search_q, case=False, na=False) |
@@ -3714,14 +3709,14 @@ def show_listings():
     elif sel_status == "Inactive":
         df_f = df_f[df_f['status'].astype(str).str.lower() != 'active']
 
-    # KPI
-    total       = len(df_f)
-    active_cnt  = int((df_f['status'].astype(str).str.lower() == 'active').sum())
-    inactive_cnt= total - active_cnt
-    avg_price   = df_f[df_f['price'] > 0]['price'].mean()
-    fba_cnt     = int(df_f['fulfillment_channel'].astype(str).str.contains("AMAZON", case=False, na=False).sum())
-    fbm_cnt     = total - fba_cnt
-    unique_asins= df_f['asin1'].nunique()
+    # ── KPI ──
+    total        = len(df_f)
+    active_cnt   = int((df_f['status'].astype(str).str.lower() == 'active').sum())
+    inactive_cnt = total - active_cnt
+    avg_price    = df_f[df_f['price'] > 0]['price'].mean() if total > 0 else 0
+    fba_cnt      = int(df_f['fulfillment_channel'].astype(str).str.contains("AMAZON", case=False, na=False).sum())
+    fbm_cnt      = total - fba_cnt
+    unique_asins = df_f['asin1'].nunique()
 
     # ── Hero Card ──
     st.markdown(f"""
@@ -3755,13 +3750,13 @@ def show_listings():
 
     # ── Інсайти ──
     _icols = st.columns(3)
-    active_pct = active_cnt/total*100 if total > 0 else 0
+    active_pct = active_cnt / total * 100 if total > 0 else 0
     if active_pct >= 80:   _em, _col = "🟢", "#0d2b1e"
     elif active_pct >= 50: _em, _col = "🟡", "#2b2400"
     else:                  _em, _col = "🔴", "#2b0d0d"
     with _icols[0]: insight_card(_em, "Активних листингів",
         f"<b>{active_cnt}</b> з {total} ({active_pct:.0f}%) активні", _col)
-    fba_pct = fba_cnt/total*100 if total > 0 else 0
+    fba_pct = fba_cnt / total * 100 if total > 0 else 0
     with _icols[1]: insight_card("📦", "FBA vs FBM",
         f"FBA: <b>{fba_cnt}</b> ({fba_pct:.0f}%) · FBM: <b>{fbm_cnt}</b> ({100-fba_pct:.0f}%)", "#1a1a2e")
     with _icols[2]: insight_card("💰", "Середня ціна",
@@ -3769,115 +3764,273 @@ def show_listings():
 
     st.markdown("---")
 
-    # ── Чарти ──
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### 📊 По маркетплейсах")
-        mp_cnt = df_f['marketplace'].value_counts().reset_index()
-        mp_cnt.columns = ['Marketplace', 'Count']
-        fig = px.pie(mp_cnt, values='Count', names='Marketplace', hole=0.4,
-                     color_discrete_sequence=px.colors.qualitative.Set2)
-        fig.update_layout(height=320)
-        st.plotly_chart(fig, width="stretch")
+    # ══════════════════════════════════════════════════════
+    # ТАБИ
+    # ══════════════════════════════════════════════════════
+    tabs = st.tabs(["📋 По SKU", "🔗 По ASIN", "⚠️ Дефекти", "🆕 Нові листинги", "❓ Без catalog"])
 
-    with col2:
-        st.markdown("#### 📊 Active vs Inactive по marketplace")
-        status_mp = df_f.groupby(['marketplace','status']).size().reset_index(name='cnt')
-        fig2 = px.bar(status_mp, x='marketplace', y='cnt', color='status',
-                      color_discrete_map={'Active':'#4CAF50','Inactive':'#F44336'},
-                      barmode='stack', height=320)
-        fig2.update_layout(margin=dict(l=0,r=0,t=10,b=0))
-        st.plotly_chart(fig2, width="stretch")
+    # ══════════════════════════════════════
+    # TAB 0 — Каталог по SKU
+    # ══════════════════════════════════════
+    with tabs[0]:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 📊 По маркетплейсах")
+            mp_cnt = df_f['marketplace'].value_counts().reset_index()
+            mp_cnt.columns = ['Marketplace', 'Count']
+            fig = px.pie(mp_cnt, values='Count', names='Marketplace', hole=0.4,
+                         color_discrete_sequence=px.colors.qualitative.Set2)
+            fig.update_layout(height=320)
+            st.plotly_chart(fig, width="stretch")
+        with col2:
+            st.markdown("#### 📊 Active vs Inactive")
+            status_mp = df_f.groupby(['marketplace', 'status']).size().reset_index(name='cnt')
+            fig2 = px.bar(status_mp, x='marketplace', y='cnt', color='status',
+                          color_discrete_map={'Active': '#4CAF50', 'Inactive': '#F44336'},
+                          barmode='stack', height=320)
+            fig2.update_layout(margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig2, width="stretch")
 
-    # ── Ціновий розподіл ──
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### 💰 Розподіл цін")
-        df_prices = df_f[df_f['price'] > 0]
-        if not df_prices.empty:
-            fig3 = px.histogram(df_prices, x='price', nbins=30,
-                                color_discrete_sequence=['#5B9BD5'], height=300)
-            fig3.update_layout(margin=dict(l=0,r=0,t=10,b=0), xaxis_title="Ціна $")
-            st.plotly_chart(fig3, width="stretch")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 💰 Розподіл цін")
+            df_prices = df_f[df_f['price'] > 0]
+            if not df_prices.empty:
+                fig3 = px.histogram(df_prices, x='price', nbins=30,
+                                    color_discrete_sequence=['#5B9BD5'], height=300)
+                fig3.update_layout(margin=dict(l=0, r=0, t=10, b=0), xaxis_title="Ціна $")
+                st.plotly_chart(fig3, width="stretch")
+        with col2:
+            df_f['sales_rank'] = pd.to_numeric(df_f.get('sales_rank', None), errors='coerce')
+            if 'size' in df_f.columns and df_f['size'].notna().any() and df_f['size'].astype(str).str.strip().ne('').any():
+                st.markdown("#### 📏 По розміру (Size)")
+                sz = df_f[df_f['size'].notna() & (df_f['size'].astype(str).str.strip() != '')]['size'].value_counts().head(12).reset_index()
+                sz.columns = ['Size', 'Count']
+                fig4 = go.Figure(go.Bar(
+                    x=sz['Count'], y=sz['Size'], orientation='h',
+                    marker_color=px.colors.qualitative.Set2[:len(sz)],
+                    text=sz['Count'], textposition='outside'
+                ))
+                fig4.update_layout(height=300, yaxis={'categoryorder': 'total ascending'},
+                                   margin=dict(l=0, r=40, t=10, b=0))
+                st.plotly_chart(fig4, width="stretch")
+            else:
+                st.markdown("#### 📦 По Fulfillment Channel")
+                fc_cnt = df_f['fulfillment_channel'].value_counts().reset_index()
+                fc_cnt.columns = ['FC', 'Count']
+                fig4 = px.pie(fc_cnt, values='Count', names='FC', hole=0.4, height=300)
+                st.plotly_chart(fig4, width="stretch")
 
-    with col2:
-        # BSR якщо є дані, інакше Size
-        df_f['sales_rank'] = pd.to_numeric(df_f.get('sales_rank', None), errors='coerce')
-        df_bsr = df_f[df_f['sales_rank'].notna() & (df_f['sales_rank'] > 0)] if 'sales_rank' in df_f.columns else pd.DataFrame()
+        st.markdown("#### 📋 Каталог листингів")
+        show_cols = ['seller_sku', 'asin1', 'item_name', 'price', 'quantity', 'status',
+                     'fulfillment_channel', 'marketplace', 'open_date']
+        for c in ['brand', 'size', 'color', 'sales_rank', 'main_image_url']:
+            if c in df_f.columns: show_cols.append(c)
+        show_cols = [c for c in show_cols if c in df_f.columns]
+        df_show = df_f[show_cols].sort_values('price', ascending=False).reset_index(drop=True)
+        col_cfg = {
+            'seller_sku':          st.column_config.TextColumn("SKU"),
+            'asin1':               st.column_config.TextColumn("ASIN"),
+            'item_name':           st.column_config.TextColumn("Назва", width="large"),
+            'price':               st.column_config.NumberColumn("Ціна $", format="$%.2f"),
+            'quantity':            st.column_config.NumberColumn("Qty"),
+            'status':              st.column_config.TextColumn("Статус"),
+            'fulfillment_channel': st.column_config.TextColumn("FC"),
+            'marketplace':         st.column_config.TextColumn("MP"),
+            'open_date':           st.column_config.DatetimeColumn("Open Date", format="YYYY-MM-DD"),
+            'brand':               st.column_config.TextColumn("Brand"),
+            'size':                st.column_config.TextColumn("Size"),
+            'color':               st.column_config.TextColumn("Color"),
+            'sales_rank':          st.column_config.NumberColumn("BSR", format="%d"),
+            'main_image_url':      st.column_config.ImageColumn("Фото", width="small"),
+        }
+        st.dataframe(df_show, column_config=col_cfg, width="stretch", hide_index=True, height=500)
+        st.caption(f"Показано {len(df_show):,} з {len(df_f):,} листингів")
+        st.download_button("📥 CSV (по SKU)", df_f[show_cols].to_csv(index=False).encode(),
+                           "listings_by_sku.csv", "text/csv", key="dl_sku")
 
-        if not df_bsr.empty:
-            st.markdown("#### 📈 BSR топ 15 (найкращий rank)")
-            top_bsr = df_bsr.nsmallest(15, 'sales_rank')
-            fig4 = go.Figure(go.Bar(
-                x=top_bsr['sales_rank'], y=top_bsr['seller_sku'], orientation='h',
-                marker_color='#4CAF50',
-                text=[f"#{int(v):,}" for v in top_bsr['sales_rank']], textposition='outside'
-            ))
-            fig4.update_layout(height=380, yaxis={'categoryorder':'total descending'},
-                               xaxis_title="BSR (менше = краще)",
-                               margin=dict(l=0,r=80,t=10,b=0))
-            st.plotly_chart(fig4, width="stretch")
-        elif 'size' in df_f.columns and df_f['size'].notna().any():
-            st.markdown("#### 📏 По розміру (Size)")
-            sz = df_f['size'].value_counts().head(12).reset_index()
-            sz.columns = ['Size', 'Count']
-            colors_sz = px.colors.qualitative.Set2[:len(sz)]
-            fig4 = go.Figure(go.Bar(
-                x=sz['Count'], y=sz['Size'], orientation='h',
-                marker_color=colors_sz,
-                text=sz['Count'], textposition='outside'
-            ))
-            fig4.update_layout(height=380, yaxis={'categoryorder':'total ascending'},
-                               margin=dict(l=0,r=40,t=10,b=0))
-            st.plotly_chart(fig4, width="stretch")
+    # ══════════════════════════════════════
+    # TAB 1 — Каталог по ASIN (дедупліковано)
+    # ══════════════════════════════════════
+    with tabs[1]:
+        st.markdown("#### 🔗 Каталог по ASIN — дедупліковано")
+        st.caption("Один рядок на ASIN · розміри згруповані · Active має пріоритет")
+
+        df_asin = df_f.copy()
+        df_asin['_active'] = (df_asin['status'].astype(str).str.lower() == 'active').astype(int)
+
+        # Групуємо розміри і кольори в рядок
+        def join_unique(series):
+            vals = [str(v).strip() for v in series if pd.notna(v) and str(v).strip()]
+            return ', '.join(sorted(set(vals))) if vals else ''
+
+        agg_dict = {
+            'seller_sku':          'first',
+            'item_name':           'first',
+            'price':               'mean',
+            'quantity':            'sum',
+            '_active':             'max',
+            'fulfillment_channel': 'first',
+            'marketplace':         'first',
+        }
+        if 'brand' in df_asin.columns:         agg_dict['brand']         = 'first'
+        if 'size' in df_asin.columns:          agg_dict['size']          = join_unique
+        if 'color' in df_asin.columns:         agg_dict['color']         = join_unique
+        if 'sales_rank' in df_asin.columns:    agg_dict['sales_rank']    = 'first'
+        if 'main_image_url' in df_asin.columns:agg_dict['main_image_url']= 'first'
+
+        sku_counts = df_asin.groupby('asin1').size().reset_index(name='sku_count')
+        df_grouped = df_asin.groupby('asin1').agg(agg_dict).reset_index()
+        df_grouped['status'] = df_grouped['_active'].map({1: 'Active', 0: 'Inactive'})
+        df_grouped['price']  = df_grouped['price'].round(2)
+        df_grouped = df_grouped.merge(sku_counts, on='asin1', how='left').drop(columns=['_active'])
+        df_grouped['fc'] = df_grouped['fulfillment_channel'].apply(
+            lambda x: 'FBA' if 'AMAZON' in str(x).upper() else 'FBM')
+
+        # KPI
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("🔗 Унікальних ASIN", f"{len(df_grouped):,}")
+        c2.metric("✅ Active", f"{(df_grouped['status'] == 'Active').sum():,}")
+        c3.metric("❌ Inactive", f"{(df_grouped['status'] != 'Active').sum():,}")
+        c4.metric("💰 Avg Price", f"${df_grouped['price'].mean():.2f}")
+
+        asin_filter = st.selectbox("Фільтр:", ["Всі", "Active", "Inactive"], key="asin_dedup_filter")
+        df_show_a = df_grouped.copy()
+        if asin_filter == "Active":    df_show_a = df_show_a[df_show_a['status'] == 'Active']
+        elif asin_filter == "Inactive": df_show_a = df_show_a[df_show_a['status'] != 'Active']
+
+        show_a = [c for c in ['asin1', 'seller_sku', 'item_name', 'size', 'color', 'price',
+                               'sku_count', 'status', 'fc', 'brand', 'marketplace', 'main_image_url']
+                  if c in df_show_a.columns]
+        col_cfg_a = {
+            'asin1':          st.column_config.TextColumn("ASIN"),
+            'seller_sku':     st.column_config.TextColumn("SKU (first)"),
+            'item_name':      st.column_config.TextColumn("Title", width="large"),
+            'size':           st.column_config.TextColumn("Sizes"),
+            'color':          st.column_config.TextColumn("Colors"),
+            'price':          st.column_config.NumberColumn("Avg Price", format="$%.2f"),
+            'sku_count':      st.column_config.NumberColumn("SKU Count"),
+            'status':         st.column_config.TextColumn("Status"),
+            'fc':             st.column_config.TextColumn("FC"),
+            'brand':          st.column_config.TextColumn("Brand"),
+            'marketplace':    st.column_config.TextColumn("MP"),
+            'main_image_url': st.column_config.ImageColumn("Фото", width="small"),
+        }
+        st.dataframe(df_show_a[show_a].sort_values('price', ascending=False),
+                     column_config=col_cfg_a, width="stretch", hide_index=True, height=500)
+        st.caption(f"{len(df_show_a):,} унікальних ASIN")
+        st.download_button("📥 CSV (по ASIN)", df_grouped.to_csv(index=False).encode(),
+                           "listings_by_asin.csv", "text/csv", key="dl_asin")
+
+    # ══════════════════════════════════════
+    # TAB 2 — Дефекти
+    # ══════════════════════════════════════
+    with tabs[2]:
+        st.markdown("#### ⚠️ Дефекти листингів")
+        st.caption("ASIN з проблемами: suppressed, missing info, pricing alerts")
+        try:
+            with engine.connect() as conn:
+                df_def = pd.read_sql(text("SELECT * FROM listings_defects"), conn)
+            if df_def.empty:
+                st.success("✅ Дефектів немає!")
+            else:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("⚠️ Всього дефектів", f"{len(df_def):,}")
+                c2.metric("📦 Унікальних SKU",
+                          f"{df_def['seller_sku'].nunique():,}" if 'seller_sku' in df_def.columns else "—")
+                if 'alert_type' in df_def.columns:
+                    c3.metric("🔴 Типів алертів", f"{df_def['alert_type'].nunique()}")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if 'alert_type' in df_def.columns:
+                        at = df_def['alert_type'].value_counts().reset_index()
+                        at.columns = ['Alert Type', 'Count']
+                        fig_d = px.pie(at, values='Count', names='Alert Type', hole=0.4, height=300)
+                        st.plotly_chart(fig_d, width="stretch")
+                with col2:
+                    if 'issue_description' in df_def.columns:
+                        st.markdown("**Топ проблеми:**")
+                        issues = df_def['issue_description'].value_counts().head(10).reset_index()
+                        issues.columns = ['Issue', 'Count']
+                        st.dataframe(issues, width="stretch", hide_index=True)
+
+                show_d = [c for c in ['seller_sku', 'asin', 'product_name', 'brand', 'price',
+                                       'alert_type', 'issue_description', 'status_change_date']
+                          if c in df_def.columns]
+                st.dataframe(df_def[show_d], width="stretch", hide_index=True, height=400)
+                st.download_button("📥 CSV Дефекти", df_def.to_csv(index=False).encode(),
+                                   "listings_defects.csv", "text/csv", key="dl_def")
+        except Exception as e:
+            st.info(f"Таблиця listings_defects не існує або порожня: {e}")
+
+    # ══════════════════════════════════════
+    # TAB 3 — Нові листинги
+    # ══════════════════════════════════════
+    with tabs[3]:
+        st.markdown("#### 🆕 Нові листинги")
+        days_new = st.selectbox("За останні:", [7, 14, 30, 60, 90], index=2, key="new_days")
+        st.caption(f"Листинги додані за останні {days_new} днів (по open_date)")
+
+        if 'open_date' in df_f.columns:
+            df_new = df_f[df_f['open_date'].notna()].copy()
+            cutoff = pd.Timestamp.now() - pd.Timedelta(days=days_new)
+            df_new = df_new[df_new['open_date'] >= cutoff].sort_values('open_date', ascending=False)
+
+            if df_new.empty:
+                st.info(f"Немає нових листингів за останні {days_new} днів")
+            else:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("🆕 Нових", f"{len(df_new):,}")
+                c2.metric("✅ Active", f"{(df_new['status'] == 'Active').sum():,}")
+                c3.metric("💰 Avg Price", f"${df_new['price'].mean():.2f}")
+
+                daily_new = df_new.groupby(df_new['open_date'].dt.date).size().reset_index(name='count')
+                daily_new.columns = ['Date', 'Count']
+                fig_n = px.bar(daily_new, x='Date', y='Count',
+                               color_discrete_sequence=['#4CAF50'], height=250)
+                fig_n.update_layout(margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_n, width="stretch")
+
+                show_n = [c for c in ['seller_sku', 'asin1', 'item_name', 'price', 'status',
+                                       'open_date', 'size', 'brand'] if c in df_new.columns]
+                st.dataframe(df_new[show_n], width="stretch", hide_index=True, height=400)
+                st.download_button("📥 CSV Нові", df_new[show_n].to_csv(index=False).encode(),
+                                   "new_listings.csv", "text/csv", key="dl_new")
         else:
-            st.markdown("#### 📦 По Fulfillment Channel")
-            fc_cnt = df_f['fulfillment_channel'].value_counts().reset_index()
-            fc_cnt.columns = ['FC', 'Count']
-            fig4 = px.pie(fc_cnt, values='Count', names='FC', hole=0.4, height=380)
-            st.plotly_chart(fig4, width="stretch")
+            st.warning("Колонка open_date відсутня")
 
-    # ── Таблиця ──
-    st.markdown("---")
-    st.markdown("#### 📋 Каталог листингів")
+    # ══════════════════════════════════════
+    # TAB 4 — Без catalog даних
+    # ══════════════════════════════════════
+    with tabs[4]:
+        st.markdown("#### ❓ ASIN без catalog даних")
+        st.caption("Size, brand, color — відсутні. Старі/видалені ASIN яких немає в Amazon Catalog API")
 
-    # вибираємо що показати
-    show_cols = ['seller_sku','asin1','item_name','price','quantity','status',
-                 'fulfillment_channel','marketplace','open_date']
-    if 'brand' in df_f.columns:        show_cols.append('brand')
-    if 'size' in df_f.columns:         show_cols.append('size')
-    if 'color' in df_f.columns:        show_cols.append('color')
-    if 'sales_rank' in df_f.columns:   show_cols.append('sales_rank')
-    if 'main_image_url' in df_f.columns: show_cols.append('main_image_url')
+        has_brand = df_f.get('brand', pd.Series(dtype=str)).fillna('').str.strip() != ''
+        has_size  = df_f.get('size', pd.Series(dtype=str)).fillna('').str.strip() != ''
+        df_no_cat = df_f[~has_brand & ~has_size].copy()
+        df_no_cat_dedup = df_no_cat.drop_duplicates(subset='asin1')
 
-    show_cols = [c for c in show_cols if c in df_f.columns]
-    df_show = df_f[show_cols].sort_values('price', ascending=False).reset_index(drop=True)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("❓ ASIN без catalog", f"{len(df_no_cat_dedup):,}")
+        c2.metric("✅ З них Active", f"{(df_no_cat_dedup['status'] == 'Active').sum():,}")
+        c3.metric("❌ Inactive", f"{(df_no_cat_dedup['status'] != 'Active').sum():,}")
 
-    col_cfg = {
-        'seller_sku':       st.column_config.TextColumn("SKU"),
-        'asin1':            st.column_config.TextColumn("ASIN"),
-        'item_name':        st.column_config.TextColumn("Назва", width="large"),
-        'price':            st.column_config.NumberColumn("Ціна $", format="$%.2f"),
-        'quantity':         st.column_config.NumberColumn("Qty"),
-        'status':           st.column_config.TextColumn("Статус"),
-        'fulfillment_channel': st.column_config.TextColumn("FC"),
-        'marketplace':      st.column_config.TextColumn("MP"),
-        'open_date':        st.column_config.DatetimeColumn("Open Date", format="YYYY-MM-DD"),
-        'brand':            st.column_config.TextColumn("Brand"),
-        'size':             st.column_config.TextColumn("Size"),
-        'color':            st.column_config.TextColumn("Color"),
-        'sales_rank':       st.column_config.NumberColumn("BSR", format="%d"),
-        'main_image_url':   st.column_config.ImageColumn("Фото", width="small"),
-    }
+        active_no_cat = (df_no_cat_dedup['status'] == 'Active').sum()
+        if active_no_cat > 0:
+            st.warning(f"⚠️ {active_no_cat} Active ASIN без catalog даних — варто перезапустити catalog backfill")
 
-    st.dataframe(df_show, column_config=col_cfg,
-                 width="stretch", hide_index=True, height=500)
-    st.caption(f"Показано {len(df_show):,} з {len(df_f):,} листингів")
-    st.download_button("📥 CSV", df_f[show_cols].to_csv(index=False).encode(), "listings.csv", "text/csv")
+        show_nc = [c for c in ['asin1', 'seller_sku', 'item_name', 'price', 'status',
+                                'fulfillment_channel', 'marketplace'] if c in df_no_cat_dedup.columns]
+        st.dataframe(df_no_cat_dedup[show_nc].sort_values('status'),
+                     width="stretch", hide_index=True, height=400)
+        st.caption(f"{len(df_no_cat_dedup):,} ASIN без size/brand")
+        st.download_button("📥 CSV без catalog", df_no_cat_dedup[show_nc].to_csv(index=False).encode(),
+                           "no_catalog_data.csv", "text/csv", key="dl_nocat")
 
     # ── AI ──
-    ctx = f"""Listings: {total} SKU | Active: {active_cnt} | Inactive: {inactive_cnt} | FBA: {fba_cnt} | Avg price: ${avg_price:.2f}"""
+    ctx = f"""Listings: {total} SKU | Active: {active_cnt} | Inactive: {inactive_cnt} | FBA: {fba_cnt} | Avg price: ${avg_price:.2f} | Unique ASIN: {unique_asins}"""
     show_ai_chat(ctx, [
         "Які SKU inactive більше 90 днів — можна деактивувати?",
         "Де найвищий BSR (найкращий rank)?",
