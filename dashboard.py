@@ -3815,14 +3815,29 @@ def show_orders(t=None):
         prev_units = int(prev['units'] or 0)
         prev_orders = int(prev['orders'] or 0)
 
+        # Перевірка: якщо попередній період < 5% поточного — дані не репрезентативні
+        has_meaningful_prev = prev_rev > total_rev * 0.05 if total_rev > 0 else prev_rev > 0
+
         def _delta_str(cur, prev_v):
-            if prev_v == 0: return "+∞" if cur > 0 else "0%"
-            return f"{(cur - prev_v) / prev_v * 100:+.1f}%"
+            if prev_v == 0: return None
+            pct = (cur - prev_v) / prev_v * 100
+            if abs(pct) > 1000: return None  # нереалістичний delta
+            return f"{pct:+.1f}%"
 
         _mc1, _mc2, _mc3 = st.columns(3)
-        _mc1.metric("💰 Revenue", _fmt(total_rev), _delta_str(total_rev, prev_rev))
-        _mc2.metric("📦 Units", f"{total_units:,}", _delta_str(total_units, prev_units))
-        _mc3.metric("🛒 Orders", f"{total_orders:,}", _delta_str(total_orders, prev_orders))
+        _mc1.metric("💰 Revenue", _fmt(total_rev),
+                    _delta_str(total_rev, prev_rev) if has_meaningful_prev else None)
+        _mc2.metric("📦 Units", f"{total_units:,}",
+                    _delta_str(total_units, prev_units) if has_meaningful_prev else None)
+        _mc3.metric("🛒 Orders", f"{total_orders:,}",
+                    _delta_str(total_orders, prev_orders) if has_meaningful_prev else None)
+
+        # Показуємо суми попереднього періоду
+        st.caption(
+            f"Попередній період ({prev_d1} → {prev_d2}): "
+            f"Revenue {_fmt(prev_rev)} · Units {prev_units:,} · Orders {prev_orders:,}"
+            + (" · ⚠️ замало даних для порівняння" if not has_meaningful_prev else "")
+        )
     except Exception:
         st.info("Немає даних за попередній період")
 
