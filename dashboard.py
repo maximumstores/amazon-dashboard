@@ -3353,33 +3353,169 @@ def show_inventory_finance(df_filtered, t):
     st.dataframe(dt_.style.format({'Price':"${:.2f}",'Stock Value':"${:,.2f}"}),width="stretch")
     insights_inventory(df_filtered)
 
-
 def show_orders(t=None):
+    """
+    🛒 Продажі (Orders) v2.0
+    Матриця: день × ASIN / Parent ASIN
+    - Продажі (units, revenue)
+    - Impressions (page_views з sales_traffic)
+    - Offer type (купон/прайм/дил)
+    - CVR (units / page_views × 100)
+    """
     if t is None: t = translations.get("UA", {})
-    df_orders = load_orders()
-    if df_orders.empty: st.warning("⚠️ No orders data."); return
 
-    min_date = df_orders['Order Date'].min().date()
-    max_date = df_orders['Order Date'].max().date()
+    engine = get_engine()
+
+    # ══════════════════════════════════════════════════════
+    # 1. SIDEBAR ФІЛЬТРИ
+    # ══════════════════════════════════════════════════════
+    try:
+        with engine.connect() as conn:
+            bounds = pd.read_sql(text("""
+                SELECT MIN(SUBSTRING(purchase_date,1,10))::date AS mn,
+                       MAX(SUBSTRING(purchase_date,1,10))::date AS mx
+                FROM orders
+                WHERE purchase_date IS NOT NULL AND purchase_date != ''
+            """), conn).iloc[0]
+        min_date = bounds['mn']
+        max_date = bounds['mx']
+    except Exception:
+        min_date = dt.date(2024, 1, 1)
+        max_date = dt.date.today()
+
     date_range = st.sidebar.date_input(
-        t["st_date_range"], value=(min_date, max_date),
-        min_value=min_date, max_value=max_date, key="ord_date"
+        "📅 Період:",
+        value=(max(min_date, max_date - dt.timedelta(days=30)), max_date),
+        min_value=min_date, max_value=max_date, key="ord_v2_date"
     )
-    df_f = df_orders[
-        (df_orders['Order Date'].dt.date >= date_range[0]) &
-        (df_orders['Order Date'].dt.date <= date_range[1])
-    ] if len(date_range) == 2 else df_orders
+    if len(date_range) != 2:
+        st.warning("Оберіть діапазон дат"); return
+    d1, d2 = str(date_range[0]), str(date_range[1])
 
-    total_orders = df_f['Order ID'].nunique()
-    total_rev    = df_f['Total Price'].sum()
-    total_items  = int(df_f['Quantity'].sum())
-    avg_order    = total_rev / total_orders if total_orders > 0 else 0
-    days_span    = max((df_f['Order Date'].max() - df_f['Order Date'].min()).days, 1)
-    rev_per_day  = total_rev / days_span
-    d1 = str(date_range[0]) if len(date_range)==2 else str(min_date)
-    d2 = str(date_range[1]) if len(date_range)==2 else str(max_date)
+    search_asin = st.sidebar.text_input("🔍 ASIN", "", key="ord_v2_asin")
+    search_sku  = st.sidebar.text_input("🔍 SKU", "", key="ord_v2_sku")
+    gran = st.sidebar.selectbox("📊 Гранулярність:", ["День", "Тиждень"], key="ord_v2_gran")
 
-    # ── Hero Card ──
+    st.markdown("### 🛒 Продажі (Orders)")
+
+    # ══════════════════════════════════════════════════════
+    # 2. ЗАВАНТАЖЕННЯ ДАНИХ
+    # ══════════════════════════════════════════════════════
+    where_extra = ""
+    params = {"d1": d1, "d2": d2}
+    if search_asin:
+        where_extra += " AND o.asin ILIKE :asin_q"
+        params["asin_q"] = f"%{search_asin}%"
+    if search_sku:
+        where_extra += " AND o.sku ILIKE :sku_q"
+        params["sku_q"] = f"%{search_sku}%"
+
+    try:
+        with engine.connect() as conn:
+            df_orders = pd.read_sql(text(f"""
+                SELECT
+                    SUBSTRING(o.purchase_date, 1, 10)::date  AS date,
+                    o.asin,
+                    MIN(o.sku)                               AS sku,
+                    SUM(CASE WHEN o.quantity ~ '^[0-9]+$'
+                        THEN o.quantity::numeric ELSE 1 END)  AS units,
+                    SUM(CASE WHEN o.item_price ~ '^[0-9.]+$'
+                        THEN o.item_price::numeric ELSE 0 END) AS revenue,
+                    COUNT(DISTINCT o.amazon_order_id)         AS orders_cnt,
+                    STRING_AGG(DISTINCT NULLIF(o.promotion_ids,''), ', ') AS promo_ids,
+                    STRING_AGG(DISTINCT NULLIF(o.price_designation,''), ', ') AS price_desig
+                FROM orders o
+                WHERE SUBSTRING(o.purchase_date, 1, 10)::date BETWEEN :d1 AND :d2
+                  AND o.purchase_date IS NOT NULL AND o.purchase_date != ''
+                  AND o.asin IS NOT NULL AND o.asin != ''
+                  {where_extra}
+                GROUP BY 1, 2
+                ORDER BY 1 DESC, revenue DESC
+            """), conn, params=params)
+
+            df_traffic = pd.read_sql(text("""
+                SELECT
+                    date::date                               AS date,
+                    asin,
+                    parent_asin,
+                    SUM(NULLIF(page_views,'')::numeric)      AS impressions,
+                    SUM(NULLIF(sessions,'')::numeric)        AS sessions
+                FROM sales_traffic
+                WHERE date != '' AND date IS NOT NULL
+                  AND asin != '' AND asin IS NOT NULL
+                  AND granularity != 'DATE'
+                  AND date::date BETWEEN :d1 AND :d2
+                GROUP BY 1, 2, 3
+            """), conn, params={"d1": d1, "d2": d2})
+
+    except Exception as e:
+        st.error(f"Помилка завантаження: {e}")
+        return
+
+    if df_orders.empty:
+        st.warning("Немає замовлень за обраний період"); return
+
+    # ── Нормалізація типів ──
+    df_orders['date'] = pd.to_datetime(df_orders['date'])
+    for c in ['units', 'revenue', 'orders_cnt']:
+        df_orders[c] = pd.to_numeric(df_orders[c], errors='coerce').fillna(0)
+
+    if not df_traffic.empty:
+        df_traffic['date'] = pd.to_datetime(df_traffic['date'])
+        for c in ['impressions', 'sessions']:
+            df_traffic[c] = pd.to_numeric(df_traffic[c], errors='coerce').fillna(0)
+
+    # ── JOIN: orders + traffic ──
+    if not df_traffic.empty:
+        df = df_orders.merge(
+            df_traffic[['date', 'asin', 'parent_asin', 'impressions', 'sessions']],
+            on=['date', 'asin'], how='left'
+        )
+    else:
+        df = df_orders.copy()
+        df['parent_asin'] = ''
+        df['impressions'] = 0
+        df['sessions'] = 0
+
+    df['impressions'] = df['impressions'].fillna(0)
+    df['sessions']    = df['sessions'].fillna(0)
+    df['parent_asin'] = df['parent_asin'].fillna('')
+
+    # ── Offer type icon ──
+    def _offer_icon(promo, desig):
+        promo = str(promo) if promo else ''
+        desig = str(desig) if desig else ''
+        icons = []
+        promo_l = promo.lower()
+        desig_l = desig.lower()
+        if 'coupon' in promo_l or 'voucher' in promo_l:  icons.append('🏷️')
+        if 'lightning' in promo_l or 'deal' in promo_l:  icons.append('⚡')
+        if 'prime' in desig_l:                           icons.append('🅿️')
+        if 'sns' in promo_l or 'subscribe' in promo_l:   icons.append('🔄')
+        if promo and not icons:                          icons.append('🎫')
+        return ' '.join(icons) if icons else ''
+
+    df['offer'] = df.apply(lambda r: _offer_icon(r.get('promo_ids'), r.get('price_desig')), axis=1)
+
+    # ── CVR ──
+    df['cvr'] = (df['units'] / df['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+
+    # ══════════════════════════════════════════════════════
+    # 3. KPI — HERO CARD
+    # ══════════════════════════════════════════════════════
+    total_rev     = df['revenue'].sum()
+    total_units   = int(df['units'].sum())
+    total_orders  = int(df['orders_cnt'].sum())
+    total_impr    = int(df['impressions'].sum())
+    total_sess    = int(df['sessions'].sum())
+    avg_cvr       = (total_units / total_impr * 100) if total_impr > 0 else 0
+    days_span     = max((df['date'].max() - df['date'].min()).days, 1)
+    rev_per_day   = total_rev / days_span
+    unique_asins  = df['asin'].nunique()
+    avg_price     = total_rev / total_units if total_units > 0 else 0
+    promo_orders  = int((df['offer'] != '').sum())
+    promo_pct     = promo_orders / len(df) * 100 if len(df) > 0 else 0
+
     st.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a2b1e,#0d1f12);border:1px solid #2d4a30;
             border-radius:12px;padding:20px 28px;margin-bottom:16px;
@@ -3391,91 +3527,329 @@ def show_orders(t=None):
     <div style="font-size:48px;font-weight:900;color:#4CAF50;font-family:monospace;line-height:1">
       {_fmt(total_rev)}
     </div>
-    <div style="font-size:12px;color:#666;margin-top:6px">{d1} → {d2}</div>
+    <div style="font-size:12px;color:#666;margin-top:6px">{d1} → {d2} · {unique_asins} ASIN</div>
   </div>
   <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
-      📦 Замовлень <b style="color:#4CAF50">{total_orders:,}</b>
+      📦 Units <b style="color:#4CAF50">{total_units:,}</b>
     </span>
     <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
-      📋 Одиниць <b style="color:#5B9BD5">{total_items:,}</b>
+      🛒 Orders <b style="color:#5B9BD5">{total_orders:,}</b>
     </span>
     <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
-      💵 Avg Order <b style="color:#FFC107">${avg_order:.2f}</b>
+      👁 Impr <b style="color:#FFC107">{total_impr:,}</b>
     </span>
     <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
-      📈 /день <b style="color:#AB47BC">{_fmt(rev_per_day)}</b>
+      📊 CVR <b style="color:#AB47BC">{avg_cvr:.2f}%</b>
+    </span>
+    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      💵 Avg <b style="color:#FF9800">${avg_price:.2f}</b>
     </span>
   </div>
 </div>""", unsafe_allow_html=True)
 
     # ── Інсайти ──
-    _icols = st.columns(3)
-    with _icols[0]: insight_card("🛒", "Середній чек",
-        f"<b>${avg_order:.2f}</b> — +10% AOV = +{_fmt(total_rev*0.1)}", "#1a1a2e")
-    with _icols[1]: insight_card("📈", "Дохід/день",
-        f"<b>{_fmt(rev_per_day)}</b>/день · прогноз місяць: <b>{_fmt(rev_per_day*30)}</b>", "#1a2b1e")
-    top_sku_rev = df_f.groupby('SKU')['Total Price'].sum().nlargest(1)
-    if not top_sku_rev.empty:
-        pct = top_sku_rev.iloc[0]/total_rev*100 if total_rev > 0 else 0
-        with _icols[2]: insight_card("⚡", "Топ SKU",
-            f"<b>{top_sku_rev.index[0]}</b> = {_fmt(top_sku_rev.iloc[0])} ({pct:.0f}%)", "#2b1a00")
+    _ic = st.columns(3)
+    with _ic[0]:
+        insight_card("📈", "Дохід/день",
+            f"<b>{_fmt(rev_per_day)}</b>/день · прогноз місяць: <b>{_fmt(rev_per_day * 30)}</b>", "#1a2b1e")
+    with _ic[1]:
+        if avg_cvr >= 12:   _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — вище норми!", "🟢", "#0d2b1e"
+        elif avg_cvr >= 5:  _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — в нормі.", "🟡", "#2b2400"
+        else:               _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — нижче норми.", "🔴", "#2b0d0d"
+        insight_card(_em, "Конверсія", _txt, _col)
+    with _ic[2]:
+        insight_card("🎫", "Промо-замовлення",
+            f"<b>{promo_pct:.0f}%</b> рядків мають промо (купон/дил/прайм)", "#1a1a2e")
 
     st.markdown("---")
-    insights_orders(df_f)
 
-    st.markdown("---")
-    # ── Тренд ──
-    st.markdown("#### 📈 Тренд виручки по днях")
-    daily = df_f.groupby(df_f['Order Date'].dt.date)['Total Price'].sum().reset_index()
-    daily.columns = ['Date', 'Revenue']
-    fig = go.Figure(go.Bar(
-        x=daily['Date'], y=daily['Revenue'],
-        marker_color='#4CAF50', opacity=0.85,
-        text=[_fmt(v) for v in daily['Revenue']], textposition='outside'
-    ))
-    fig.update_layout(height=320, margin=dict(l=0,r=0,t=10,b=0),
-                      yaxis=dict(tickprefix="$"))
-    st.plotly_chart(fig, width="stretch")
+    # ══════════════════════════════════════════════════════
+    # 4. ТРЕНДИ ПО ДНЯХ
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 📈 Щоденна динаміка")
 
-    st.markdown("---")
+    daily = df.groupby('date').agg(
+        units=('units', 'sum'), revenue=('revenue', 'sum'),
+        orders_cnt=('orders_cnt', 'sum'), impressions=('impressions', 'sum'),
+        sessions=('sessions', 'sum'),
+    ).reset_index()
+    daily['cvr'] = (daily['units'] / daily['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+
+    if gran == "Тиждень":
+        daily = daily.set_index('date').resample('W').agg({
+            'units': 'sum', 'revenue': 'sum', 'orders_cnt': 'sum',
+            'impressions': 'sum', 'sessions': 'sum'
+        }).reset_index()
+        daily['cvr'] = (daily['units'] / daily['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("#### 🏆 Топ 15 SKU за виручкою")
-        ts = df_f.groupby('SKU')['Total Price'].sum().nlargest(15).reset_index()
-        fig2 = px.bar(ts, x='Total Price', y='SKU', orientation='h',
-                      color='Total Price', color_continuous_scale='Greens',
-                      text=[_fmt(v) for v in ts['Total Price']])
-        fig2.update_layout(yaxis={'categoryorder':'total ascending'}, height=450)
-        fig2.update_traces(textposition='outside')
-        st.plotly_chart(fig2, width="stretch")
+        st.markdown("#### 💰 Виручка & Units")
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=daily['date'], y=daily['revenue'],
+            name='Revenue', marker_color='#4CAF50', opacity=0.85,
+            text=[_fmt(v) for v in daily['revenue']], textposition='outside'
+        ))
+        fig.add_trace(go.Scatter(
+            x=daily['date'], y=daily['units'],
+            name='Units', mode='lines+markers',
+            line=dict(color='#FFC107', width=2), yaxis='y2'
+        ))
+        if gran == "День" and len(daily) >= 7:
+            ma = daily['revenue'].rolling(7, min_periods=1).mean()
+            fig.add_trace(go.Scatter(
+                x=daily['date'], y=ma, name='MA-7',
+                mode='lines', line=dict(color='#AB47BC', width=1.5, dash='dot')
+            ))
+        fig.update_layout(
+            height=380, margin=dict(l=0, r=0, t=10, b=0),
+            yaxis=dict(title='Revenue $', tickprefix='$'),
+            yaxis2=dict(title='Units', overlaying='y', side='right'),
+            legend=dict(orientation='h', y=1.12)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
     with col2:
-        if 'Order Status' in df_f.columns:
-            st.markdown("#### 📊 Order Status")
-            sc = df_f['Order Status'].value_counts().reset_index()
-            sc.columns = ['Status', 'Count']
-            fig3 = px.pie(sc, values='Count', names='Status', hole=0.4)
-            fig3.update_layout(height=450)
-            st.plotly_chart(fig3, width="stretch")
+        st.markdown("#### 👁 Impressions & CVR")
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(
+            x=daily['date'], y=daily['impressions'],
+            name='Impressions', marker_color='#5B9BD5', opacity=0.8
+        ))
+        fig2.add_trace(go.Scatter(
+            x=daily['date'], y=daily['cvr'],
+            name='CVR %', mode='lines+markers+text',
+            text=[f"{v:.1f}%" for v in daily['cvr']], textposition='top center',
+            line=dict(color='#FF6B6B', width=2.5), yaxis='y2'
+        ))
+        fig2.update_layout(
+            height=380, margin=dict(l=0, r=0, t=10, b=0),
+            yaxis=dict(title='Impressions'),
+            yaxis2=dict(title='CVR %', overlaying='y', side='right'),
+            legend=dict(orientation='h', y=1.12)
+        )
+        st.plotly_chart(fig2, use_container_width=True)
 
-    # ── Таблиця ──
     st.markdown("---")
-    st.markdown("#### 📋 Деталі замовлень")
-    table_cols = [c for c in ['Order Date','Order ID','SKU','Item Price','Quantity','Total Price','Order Status','Ship Country'] if c in df_f.columns]
-    st.dataframe(
-        df_f[table_cols].sort_values('Order Date', ascending=False).head(500)
-            .style.format({'Item Price':'${:.2f}','Total Price':'${:.2f}'}),
-        width="stretch", hide_index=True, height=400
-    )
-    st.caption(f"Показано {min(500,len(df_f)):,} з {len(df_f):,} замовлень")
-    st.download_button("📥 CSV", df_f[table_cols].to_csv(index=False).encode(), "orders.csv", "text/csv")
 
-    ctx_ord = f"""Orders: {total_orders:,} замовлень | Revenue {_fmt(total_rev)} | Avg {avg_order:.2f} | /день {_fmt(rev_per_day)}"""
-    show_ai_chat(ctx_ord, [
-        "Топ 5 SKU за кількістю замовлень за останні 30 днів",
-        "Порівняй обсяг замовлень: цей тиждень vs минулий",
-        "Які SKU не мали замовлень більше 14 днів?",
-    ], "orders")
+    # ══════════════════════════════════════════════════════
+    # 5. ЗВЕДЕНА ТАБЛИЦЯ ПО ASIN
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 🏆 Зведена по ASIN")
+
+    asin_agg = df.groupby(['asin', 'parent_asin']).agg(
+        sku=('sku', 'first'), units=('units', 'sum'), revenue=('revenue', 'sum'),
+        orders_cnt=('orders_cnt', 'sum'), impressions=('impressions', 'sum'),
+        sessions=('sessions', 'sum'),
+    ).reset_index()
+    asin_agg['cvr'] = (asin_agg['units'] / asin_agg['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+    asin_agg['avg_price'] = (asin_agg['revenue'] / asin_agg['units'].replace(0, float('nan'))).fillna(0).round(2)
+    asin_agg = asin_agg.sort_values('revenue', ascending=False)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("#### 💰 Топ 15 ASIN за виручкою")
+        top15 = asin_agg.nlargest(15, 'revenue')
+        fig3 = go.Figure(go.Bar(
+            x=top15['revenue'], y=top15['asin'], orientation='h',
+            marker_color='#4CAF50',
+            text=[_fmt(v) for v in top15['revenue']], textposition='outside'
+        ))
+        fig3.update_layout(height=max(350, len(top15) * 35),
+                           yaxis={'categoryorder': 'total ascending'},
+                           margin=dict(l=0, r=80, t=10, b=0))
+        st.plotly_chart(fig3, use_container_width=True)
+
+    with col2:
+        st.markdown("#### 📊 CVR по ASIN (з impressions)")
+        cvr_df = asin_agg[asin_agg['impressions'] > 0].nlargest(15, 'impressions')
+        if not cvr_df.empty:
+            colors_cvr = ['#4CAF50' if v >= 12 else '#FFC107' if v >= 5 else '#F44336' for v in cvr_df['cvr']]
+            fig4 = go.Figure(go.Bar(
+                x=cvr_df['cvr'], y=cvr_df['asin'], orientation='h',
+                marker_color=colors_cvr,
+                text=[f"{v:.1f}%" for v in cvr_df['cvr']], textposition='outside'
+            ))
+            fig4.add_vline(x=10, line_dash="dash", line_color="#FFC107", annotation_text="10% норма")
+            fig4.update_layout(height=max(350, len(cvr_df) * 35),
+                               yaxis={'categoryorder': 'total ascending'},
+                               xaxis_title='CVR %',
+                               margin=dict(l=0, r=60, t=10, b=0))
+            st.plotly_chart(fig4, use_container_width=True)
+        else:
+            st.info("Немає даних impressions з sales_traffic")
+
+    # ── Таблиця ASIN ──
+    st.markdown("#### 📋 Зведена таблиця по ASIN")
+    show_asin = asin_agg.rename(columns={
+        'asin': 'ASIN', 'parent_asin': 'Parent', 'sku': 'SKU',
+        'units': 'Units', 'revenue': 'Revenue', 'orders_cnt': 'Orders',
+        'impressions': 'Impr', 'sessions': 'Sessions',
+        'cvr': 'CVR %', 'avg_price': 'Avg Price'
+    })
+    st.dataframe(
+        show_asin.head(200).style.format({'Revenue': '${:,.0f}', 'Avg Price': '${:.2f}', 'CVR %': '{:.2f}%'}),
+        use_container_width=True, hide_index=True, height=400
+    )
+    st.caption(f"{len(asin_agg)} унікальних ASIN")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 6. ДЕТАЛЬНА ТАБЛИЦЯ: день × ASIN (матриця Віталіка)
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 📋 Деталі: день × ASIN")
+    st.caption("🏷️ купон · ⚡ дил · 🅿️ прайм · 🔄 SnS · 🎫 інше промо")
+
+    group_by_parent = st.toggle("Згорнути по Parent ASIN", value=False, key="ord_parent_toggle")
+
+    if group_by_parent and 'parent_asin' in df.columns:
+        df_detail = df.copy()
+        df_detail['group_asin'] = df_detail['parent_asin'].where(df_detail['parent_asin'] != '', df_detail['asin'])
+        detail = df_detail.groupby(['date', 'group_asin']).agg(
+            units=('units', 'sum'), revenue=('revenue', 'sum'),
+            orders_cnt=('orders_cnt', 'sum'), impressions=('impressions', 'sum'),
+            offer=('offer', lambda x: ' '.join(sorted(set(v for v in x if v)))),
+        ).reset_index()
+        detail.rename(columns={'group_asin': 'ASIN (Parent)'}, inplace=True)
+        asin_col_name = 'ASIN (Parent)'
+    else:
+        detail = df[['date', 'asin', 'sku', 'units', 'revenue', 'orders_cnt',
+                      'impressions', 'offer']].copy()
+        detail.rename(columns={'asin': 'ASIN', 'sku': 'SKU'}, inplace=True)
+        asin_col_name = 'ASIN'
+
+    detail['CVR %'] = (detail['units'] / detail['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+    detail = detail.sort_values(['date', 'revenue'], ascending=[False, False])
+
+    detail_show = detail.rename(columns={
+        'date': 'Date', 'units': 'Units', 'revenue': 'Revenue',
+        'orders_cnt': 'Orders', 'impressions': 'Impr', 'offer': 'Offer'
+    })
+
+    show_cols = ['Date', asin_col_name]
+    if 'SKU' in detail_show.columns: show_cols.append('SKU')
+    show_cols += ['Units', 'Revenue', 'Orders', 'Impr', 'CVR %', 'Offer']
+    show_cols = [c for c in show_cols if c in detail_show.columns]
+
+    st.dataframe(
+        detail_show[show_cols].head(1000).style.format({'Revenue': '${:,.2f}', 'CVR %': '{:.2f}%'}),
+        use_container_width=True, hide_index=True, height=500
+    )
+    st.caption(f"Показано {min(1000, len(detail_show)):,} з {len(detail_show):,} рядків")
+
+    st.download_button("📥 CSV (день × ASIN)",
+        detail_show[show_cols].to_csv(index=False).encode(),
+        "orders_daily_asin.csv", "text/csv")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 7. OFFER ANALYSIS
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 🎫 Аналіз промо-акцій (Offer)")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        df['has_promo'] = df['offer'] != ''
+        promo_rev = df.groupby('has_promo')['revenue'].sum()
+        promo_labels = {True: '🎫 З промо', False: '📦 Без промо'}
+        promo_data = pd.DataFrame({
+            'Type': [promo_labels.get(k, k) for k in promo_rev.index],
+            'Revenue': promo_rev.values
+        })
+        fig5 = px.pie(promo_data, values='Revenue', names='Type', hole=0.4,
+                      color_discrete_sequence=['#FF9800', '#4CAF50'], height=320)
+        fig5.update_layout(margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig5, use_container_width=True)
+
+    with col2:
+        st.markdown("#### 📊 CVR: промо vs без промо")
+        promo_agg = df.groupby('has_promo').agg(
+            units=('units', 'sum'), impressions=('impressions', 'sum')
+        ).reset_index()
+        promo_agg['cvr'] = (promo_agg['units'] / promo_agg['impressions'].replace(0, float('nan')) * 100).fillna(0)
+        promo_agg['label'] = promo_agg['has_promo'].map(promo_labels)
+        if len(promo_agg) == 2:
+            _pc1, _pc2 = st.columns(2)
+            for idx, row in promo_agg.iterrows():
+                _col_to = _pc1 if idx == 0 else _pc2
+                _col_to.metric(row['label'], f"{row['cvr']:.2f}%",
+                               f"{int(row['units'])} units / {int(row['impressions'])} impr")
+        else:
+            st.info("Недостатньо даних для порівняння")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 8. MoM ПОРІВНЯННЯ
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 📊 Порівняння з попереднім періодом")
+    try:
+        period_days = (date_range[1] - date_range[0]).days
+        prev_d1 = str(date_range[0] - dt.timedelta(days=period_days))
+        prev_d2 = str(date_range[0] - dt.timedelta(days=1))
+
+        with engine.connect() as conn:
+            prev = pd.read_sql(text("""
+                SELECT
+                    SUM(CASE WHEN item_price ~ '^[0-9.]+$' THEN item_price::numeric ELSE 0 END) AS revenue,
+                    SUM(CASE WHEN quantity ~ '^[0-9]+$' THEN quantity::numeric ELSE 1 END) AS units,
+                    COUNT(DISTINCT amazon_order_id) AS orders
+                FROM orders
+                WHERE SUBSTRING(purchase_date,1,10)::date BETWEEN :d1 AND :d2
+                  AND purchase_date IS NOT NULL AND purchase_date != ''
+            """), conn, params={"d1": prev_d1, "d2": prev_d2}).iloc[0]
+
+        prev_rev = float(prev['revenue'] or 0)
+        prev_units = int(prev['units'] or 0)
+        prev_orders = int(prev['orders'] or 0)
+
+        def _delta_str(cur, prev_v):
+            if prev_v == 0: return "+∞" if cur > 0 else "0%"
+            return f"{(cur - prev_v) / prev_v * 100:+.1f}%"
+
+        _mc1, _mc2, _mc3 = st.columns(3)
+        _mc1.metric("💰 Revenue", _fmt(total_rev), _delta_str(total_rev, prev_rev))
+        _mc2.metric("📦 Units", f"{total_units:,}", _delta_str(total_units, prev_units))
+        _mc3.metric("🛒 Orders", f"{total_orders:,}", _delta_str(total_orders, prev_orders))
+    except Exception:
+        st.info("Немає даних за попередній період")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 9. INSIGHTS (стара функція — залишаємо)
+    # ══════════════════════════════════════════════════════
+    # Підготуємо df для insights_orders
+    _df_compat = df.copy()
+    _df_compat['Order Date']  = _df_compat['date']
+    _df_compat['Order ID']    = ''  # grouped, не по order
+    _df_compat['SKU']         = _df_compat['sku']
+    _df_compat['Total Price'] = _df_compat['revenue']
+    _df_compat['Item Price']  = _df_compat['revenue']
+    _df_compat['Quantity']    = _df_compat['units']
+    # Фейковий Order ID для nunique
+    _df_compat['Order ID']    = range(len(_df_compat))
+    insights_orders(_df_compat)
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 10. AI CHAT
+    # ══════════════════════════════════════════════════════
+    ctx = (f"Orders v2: {total_orders:,} замовлень | Revenue {_fmt(total_rev)} | "
+           f"Units {total_units:,} | Impr {total_impr:,} | CVR {avg_cvr:.2f}% | "
+           f"Промо {promo_pct:.0f}% | Avg Price ${avg_price:.2f} | "
+           f"Період {d1}→{d2}")
+    show_ai_chat(ctx, [
+        "Які ASIN мають найвищу CVR?",
+        "Де промо-акції дають найкращий ефект?",
+        "Порівняй цей тиждень vs минулий за units",
+        "Які ASIN втратили продажі за останні 7 днів?",
+    ], "orders_v2")
 
 
 # ============================================
