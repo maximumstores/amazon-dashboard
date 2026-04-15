@@ -3437,14 +3437,14 @@ def show_orders(t=None):
                 SELECT
                     report_date::date                        AS date,
                     child_asin                               AS asin,
-                    parent_asin,
+                    MAX(parent_asin)                         AS parent_asin,
                     SUM(NULLIF(page_views,'')::numeric)      AS impressions,
                     SUM(NULLIF(sessions,'')::numeric)        AS sessions
                 FROM spapi.sales_traffic
                 WHERE report_date != '' AND report_date IS NOT NULL
                   AND child_asin != '' AND child_asin IS NOT NULL
                   AND report_date::date BETWEEN :d1 AND :d2
-                GROUP BY 1, 2, 3
+                GROUP BY 1, 2
             """), conn, params={"d1": d1, "d2": d2})
 
     except Exception as e:
@@ -3481,17 +3481,25 @@ def show_orders(t=None):
     df['parent_asin'] = df['parent_asin'].fillna('')
 
     # ── Offer type icon ──
+    # Системні промо Amazon які НЕ є реальними акціями
+    _SYSTEM_PROMOS = {'amazon asin', 'free shipping', 'core', 'automatedshipping',
+                      'shipping', 'auto', 'none', 'na', 'nan', ''}
+
     def _offer_icon(promo, desig):
-        promo = str(promo) if promo else ''
-        desig = str(desig) if desig else ''
-        icons = []
-        promo_l = promo.lower()
+        promo = str(promo).strip() if promo else ''
+        desig = str(desig).strip() if desig else ''
+        # Фільтруємо системні промо
+        promo_parts = [p.strip() for p in promo.split(',')]
+        real_promos = [p for p in promo_parts if p.lower() not in _SYSTEM_PROMOS]
+        promo_joined = ' '.join(real_promos).lower()
         desig_l = desig.lower()
-        if 'coupon' in promo_l or 'voucher' in promo_l:  icons.append('🏷️')
-        if 'lightning' in promo_l or 'deal' in promo_l:  icons.append('⚡')
-        if 'prime' in desig_l:                           icons.append('🅿️')
-        if 'sns' in promo_l or 'subscribe' in promo_l:   icons.append('🔄')
-        if promo and not icons:                          icons.append('🎫')
+        icons = []
+        if 'coupon' in promo_joined or 'voucher' in promo_joined:  icons.append('🏷️')
+        if 'lightning' in promo_joined or 'deal' in promo_joined:  icons.append('⚡')
+        if 'prime' in desig_l and 'exclusive' in desig_l:          icons.append('🅿️')
+        if 'sns' in promo_joined or 'subscribe' in promo_joined:   icons.append('🔄')
+        # Тільки якщо є реальні промо і жоден конкретний тип не спрацював
+        if real_promos and not icons:                              icons.append('🎫')
         return ' '.join(icons) if icons else ''
 
     df['offer'] = df.apply(lambda r: _offer_icon(r.get('promo_ids'), r.get('price_desig')), axis=1)
@@ -3553,10 +3561,11 @@ def show_orders(t=None):
         insight_card("📈", "Дохід/день",
             f"<b>{_fmt(rev_per_day)}</b>/день · прогноз місяць: <b>{_fmt(rev_per_day * 30)}</b>", "#1a2b1e")
     with _ic[1]:
-        if avg_cvr >= 12:   _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — вище норми!", "🟢", "#0d2b1e"
-        elif avg_cvr >= 5:  _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — в нормі.", "🟡", "#2b2400"
-        else:               _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — нижче норми.", "🔴", "#2b0d0d"
-        insight_card(_em, "Конверсія", _txt, _col)
+        # CVR з page_views: норма 1-5% (не sessions-based 8-15%)
+        if avg_cvr >= 5:    _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — вище норми!", "🟢", "#0d2b1e"
+        elif avg_cvr >= 1:  _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — в нормі (1-5% для page_views).", "🟡", "#2b2400"
+        else:               _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — нижче норми. Перевір фото/ціну.", "🔴", "#2b0d0d"
+        insight_card(_em, "Конверсія (Units/Impr)", _txt, _col)
     with _ic[2]:
         insight_card("🎫", "Промо-замовлення",
             f"<b>{promo_pct:.0f}%</b> рядків мають промо (купон/дил/прайм)", "#1a1a2e")
@@ -3665,13 +3674,13 @@ def show_orders(t=None):
         st.markdown("#### 📊 CVR по ASIN (з impressions)")
         cvr_df = asin_agg[asin_agg['impressions'] > 0].nlargest(15, 'impressions')
         if not cvr_df.empty:
-            colors_cvr = ['#4CAF50' if v >= 12 else '#FFC107' if v >= 5 else '#F44336' for v in cvr_df['cvr']]
+            colors_cvr = ['#4CAF50' if v >= 5 else '#FFC107' if v >= 1 else '#F44336' for v in cvr_df['cvr']]
             fig4 = go.Figure(go.Bar(
                 x=cvr_df['cvr'], y=cvr_df['asin'], orientation='h',
                 marker_color=colors_cvr,
                 text=[f"{v:.1f}%" for v in cvr_df['cvr']], textposition='outside'
             ))
-            fig4.add_vline(x=10, line_dash="dash", line_color="#FFC107", annotation_text="10% норма")
+            fig4.add_vline(x=3, line_dash="dash", line_color="#FFC107", annotation_text="3% avg")
             fig4.update_layout(height=max(350, len(cvr_df) * 35),
                                yaxis={'categoryorder': 'total ascending'},
                                xaxis_title='CVR %',
