@@ -3435,16 +3435,15 @@ def show_orders(t=None):
 
             df_traffic = pd.read_sql(text("""
                 SELECT
-                    date::date                               AS date,
-                    asin,
+                    report_date::date                        AS date,
+                    child_asin                               AS asin,
                     parent_asin,
                     SUM(NULLIF(page_views,'')::numeric)      AS impressions,
                     SUM(NULLIF(sessions,'')::numeric)        AS sessions
-                FROM sales_traffic
-                WHERE date != '' AND date IS NOT NULL
-                  AND asin != '' AND asin IS NOT NULL
-                  AND granularity != 'DATE'
-                  AND date::date BETWEEN :d1 AND :d2
+                FROM spapi.sales_traffic
+                WHERE report_date != '' AND report_date IS NOT NULL
+                  AND child_asin != '' AND child_asin IS NOT NULL
+                  AND report_date::date BETWEEN :d1 AND :d2
                 GROUP BY 1, 2, 3
             """), conn, params={"d1": d1, "d2": d2})
 
