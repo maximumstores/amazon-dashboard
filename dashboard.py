@@ -3734,6 +3734,7 @@ def show_reviews(t=None):
         "Що найчастіше хвалять в 5★ відгуках?",
     ], "reviews")
 
+
 def show_orders(t=None):
     """
     🛒 Продажі (Orders) v2.0
@@ -3887,7 +3888,7 @@ def show_orders(t=None):
     df['offer'] = df.apply(lambda r: _offer_icon(r.get('promo_ids'), r.get('price_desig')), axis=1)
 
     # ── CVR ──
-    df['cvr'] = (df['units'] / df['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+    df['cvr'] = (df['units'] / df['sessions'].replace(0, float('nan')) * 100).fillna(0).round(2)
 
     # ══════════════════════════════════════════════════════
     # 3. KPI — HERO CARD
@@ -3999,14 +4000,15 @@ def show_orders(t=None):
         orders_cnt=('orders_cnt', 'sum'), impressions=('impressions', 'sum'),
         sessions=('sessions', 'sum'),
     ).reset_index()
-    daily['cvr'] = (daily['units'] / daily['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+    # CVR standard = units/sessions (Amazon Seller Central metric)
+    daily['cvr'] = (daily['units'] / daily['sessions'].replace(0, float('nan')) * 100).fillna(0).round(2)
 
     if gran == "Тиждень":
         daily = daily.set_index('date').resample('W').agg({
             'units': 'sum', 'revenue': 'sum', 'orders_cnt': 'sum',
             'impressions': 'sum', 'sessions': 'sum'
         }).reset_index()
-        daily['cvr'] = (daily['units'] / daily['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+        daily['cvr'] = (daily['units'] / daily['sessions'].replace(0, float('nan')) * 100).fillna(0).round(2)
 
     col1, col2 = st.columns(2)
     with col1:
@@ -4069,7 +4071,8 @@ def show_orders(t=None):
         orders_cnt=('orders_cnt', 'sum'), impressions=('impressions', 'sum'),
         sessions=('sessions', 'sum'),
     ).reset_index()
-    asin_agg['cvr'] = (asin_agg['units'] / asin_agg['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+    # CVR = units / sessions * 100 (стандарт Amazon Seller Central = unit_session_percentage)
+    asin_agg['cvr'] = (asin_agg['units'] / asin_agg['sessions'].replace(0, float('nan')) * 100).fillna(0).round(2)
     asin_agg['avg_price'] = (asin_agg['revenue'] / asin_agg['units'].replace(0, float('nan'))).fillna(0).round(2)
     asin_agg = asin_agg.sort_values('revenue', ascending=False)
 
@@ -4088,19 +4091,19 @@ def show_orders(t=None):
         st.plotly_chart(fig3, use_container_width=True)
 
     with col2:
-        st.markdown("#### 📊 CVR по ASIN (з impressions)")
-        cvr_df = asin_agg[asin_agg['impressions'] > 0].nlargest(15, 'impressions')
+        st.markdown("#### 📊 CVR по ASIN (units/sessions)")
+        cvr_df = asin_agg[asin_agg['sessions'] > 0].nlargest(15, 'sessions')
         if not cvr_df.empty:
-            colors_cvr = ['#4CAF50' if v >= 5 else '#FFC107' if v >= 1 else '#F44336' for v in cvr_df['cvr']]
+            colors_cvr = ['#4CAF50' if v >= 10 else '#FFC107' if v >= 5 else '#F44336' for v in cvr_df['cvr']]
             fig4 = go.Figure(go.Bar(
                 x=cvr_df['cvr'], y=cvr_df['asin'], orientation='h',
                 marker_color=colors_cvr,
                 text=[f"{v:.1f}%" for v in cvr_df['cvr']], textposition='outside'
             ))
-            fig4.add_vline(x=3, line_dash="dash", line_color="#FFC107", annotation_text="3% avg")
+            fig4.add_vline(x=10, line_dash="dash", line_color="#FFC107", annotation_text="Amazon avg 10%")
             fig4.update_layout(height=max(350, len(cvr_df) * 35),
                                yaxis={'categoryorder': 'total ascending'},
-                               xaxis_title='CVR %',
+                               xaxis_title='CVR % (units/sessions)',
                                margin=dict(l=0, r=60, t=10, b=0))
             st.plotly_chart(fig4, use_container_width=True)
         else:
@@ -4118,8 +4121,32 @@ def show_orders(t=None):
     for c in ['Units', 'Orders', 'Impr', 'Sessions']:
         if c in show_asin.columns:
             show_asin[c] = pd.to_numeric(show_asin[c], errors='coerce').fillna(0).astype(int)
+
+    sa_head = show_asin.head(200).copy()
+    t_units_sa = int(sa_head['Units'].sum())
+    t_sess_sa  = int(sa_head['Sessions'].sum())
+    t_rev_sa   = float(sa_head['Revenue'].sum())
+    asin_total_row = pd.DataFrame([{
+        'ASIN':     f'📊 TOTAL ({len(sa_head)})',
+        'Parent':   '',
+        'SKU':      '',
+        'Units':    t_units_sa,
+        'Revenue':  t_rev_sa,
+        'Orders':   int(sa_head['Orders'].sum()),
+        'Impr':     int(sa_head['Impr'].sum()),
+        'Sessions': t_sess_sa,
+        'CVR %':    round(t_units_sa / t_sess_sa * 100, 2) if t_sess_sa > 0 else 0,
+        'Avg Price': round(t_rev_sa / t_units_sa, 2) if t_units_sa > 0 else 0,
+    }])
+    sa_with_total = pd.concat([sa_head, asin_total_row], ignore_index=True)
+
+    def _highlight_total_asin(row):
+        if str(row.get('ASIN', '')).startswith('📊 TOTAL'):
+            return ['background-color:#1a2b1e;color:#4CAF50;font-weight:bold'] * len(row)
+        return [''] * len(row)
+
     st.dataframe(
-        show_asin.head(200).style.format({
+        sa_with_total.style.format({
             'Units':     '{:,}',
             'Orders':    '{:,}',
             'Impr':      '{:,}',
@@ -4127,8 +4154,8 @@ def show_orders(t=None):
             'Revenue':   '${:,.0f}',
             'Avg Price': '${:.2f}',
             'CVR %':     '{:.2f}%'
-        }),
-        use_container_width=True, hide_index=True, height=400
+        }).apply(_highlight_total_asin, axis=1),
+        use_container_width=True, hide_index=True, height=440
     )
     st.caption(f"{len(asin_agg)} унікальних ASIN")
 
@@ -4316,7 +4343,7 @@ def show_orders(t=None):
         offer=('offer', lambda x: ' '.join(sorted(set(v for v in x if v)))),
         child_count=('asin', 'nunique'),
     ).reset_index()
-    parent_agg['cvr'] = (parent_agg['units'] / parent_agg['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+    parent_agg['cvr'] = (parent_agg['units'] / parent_agg['sessions'].replace(0, float('nan')) * 100).fillna(0).round(2)
     parent_agg = parent_agg.sort_values(['period', 'revenue'], ascending=[False, False])
 
     # ── Search фільтр ──
@@ -4370,7 +4397,7 @@ def show_orders(t=None):
             child_count=('child_count', 'max'),
             periods=('period', 'nunique'),
         ).reset_index()
-        parent_total['cvr'] = (parent_total['units'] / parent_total['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+        parent_total['cvr'] = (parent_total['units'] / parent_total['sessions'].replace(0, float('nan')) * 100).fillna(0).round(2)
         parent_total = parent_total.sort_values('revenue', ascending=False)
 
         pt_show = parent_total.rename(columns={
@@ -4384,16 +4411,38 @@ def show_orders(t=None):
             if c in pt_show.columns:
                 pt_show[c] = pd.to_numeric(pt_show[c], errors='coerce').fillna(0).astype(int)
 
+        # ── TOTAL row ──
+        pt_head = pt_show.head(max_parents).copy()
+        total_units_p = int(pt_head['Units'].sum())
+        total_sess_p  = int(pt_head['Sessions'].sum())
+        total_row = pd.DataFrame([{
+            'Parent ASIN': f'📊 TOTAL ({len(pt_head)})',
+            'Units':      total_units_p,
+            'Revenue':    float(pt_head['Revenue'].sum()),
+            'Orders':     int(pt_head['Orders'].sum()),
+            'Impr':       int(pt_head['Impr'].sum()),
+            'Sessions':   total_sess_p,
+            'CVR %':      round(total_units_p / total_sess_p * 100, 2) if total_sess_p > 0 else 0,
+            '# Children': int(pt_head['# Children'].sum()) if '# Children' in pt_head.columns else 0,
+            '# Periods':  int(pt_head['# Periods'].max()) if '# Periods' in pt_head.columns else 0,
+        }])
+        pt_with_total = pd.concat([pt_head, total_row], ignore_index=True)
+
+        def _highlight_total(row):
+            if str(row['Parent ASIN']).startswith('📊 TOTAL'):
+                return ['background-color:#1a2b1e;color:#4CAF50;font-weight:bold'] * len(row)
+            return [''] * len(row)
+
         st.dataframe(
-            pt_show.head(max_parents).style.format({
+            pt_with_total.style.format({
                 'Units':    '{:,}',
                 'Orders':   '{:,}',
                 'Impr':     '{:,}',
                 'Sessions': '{:,}',
                 'Revenue':  '${:,.0f}',
                 'CVR %':    '{:.2f}%'
-            }),
-            use_container_width=True, hide_index=True, height=400
+            }).apply(_highlight_total, axis=1),
+            use_container_width=True, hide_index=True, height=440
         )
 
         st.markdown("---")
@@ -4472,6 +4521,9 @@ def show_orders(t=None):
 .cvr-low  { color:#F44336; }
 .offer-badge { background:#2b2b1a; border:1px solid #4a4a2d; border-radius:4px;
                padding:2px 6px; font-size:11px; color:#FFC107; margin-left:6px; }
+.total-row { background:#1a2b1e !important; border-top:3px solid #4CAF50;
+             font-size:14px; color:#4CAF50 !important; }
+.total-row td { padding:12px; border-bottom:none; }
 </style>
 
 <table class='ph-table'>
@@ -4530,7 +4582,7 @@ def show_orders(t=None):
                     sessions=('sessions', 'sum'),
                     offer=('offer', lambda x: ' '.join(sorted(set(v for v in x if v)))),
                 ).reset_index()
-                child_grouped['cvr'] = (child_grouped['units'] / child_grouped['impressions'].replace(0, float('nan')) * 100).fillna(0)
+                child_grouped['cvr'] = (child_grouped['units'] / child_grouped['sessions'].replace(0, float('nan')) * 100).fillna(0)
                 child_grouped = child_grouped.sort_values('revenue', ascending=False)
 
                 for _, crow in child_grouped.iterrows():
@@ -4560,7 +4612,31 @@ function toggleParent_{idx}(row) {{
 </script>
 """)
 
-        html_parts.append("</tbody></table>")
+        html_parts.append("</tbody>")
+
+        # ── TOTAL ROW ──
+        t_units = int(sum(p.get('units', 0) or 0 for p in parents_to_render[:max_parents]))
+        t_rev   = float(sum(p.get('revenue', 0) or 0 for p in parents_to_render[:max_parents]))
+        t_ord   = int(sum(p.get('orders_cnt', 0) or 0 for p in parents_to_render[:max_parents]))
+        t_impr  = int(sum(p.get('impressions', 0) or 0 for p in parents_to_render[:max_parents]))
+        t_sess  = int(sum(p.get('sessions', 0) or 0 for p in parents_to_render[:max_parents]))
+        t_cvr   = (t_units / t_sess * 100) if t_sess > 0 else 0
+        t_cvr_cls = 'cvr-high' if t_cvr >= 10 else ('cvr-mid' if t_cvr >= 5 else 'cvr-low')
+
+        html_parts.append(f"""
+<tfoot>
+  <tr class='total-row'>
+    <td class='left'><b>📊 TOTAL ({len(parents_to_render[:max_parents])} parents)</b></td>
+    <td><b>{_fmt_int(t_units)}</b></td>
+    <td><b>{_fmt_money(t_rev)}</b></td>
+    <td><b>{_fmt_int(t_ord)}</b></td>
+    <td><b>{_fmt_int(t_impr)}</b></td>
+    <td><b>{_fmt_int(t_sess)}</b></td>
+    <td class='{t_cvr_cls}'><b>{t_cvr:.2f}%</b></td>
+  </tr>
+</tfoot>
+""")
+        html_parts.append("</table>")
 
         # Рендер
         total_rows = len(parents_to_render[:max_parents])
