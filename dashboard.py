@@ -3732,6 +3732,7 @@ def show_sqp(t=None):
             avg_position=('position', 'mean'),
             unique_terms=('search_term', 'nunique'),
             best_rank=('search_rank', 'min'),
+            top_terms=('search_term', lambda x: ' · '.join(x.value_counts().head(5).index.tolist())),
         ).reset_index().sort_values('appearances', ascending=False)
 
         comp_agg['avg_click_share'] = (comp_agg['avg_click_share'] * 100).round(2)
@@ -3756,16 +3757,59 @@ def show_sqp(t=None):
         )
         st.plotly_chart(fig_comp, use_container_width=True)
 
-        st.dataframe(
-            comp_agg.head(50).rename(columns={
-                'asin': 'Competitor ASIN', 'appearances': 'Appearances',
-                'unique_terms': 'Unique Terms', 'avg_click_share': 'Avg CTR %',
-                'avg_position': 'Avg Pos', 'best_rank': 'Best Rank'
-            }).style.format({
-                'Avg CTR %': '{:.2f}%', 'Avg Pos': '{:.1f}', 'Best Rank': '{:,}'
-            }),
-            use_container_width=True, hide_index=True, height=400
-        )
+        # ── HTML таблиця з клікабельними ASIN + запити ──
+        st.markdown("#### 📋 Деталі конкурентів (клікни ASIN → Amazon)")
+
+        comp_html = """
+<style>
+.comp-table { width:100%; border-collapse:collapse; font-size:13px;
+              background:#0e1117; color:#fff; border-radius:8px; overflow:hidden; }
+.comp-table th { background:#1a1a2e; color:#aaa; font-weight:600; padding:10px 12px;
+                 text-align:left; border-bottom:2px solid #2d2d4a; font-size:11px;
+                 text-transform:uppercase; }
+.comp-table td { padding:8px 12px; border-bottom:1px solid #1f1f2e; vertical-align:top; }
+.comp-table tr:hover { background:#1d1d2e; }
+.comp-link { color:#5B9BD5; text-decoration:none; font-weight:600; font-family:monospace; }
+.comp-link:hover { color:#82b1ff; text-decoration:underline; }
+.comp-terms { color:#888; font-size:11px; line-height:1.6; margin-top:4px; }
+.comp-badge { display:inline-block; background:#2b1a1a; border:1px solid #4a2d2d;
+              border-radius:4px; padding:2px 8px; font-size:11px; color:#F44336;
+              margin:2px 4px 2px 0; }
+</style>
+<table class='comp-table'>
+<thead><tr>
+  <th>Competitor ASIN</th>
+  <th>Terms</th>
+  <th>Avg CTR</th>
+  <th>Avg Pos</th>
+  <th>Запити де з'являється</th>
+</tr></thead><tbody>
+"""
+        for _, row in comp_agg.head(30).iterrows():
+            asin = row['asin']
+            url = f"https://www.amazon.com/dp/{asin}"
+            terms_list = row.get('top_terms', '')
+            terms_badges = ''.join([
+                f"<span class='comp-badge'>{t.strip()}</span>"
+                for t in terms_list.split(' · ') if t.strip()
+            ])
+
+            comp_html += f"""
+<tr>
+  <td><a class='comp-link' href='{url}' target='_blank'>🔗 {asin}</a></td>
+  <td style='text-align:center'>{int(row['appearances'])}</td>
+  <td style='text-align:center'>{row['avg_click_share']:.2f}%</td>
+  <td style='text-align:center'>{row['avg_position']:.1f}</td>
+  <td><div class='comp-terms'>{terms_badges}</div></td>
+</tr>
+"""
+
+        comp_html += "</tbody></table>"
+        st.components.v1.html(comp_html, height=min(800, 60 + len(comp_agg.head(30)) * 55), scrolling=True)
+
+        st.download_button("📥 CSV конкуренти",
+            comp_agg.to_csv(index=False).encode(),
+            f"competitors_{sel_week}.csv", "text/csv", key="dl_comp")
     else:
         st.info("Немає конкурентів на наших запитах")
 
