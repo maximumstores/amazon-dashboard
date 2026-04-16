@@ -1611,6 +1611,7 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 # ============================================
 # INVENTORY UNIFIED
 # ============================================
+
 def show_inventory_unified():
     st.markdown("### 📦 Склад (Inventory)")
     engine = get_engine()
@@ -1791,6 +1792,194 @@ def show_inventory_unified():
         st.warning(f"🟡 **{oos_cnt} SKU** з нульовими залишками (Out of Stock)")
     if total_uns > 0:
         st.error(f"❌ Unsellable: **{total_uns}** одиниць")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 💸 REVENUE AT RISK + STOCK COVERAGE
+    # ══════════════════════════════════════════════════════
+    # Підтягуємо avg daily revenue по SKU з orders (останні 30 днів)
+    try:
+        with engine.connect() as conn:
+            rev_by_sku = pd.read_sql(text("""
+                SELECT
+                    sku,
+                    SUM(CASE WHEN item_price ~ '^[0-9.]+$'
+                        THEN item_price::numeric ELSE 0 END) AS revenue_30d,
+                    SUM(CASE WHEN quantity ~ '^[0-9]+$'
+                        THEN quantity::numeric ELSE 1 END)   AS units_30d,
+                    COUNT(DISTINCT amazon_order_id)           AS orders_30d
+                FROM orders
+                WHERE SUBSTRING(purchase_date, 1, 10)::date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND sku IS NOT NULL AND sku != ''
+                GROUP BY sku
+            """), conn)
+    except Exception:
+        rev_by_sku = pd.DataFrame()
+
+    if not rev_by_sku.empty and sku_c:
+        rev_by_sku['daily_rev']   = (rev_by_sku['revenue_30d'] / 30).round(2)
+        rev_by_sku['daily_units'] = (rev_by_sku['units_30d'] / 30).round(2)
+
+        # Merge з inventory
+        df_f = df_f.merge(rev_by_sku[['sku', 'revenue_30d', 'units_30d', 'daily_rev', 'daily_units']],
+                           left_on=sku_c, right_on='sku', how='left', suffixes=('', '_ord'))
+        df_f['revenue_30d']  = df_f['revenue_30d'].fillna(0)
+        df_f['daily_rev']    = df_f['daily_rev'].fillna(0)
+        df_f['daily_units']  = df_f['daily_units'].fillna(0)
+
+        # ── 💸 REVENUE AT RISK (OOS SKU × daily revenue) ──
+        st.markdown("### 💸 Revenue at Risk")
+        st.caption("Скільки грошей ти втрачаєш щодня через Out-of-Stock")
+
+        oos_skus = df_f[(df_f[avail_c] == 0) & (df_f['daily_rev'] > 0)].copy() if avail_c else pd.DataFrame()
+
+        if not oos_skus.empty:
+            total_daily_loss = oos_skus['daily_rev'].sum()
+            total_monthly_loss = total_daily_loss * 30
+            top_oos = oos_skus.nlargest(10, 'daily_rev')
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("🔴 OOS з продажами", f"{len(oos_skus)}", "SKU які продавались але зараз OOS")
+            c2.metric("💸 Втрати/день", f"${total_daily_loss:,.0f}", "щоденна втрачена виручка")
+            c3.metric("📅 Втрати/місяць", f"${total_monthly_loss:,.0f}", "прогноз на 30 днів")
+
+            if total_daily_loss > 500:
+                st.error(f"🚨 Ти втрачаєш **${total_daily_loss:,.0f}/день** через OOS! "
+                         f"Поповни топ SKU нижче — це **${total_monthly_loss:,.0f}/місяць** потенціалу.")
+            elif total_daily_loss > 100:
+                st.warning(f"⚠️ Втрати **${total_daily_loss:,.0f}/день** через OOS")
+
+            st.markdown("#### 🔴 Топ OOS SKU за втраченим revenue")
+            oos_show = top_oos[[c for c in [sku_c, asin_c, 'revenue_30d', 'daily_rev', 'daily_units']
+                                if c and c in top_oos.columns]].copy()
+            oos_show['monthly_loss'] = (oos_show['daily_rev'] * 30).round(0)
+            oos_show = oos_show.rename(columns={
+                sku_c: 'SKU', asin_c: 'ASIN',
+                'revenue_30d': 'Rev 30д', 'daily_rev': '$/день',
+                'daily_units': 'Units/день', 'monthly_loss': 'Втрати/міс'
+            })
+            for c in ['Rev 30д', '$/день', 'Втрати/міс']:
+                if c in oos_show.columns:
+                    oos_show[c] = pd.to_numeric(oos_show[c], errors='coerce').fillna(0)
+
+            st.dataframe(
+                oos_show.style.format({
+                    'Rev 30д': '${:,.0f}',
+                    '$/день': '${:,.2f}',
+                    'Units/день': '{:.1f}',
+                    'Втрати/міс': '${:,.0f}',
+                }).background_gradient(subset=['$/день'], cmap='Reds'),
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.success("✅ Жодного OOS SKU з продажами — все в наявності!")
+
+        st.markdown("---")
+
+        # ── 📊 REVENUE × STOCK COVERAGE (high revenue + low DoS = danger) ──
+        st.markdown("### 📊 Revenue × Stock Coverage")
+        st.caption("Топ SKU за виручкою з низьким запасом = найбільший ризик для бізнесу")
+
+        if dos_use and avail_c:
+            df_risk = df_f[
+                (df_f['daily_rev'] > 0) &
+                (df_f[avail_c] > 0) &
+                (df_f[dos_use] > 0)
+            ].copy()
+
+            if not df_risk.empty:
+                # Risk score = daily_rev / DoS (чим більше revenue і менше днів = вищий ризик)
+                df_risk['risk_score'] = (df_risk['daily_rev'] / df_risk[dos_use].replace(0, float('nan'))).fillna(0)
+                df_risk = df_risk.sort_values('risk_score', ascending=False)
+
+                # Категорії
+                critical = df_risk[df_risk[dos_use] < 14]
+                warning  = df_risk[(df_risk[dos_use] >= 14) & (df_risk[dos_use] < 30)]
+                safe     = df_risk[df_risk[dos_use] >= 30]
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("🔴 Критичні (<14д)",
+                          f"{len(critical)}",
+                          f"${critical['daily_rev'].sum():,.0f}/день revenue")
+                c2.metric("🟡 Увага (14-30д)",
+                          f"{len(warning)}",
+                          f"${warning['daily_rev'].sum():,.0f}/день")
+                c3.metric("🟢 Safe (30+д)",
+                          f"{len(safe)}",
+                          f"${safe['daily_rev'].sum():,.0f}/день")
+
+                # Таблиця топ-20 ризикових
+                top_risk = df_risk.head(20)
+                risk_show = top_risk[[c for c in [sku_c, asin_c, avail_c, dos_use,
+                                                   'daily_rev', 'revenue_30d', 'risk_score']
+                                      if c and c in top_risk.columns]].copy()
+                risk_show = risk_show.rename(columns={
+                    sku_c: 'SKU', asin_c: 'ASIN', avail_c: 'Stock',
+                    dos_use: 'DoS', 'daily_rev': '$/день',
+                    'revenue_30d': 'Rev 30д', 'risk_score': 'Risk Score'
+                })
+                for c in ['Stock', 'DoS']:
+                    if c in risk_show.columns:
+                        risk_show[c] = risk_show[c].astype(int)
+
+                def _highlight_dos(row):
+                    styles = [''] * len(row)
+                    if 'DoS' in row.index:
+                        d = row['DoS']
+                        idx = list(row.index).index('DoS')
+                        if d < 14:   styles[idx] = 'background-color:#2b0d0d;color:#F44336;font-weight:bold'
+                        elif d < 30: styles[idx] = 'background-color:#2b2400;color:#FFC107'
+                        else:        styles[idx] = 'background-color:#0d2b1e;color:#4CAF50'
+                    return styles
+
+                st.markdown("#### ⚠️ Топ 20 SKU за ризиком (Revenue × Low Stock)")
+                st.dataframe(
+                    risk_show.style.format({
+                        '$/день': '${:,.2f}',
+                        'Rev 30д': '${:,.0f}',
+                        'Risk Score': '{:.2f}',
+                    }).apply(_highlight_dos, axis=1),
+                    use_container_width=True, hide_index=True, height=500
+                )
+
+                # Scatter plot: Revenue vs DoS
+                st.markdown("#### 🔍 Revenue vs Days of Supply")
+                st.caption("Червона зона = високий revenue + мало днів → РИЗИК")
+
+                fig_scatter = go.Figure()
+                fig_scatter.add_trace(go.Scatter(
+                    x=df_risk[dos_use],
+                    y=df_risk['daily_rev'],
+                    mode='markers+text',
+                    marker=dict(
+                        size=10,
+                        color=df_risk[dos_use],
+                        colorscale='RdYlGn',
+                        cmin=0, cmax=60,
+                        showscale=True,
+                        colorbar=dict(title='DoS')
+                    ),
+                    text=df_risk[sku_c],
+                    textposition='top center',
+                    textfont=dict(size=8, color='#888'),
+                    hovertemplate='<b>%{text}</b><br>DoS: %{x} днів<br>Revenue: $%{y:.2f}/день<extra></extra>'
+                ))
+                # Danger zone
+                fig_scatter.add_vrect(x0=0, x1=14, fillcolor="rgba(244,67,54,0.1)",
+                                       line_width=0, annotation_text="🔴 <14д")
+                fig_scatter.add_vrect(x0=14, x1=30, fillcolor="rgba(255,193,7,0.05)",
+                                       line_width=0, annotation_text="🟡 14-30д")
+                fig_scatter.update_layout(
+                    height=400,
+                    xaxis_title='Days of Supply',
+                    yaxis_title='Daily Revenue ($)',
+                    yaxis=dict(tickprefix='$'),
+                    margin=dict(l=0, r=0, t=10, b=0)
+                )
+                st.plotly_chart(fig_scatter, use_container_width=True)
+
+        st.markdown("---")
 
     st.markdown("---")
 
