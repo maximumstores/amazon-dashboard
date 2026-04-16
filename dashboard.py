@@ -3354,7 +3354,479 @@ def show_inventory_finance(df_filtered, t):
     st.dataframe(dt_.style.format({'Price':"${:.2f}",'Stock Value':"${:,.2f}"}),width="stretch")
     insights_inventory(df_filtered)
 
+def show_sqp(t=None):
+    """
+    📊 Brand Analytics — Search Query Performance (SQP)
+    - Hero KPI
+    - Топ пошукові запити по click share
+    - Наші ASIN: які отримують трафік
+    - Конкуренти: хто ще кликається по наших запитах
+    - Тренд click share по тижнях (коли є кілька тижнів)
+    """
+    if t is None: t = translations.get("UA", {})
 
+    engine = get_engine()
+
+    # ══════════════════════════════════════════════════════
+    # 1. ЗАВАНТАЖЕННЯ ДАНИХ
+    # ══════════════════════════════════════════════════════
+    try:
+        with engine.connect() as conn:
+            # Всі наявні тижні
+            weeks = pd.read_sql(text("""
+                SELECT DISTINCT report_date
+                FROM spapi.brand_analytics_sqp
+                ORDER BY report_date DESC
+            """), conn)
+
+            if weeks.empty:
+                st.warning("⚠️ Немає даних SQP. Запусти `python 16_brand_analytics_loader.py`")
+                return
+
+            available_weeks = weeks['report_date'].tolist()
+
+            # Вибір тижня
+            sel_week = st.selectbox(
+                "📅 Тиждень:",
+                available_weeks,
+                format_func=lambda d: f"{d} → {d + pd.Timedelta(days=6)}",
+                key="sqp_week"
+            )
+
+            # Дані за обраний тиждень
+            df = pd.read_sql(text("""
+                SELECT search_term, search_freq_rank,
+                       asin_1, click_share_1, conv_share_1,
+                       asin_2, click_share_2, conv_share_2,
+                       asin_3, click_share_3, conv_share_3
+                FROM spapi.brand_analytics_sqp
+                WHERE report_date = :week
+                ORDER BY search_freq_rank ASC
+            """), conn, params={"week": sel_week})
+
+            # Наші ASIN
+            our_asins_df = pd.read_sql(text("""
+                SELECT DISTINCT asin1 AS asin FROM listings_all
+                WHERE asin1 IS NOT NULL AND asin1 != ''
+            """), conn)
+            our_asins = set(our_asins_df['asin'].tolist())
+
+    except Exception as e:
+        st.error(f"DB error: {e}")
+        return
+
+    if df.empty:
+        st.info(f"Немає даних за тиждень {sel_week}")
+        return
+
+    # ── Numeric convert ──
+    for c in ['search_freq_rank', 'click_share_1', 'conv_share_1',
+              'click_share_2', 'conv_share_2', 'click_share_3', 'conv_share_3']:
+        df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+
+    # ── Визначити позицію нашого ASIN (1, 2, 3 або none) ──
+    def _our_position(row):
+        for i in [1, 2, 3]:
+            if row.get(f'asin_{i}', '') in our_asins:
+                return i
+        return 0
+
+    df['our_position'] = df.apply(_our_position, axis=1)
+    df['our_asin'] = df.apply(
+        lambda r: r[f'asin_{r["our_position"]}'] if r['our_position'] > 0 else '', axis=1
+    )
+    df['our_click_share'] = df.apply(
+        lambda r: r[f'click_share_{r["our_position"]}'] if r['our_position'] > 0 else 0, axis=1
+    )
+    df['our_conv_share'] = df.apply(
+        lambda r: r[f'conv_share_{r["our_position"]}'] if r['our_position'] > 0 else 0, axis=1
+    )
+
+    # ══════════════════════════════════════════════════════
+    # 2. HERO KPI
+    # ══════════════════════════════════════════════════════
+    total_terms     = len(df)
+    pos1_count      = int((df['our_position'] == 1).sum())
+    pos2_count      = int((df['our_position'] == 2).sum())
+    pos3_count      = int((df['our_position'] == 3).sum())
+    avg_click_share = df[df['our_click_share'] > 0]['our_click_share'].mean() * 100 if (df['our_click_share'] > 0).any() else 0
+    avg_conv_share  = df[df['our_conv_share'] > 0]['our_conv_share'].mean() * 100 if (df['our_conv_share'] > 0).any() else 0
+    best_rank       = int(df[df['our_position'] > 0]['search_freq_rank'].min()) if (df['our_position'] > 0).any() else 0
+    unique_asins    = df[df['our_asin'] != '']['our_asin'].nunique()
+
+    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1e2e,#0d1222);border:1px solid #2d3a5a;
+            border-radius:12px;padding:20px 28px;margin-bottom:16px;
+            display:flex;align-items:center;gap:32px;flex-wrap:wrap">
+  <div>
+    <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+      📊 Search Query Performance
+    </div>
+    <div style="font-size:48px;font-weight:900;color:#5B9BD5;font-family:monospace;line-height:1">
+      {total_terms:,}
+    </div>
+    <div style="font-size:12px;color:#666;margin-top:6px">search terms з нашими ASIN · тиждень {sel_week}</div>
+  </div>
+  <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      🥇 #1 позиція <b style="color:#4CAF50">{pos1_count}</b>
+    </span>
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      🥈 #2 <b style="color:#FFC107">{pos2_count}</b>
+    </span>
+    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      🥉 #3 <b style="color:#FF9800">{pos3_count}</b>
+    </span>
+    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      📊 Avg CTR <b style="color:#AB47BC">{avg_click_share:.2f}%</b>
+    </span>
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      🔄 Avg CVR <b style="color:#5B9BD5">{avg_conv_share:.2f}%</b>
+    </span>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    # Інсайти
+    _ic = st.columns(3)
+    with _ic[0]:
+        insight_card("🏆", "Найкращий ранг",
+            f"Топ запит на позиції <b>#{best_rank:,}</b> з 2.7M+ запитів Amazon", "#1a2b1e")
+    with _ic[1]:
+        insight_card("📦", "ASINів в пошуку",
+            f"<b>{unique_asins}</b> унікальних ASIN отримують кліки з пошуку", "#1e293b")
+    with _ic[2]:
+        if pos1_count >= 5:
+            _em, _col = "🟢", "#0d2b1e"
+            _txt = f"<b>{pos1_count}</b> запитів де ми #1 — хороша видимість"
+        elif pos1_count >= 1:
+            _em, _col = "🟡", "#2b2400"
+            _txt = f"Тільки <b>{pos1_count}</b> запитів де ми #1 — є куди рости"
+        else:
+            _em, _col = "🔴", "#2b0d0d"
+            _txt = "Ми ніде не #1 по кліках — фокус на SEO і PPC"
+        insight_card(_em, "Позиція #1", _txt, _col)
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 3. ТОП ЗАПИТИ
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 🔍 Топ пошукові запити")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 📊 По Click Share (наші найкращі)")
+        top_cs = df[df['our_click_share'] > 0].nlargest(20, 'our_click_share').copy()
+        if not top_cs.empty:
+            top_cs['Click Share %'] = (top_cs['our_click_share'] * 100).round(2)
+            top_cs['Conv Share %']  = (top_cs['our_conv_share'] * 100).round(2)
+
+            fig_cs = go.Figure(go.Bar(
+                x=top_cs['Click Share %'],
+                y=top_cs['search_term'],
+                orientation='h',
+                marker_color=['#4CAF50' if p == 1 else '#FFC107' if p == 2 else '#FF9800'
+                              for p in top_cs['our_position']],
+                text=[f"{v:.2f}% (#{p})" for v, p in zip(top_cs['Click Share %'], top_cs['our_position'])],
+                textposition='outside'
+            ))
+            fig_cs.update_layout(
+                height=max(400, len(top_cs) * 25),
+                yaxis={'categoryorder': 'total ascending'},
+                xaxis_title='Click Share %',
+                margin=dict(l=0, r=80, t=10, b=0)
+            )
+            st.plotly_chart(fig_cs, use_container_width=True)
+
+    with col2:
+        st.markdown("#### 🏆 По Search Frequency Rank (найпопулярніші)")
+        top_rank = df[df['our_position'] > 0].nsmallest(20, 'search_freq_rank').copy()
+        if not top_rank.empty:
+            top_rank['Click Share %'] = (top_rank['our_click_share'] * 100).round(2)
+
+            fig_rank = go.Figure(go.Bar(
+                x=top_rank['search_freq_rank'],
+                y=top_rank['search_term'],
+                orientation='h',
+                marker_color='#5B9BD5',
+                text=[f"#{int(r):,}" for r in top_rank['search_freq_rank']],
+                textposition='outside'
+            ))
+            fig_rank.update_layout(
+                height=max(400, len(top_rank) * 25),
+                yaxis={'categoryorder': 'total descending'},
+                xaxis_title='Search Frequency Rank (lower = more popular)',
+                margin=dict(l=0, r=80, t=10, b=0)
+            )
+            st.plotly_chart(fig_rank, use_container_width=True)
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 4. ПОВНА ТАБЛИЦЯ
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 📋 Всі search terms")
+
+    # Пошук
+    search_q = st.text_input("🔍 Пошук по запиту:", "", key="sqp_search")
+    df_show = df.copy()
+    if search_q:
+        df_show = df_show[df_show['search_term'].str.contains(search_q, case=False, na=False)]
+
+    # Формуємо таблицю
+    table = df_show[[
+        'search_term', 'search_freq_rank', 'our_position', 'our_asin',
+        'our_click_share', 'our_conv_share',
+        'asin_1', 'click_share_1', 'asin_2', 'click_share_2', 'asin_3', 'click_share_3'
+    ]].copy()
+
+    table['our_click_share'] = (table['our_click_share'] * 100).round(2)
+    table['our_conv_share']  = (table['our_conv_share'] * 100).round(2)
+    table['click_share_1']   = (table['click_share_1'] * 100).round(2)
+    table['click_share_2']   = (table['click_share_2'] * 100).round(2)
+    table['click_share_3']   = (table['click_share_3'] * 100).round(2)
+
+    table = table.rename(columns={
+        'search_term':     'Search Term',
+        'search_freq_rank': 'Rank',
+        'our_position':    'Our Pos',
+        'our_asin':        'Our ASIN',
+        'our_click_share': 'Our CTR %',
+        'our_conv_share':  'Our CVR %',
+        'asin_1':          '#1 ASIN',
+        'click_share_1':   '#1 CTR %',
+        'asin_2':          '#2 ASIN',
+        'click_share_2':   '#2 CTR %',
+        'asin_3':          '#3 ASIN',
+        'click_share_3':   '#3 CTR %',
+    })
+
+    # Кольорова підсвітка позиції
+    def _pos_color(row):
+        styles = [''] * len(row)
+        pos_idx = list(row.index).index('Our Pos') if 'Our Pos' in row.index else -1
+        if pos_idx >= 0:
+            v = row['Our Pos']
+            if v == 1:   styles[pos_idx] = 'background-color:#1a3d1a;color:#4CAF50;font-weight:bold'
+            elif v == 2: styles[pos_idx] = 'background-color:#3d3d1a;color:#FFC107'
+            elif v == 3: styles[pos_idx] = 'background-color:#3d2a1a;color:#FF9800'
+        return styles
+
+    st.dataframe(
+        table.head(200).style.format({
+            'Rank':     '{:,}',
+            'Our CTR %': '{:.2f}%',
+            'Our CVR %': '{:.2f}%',
+            '#1 CTR %':  '{:.2f}%',
+            '#2 CTR %':  '{:.2f}%',
+            '#3 CTR %':  '{:.2f}%',
+        }).apply(_pos_color, axis=1),
+        use_container_width=True, hide_index=True, height=500
+    )
+    st.caption(f"{len(df_show)} terms" + (f" (фільтр: '{search_q}')" if search_q else ""))
+
+    st.download_button("📥 CSV всі terms",
+        df_show.to_csv(index=False).encode(),
+        f"sqp_{sel_week}.csv", "text/csv", key="dl_sqp")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 5. НАШІ ASIN — ХТО ОТРИМУЄ КЛІКИ
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 📦 Наші ASIN в пошуку")
+    st.caption("Скільки search terms і яка середня позиція / click share по кожному ASIN")
+
+    asin_perf = df[df['our_asin'] != ''].groupby('our_asin').agg(
+        terms_count=('search_term', 'count'),
+        avg_position=('our_position', 'mean'),
+        avg_click_share=('our_click_share', 'mean'),
+        avg_conv_share=('our_conv_share', 'mean'),
+        best_rank=('search_freq_rank', 'min'),
+        pos1_count=('our_position', lambda x: (x == 1).sum()),
+    ).reset_index().sort_values('terms_count', ascending=False)
+
+    asin_perf['avg_click_share'] = (asin_perf['avg_click_share'] * 100).round(2)
+    asin_perf['avg_conv_share']  = (asin_perf['avg_conv_share'] * 100).round(2)
+    asin_perf['avg_position']    = asin_perf['avg_position'].round(1)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 🏆 По кількості terms")
+        top_asin = asin_perf.head(15)
+        fig_a = go.Figure(go.Bar(
+            x=top_asin['terms_count'], y=top_asin['our_asin'],
+            orientation='h', marker_color='#5B9BD5',
+            text=[f"{c} terms · CTR {cs:.2f}%" for c, cs in
+                  zip(top_asin['terms_count'], top_asin['avg_click_share'])],
+            textposition='outside'
+        ))
+        fig_a.update_layout(
+            height=max(400, len(top_asin) * 30),
+            yaxis={'categoryorder': 'total ascending'},
+            margin=dict(l=0, r=120, t=10, b=0)
+        )
+        st.plotly_chart(fig_a, use_container_width=True)
+
+    with col2:
+        st.markdown("#### 📊 По Click Share")
+        top_cs_asin = asin_perf.nlargest(15, 'avg_click_share')
+        fig_ac = go.Figure(go.Bar(
+            x=top_cs_asin['avg_click_share'], y=top_cs_asin['our_asin'],
+            orientation='h',
+            marker_color=['#4CAF50' if v >= 10 else '#FFC107' if v >= 5 else '#F44336'
+                          for v in top_cs_asin['avg_click_share']],
+            text=[f"{v:.2f}%" for v in top_cs_asin['avg_click_share']],
+            textposition='outside'
+        ))
+        fig_ac.update_layout(
+            height=max(400, len(top_cs_asin) * 30),
+            yaxis={'categoryorder': 'total ascending'},
+            xaxis_title='Avg Click Share %',
+            margin=dict(l=0, r=80, t=10, b=0)
+        )
+        st.plotly_chart(fig_ac, use_container_width=True)
+
+    st.dataframe(
+        asin_perf.rename(columns={
+            'our_asin': 'ASIN', 'terms_count': 'Terms',
+            'avg_position': 'Avg Pos', 'avg_click_share': 'Avg CTR %',
+            'avg_conv_share': 'Avg CVR %', 'best_rank': 'Best Rank',
+            'pos1_count': '#1 Count'
+        }).style.format({
+            'Avg CTR %': '{:.2f}%', 'Avg CVR %': '{:.2f}%',
+            'Avg Pos': '{:.1f}', 'Best Rank': '{:,}'
+        }),
+        use_container_width=True, hide_index=True, height=400
+    )
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 6. КОНКУРЕНТИ — хто ще кликається по наших запитах
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 🏴 Конкуренти по наших запитах")
+    st.caption("ASINи інших брендів які теж отримують кліки на search terms де ми присутні")
+
+    # Збираємо всі ASIN з 3 слотів (де не наш)
+    competitor_rows = []
+    for _, row in df[df['our_position'] > 0].iterrows():
+        for i in [1, 2, 3]:
+            asin_i = row.get(f'asin_{i}', '')
+            if asin_i and asin_i not in our_asins:
+                competitor_rows.append({
+                    'asin': asin_i,
+                    'click_share': row.get(f'click_share_{i}', 0),
+                    'position': i,
+                    'search_term': row['search_term'],
+                    'search_rank': row['search_freq_rank'],
+                })
+
+    if competitor_rows:
+        comp_df = pd.DataFrame(competitor_rows)
+        comp_agg = comp_df.groupby('asin').agg(
+            appearances=('search_term', 'count'),
+            avg_click_share=('click_share', 'mean'),
+            avg_position=('position', 'mean'),
+            unique_terms=('search_term', 'nunique'),
+            best_rank=('search_rank', 'min'),
+        ).reset_index().sort_values('appearances', ascending=False)
+
+        comp_agg['avg_click_share'] = (comp_agg['avg_click_share'] * 100).round(2)
+        comp_agg['avg_position'] = comp_agg['avg_position'].round(1)
+
+        # Топ 20 конкурентів
+        st.markdown("#### 🏴 Топ 20 конкурентів")
+        top_comp = comp_agg.head(20)
+
+        fig_comp = go.Figure(go.Bar(
+            x=top_comp['appearances'], y=top_comp['asin'],
+            orientation='h', marker_color='#F44336',
+            text=[f"{a} terms · CTR {cs:.1f}%" for a, cs in
+                  zip(top_comp['appearances'], top_comp['avg_click_share'])],
+            textposition='outside'
+        ))
+        fig_comp.update_layout(
+            height=max(400, len(top_comp) * 30),
+            yaxis={'categoryorder': 'total ascending'},
+            xaxis_title='Appearances on our keywords',
+            margin=dict(l=0, r=140, t=10, b=0)
+        )
+        st.plotly_chart(fig_comp, use_container_width=True)
+
+        st.dataframe(
+            comp_agg.head(50).rename(columns={
+                'asin': 'Competitor ASIN', 'appearances': 'Appearances',
+                'unique_terms': 'Unique Terms', 'avg_click_share': 'Avg CTR %',
+                'avg_position': 'Avg Pos', 'best_rank': 'Best Rank'
+            }).style.format({
+                'Avg CTR %': '{:.2f}%', 'Avg Pos': '{:.1f}', 'Best Rank': '{:,}'
+            }),
+            use_container_width=True, hide_index=True, height=400
+        )
+    else:
+        st.info("Немає конкурентів на наших запитах")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 7. ТРЕНД ПО ТИЖНЯХ (якщо є кілька тижнів)
+    # ══════════════════════════════════════════════════════
+    if len(available_weeks) > 1:
+        st.markdown("### 📈 Тренд по тижнях")
+
+        try:
+            with engine.connect() as conn:
+                trend_df = pd.read_sql(text("""
+                    SELECT report_date,
+                           COUNT(*) AS total_terms,
+                           COUNT(*) FILTER (WHERE asin_1 IN (SELECT DISTINCT asin1 FROM listings_all WHERE asin1 != '')
+                                             OR asin_2 IN (SELECT DISTINCT asin1 FROM listings_all WHERE asin1 != '')
+                                             OR asin_3 IN (SELECT DISTINCT asin1 FROM listings_all WHERE asin1 != ''))
+                               AS our_terms,
+                           AVG(click_share_1) * 100 AS avg_cs
+                    FROM spapi.brand_analytics_sqp
+                    GROUP BY report_date
+                    ORDER BY report_date
+                """), conn)
+
+            if not trend_df.empty and len(trend_df) > 1:
+                fig_trend = go.Figure()
+                fig_trend.add_trace(go.Scatter(
+                    x=trend_df['report_date'], y=trend_df['our_terms'],
+                    mode='lines+markers+text', name='Search terms',
+                    text=trend_df['our_terms'], textposition='top center',
+                    line=dict(color='#5B9BD5', width=3), marker=dict(size=10)
+                ))
+                fig_trend.update_layout(
+                    height=350, margin=dict(l=0, r=0, t=30, b=0),
+                    title="Кількість search terms з нашими ASIN по тижнях",
+                    yaxis_title='Terms'
+                )
+                st.plotly_chart(fig_trend, use_container_width=True)
+        except Exception as e:
+            st.caption(f"Тренд недоступний: {e}")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 8. AI CHAT
+    # ══════════════════════════════════════════════════════
+    top_terms_str = ", ".join(df.nsmallest(10, 'search_freq_rank')['search_term'].tolist())
+    ctx = (f"Brand Analytics SQP: {total_terms} terms · "
+           f"#1 позиція: {pos1_count} · Avg CTR: {avg_click_share:.2f}% · "
+           f"Avg CVR: {avg_conv_share:.2f}% · ASINів: {unique_asins} · "
+           f"Топ terms: {top_terms_str}")
+
+    show_ai_chat(ctx, [
+        "Які запити мають найвищий CTR?",
+        "На яких запитах ми програємо конкурентам?",
+        "Які нові ключовики варто додати в PPC?",
+        "Порівняй CTR по категоріях товарів",
+    ], "sqp")
+    
 def show_reviews(t=None):
     """
     ⭐ Amazon Reviews
@@ -7338,6 +7810,7 @@ main_nav = [
     "📦 FBA Operations",
     "📋 Податки (Tax)",
     "⭐ Amazon Reviews",
+    "📊 Brand Analytics",
     "── AI Агенти ──",
     "📦 Restock Agent",
     "📈 Прогноз (Forecast)",
@@ -7403,6 +7876,7 @@ elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "📋 Податки (Tax)":            show_tax(t)
 elif report_choice == "📦 Restock Agent":            show_restock_agent(t)
 elif report_choice == "📈 Прогноз (Forecast)":       show_forecast(t)
+elif report_choice == "📊 Brand Analytics":          show_sqp(t)
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
