@@ -3444,6 +3444,7 @@ def show_orders(t=None):
                 FROM spapi.sales_traffic
                 WHERE report_date != '' AND report_date IS NOT NULL
                   AND child_asin != '' AND child_asin IS NOT NULL
+                  AND granularity = 'SKU'
                   AND report_date::date BETWEEN :d1 AND :d2
                 GROUP BY 1, 2
             """), conn, params={"d1": d1, "d2": d2})
@@ -3514,15 +3515,46 @@ def show_orders(t=None):
     total_rev     = df['revenue'].sum()
     total_units   = int(df['units'].sum())
     total_orders  = int(df['orders_cnt'].sum())
-    total_impr    = int(df['impressions'].sum())
     total_sess    = int(df['sessions'].sum())
-    avg_cvr       = (total_units / total_impr * 100) if total_impr > 0 else 0
     days_span     = max((df['date'].max() - df['date'].min()).days, 1)
     rev_per_day   = total_rev / days_span
     unique_asins  = df['asin'].nunique()
     avg_price     = total_rev / total_units if total_units > 0 else 0
     promo_orders  = int((df['offer'] != '').sum())
     promo_pct     = promo_orders / len(df) * 100 if len(df) > 0 else 0
+
+    # ── REAL CVR: на рівні parent_asin ──
+    # У Amazon S&T report поле page_views показується по кожному child SKU,
+    # але продажі розподілені нерівномірно. Для реального CVR бренду/родини
+    # треба SUM всіх impressions (by parent) / SUM всіх units (by parent).
+    # Беремо traffic без JOIN з orders (бо dead SKUs не в orders).
+    try:
+        with engine.connect() as conn:
+            parent_traffic = pd.read_sql(text("""
+                SELECT
+                    SUM(NULLIF(page_views,'')::numeric)    AS total_pv,
+                    SUM(NULLIF(sessions,'')::numeric)       AS total_sess,
+                    SUM(NULLIF(units_ordered,'')::numeric)  AS total_units_traffic
+                FROM spapi.sales_traffic
+                WHERE report_date::date BETWEEN :d1 AND :d2
+                  AND child_asin != '' AND child_asin IS NOT NULL
+                  AND granularity = 'SKU'
+            """), conn, params={"d1": d1, "d2": d2}).iloc[0]
+
+        traffic_total_pv    = int(parent_traffic['total_pv'] or 0)
+        traffic_total_sess  = int(parent_traffic['total_sess'] or 0)
+        traffic_total_units = int(parent_traffic['total_units_traffic'] or 0)
+    except Exception:
+        traffic_total_pv = int(df['impressions'].sum())
+        traffic_total_sess = int(df['sessions'].sum())
+        traffic_total_units = total_units
+
+    total_impr = traffic_total_pv  # повна сума impressions (не тільки по SKU з orders)
+    # CVR по page_views — units з traffic (щоб метчилось з impressions)
+    cvr_pv   = (traffic_total_units / traffic_total_pv * 100) if traffic_total_pv > 0 else 0
+    # CVR по sessions — це класичний Amazon CVR
+    cvr_sess = (traffic_total_units / traffic_total_sess * 100) if traffic_total_sess > 0 else 0
+    avg_cvr  = cvr_sess  # в KPI картці показуємо sessions-based (це те що в Seller Central)
 
     st.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a2b1e,#0d1f12);border:1px solid #2d4a30;
@@ -3545,10 +3577,14 @@ def show_orders(t=None):
       🛒 Orders <b style="color:#5B9BD5">{total_orders:,}</b>
     </span>
     <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
-      👁 Impr <b style="color:#FFC107">{total_impr:,}</b>
+      👁 Sessions <b style="color:#FFC107">{traffic_total_sess:,}</b>
+    </span>
+    <span style="background:#2b2b1a;border:1px solid #4a4a2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      📄 Impr <b style="color:#FFC107">{total_impr:,}</b>
     </span>
     <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
-      📊 CVR <b style="color:#AB47BC">{avg_cvr:.2f}%</b>
+      📊 CVR <b style="color:#AB47BC">{cvr_sess:.2f}%</b>
+      <span style="color:#666;font-size:11px">(units/sess)</span>
     </span>
     <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
       💵 Avg <b style="color:#FF9800">${avg_price:.2f}</b>
@@ -3562,11 +3598,11 @@ def show_orders(t=None):
         insight_card("📈", "Дохід/день",
             f"<b>{_fmt(rev_per_day)}</b>/день · прогноз місяць: <b>{_fmt(rev_per_day * 30)}</b>", "#1a2b1e")
     with _ic[1]:
-        # CVR з page_views: норма 1-5% (не sessions-based 8-15%)
-        if avg_cvr >= 5:    _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — вище норми!", "🟢", "#0d2b1e"
-        elif avg_cvr >= 1:  _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — в нормі (1-5% для page_views).", "🟡", "#2b2400"
+        # Sessions-based CVR — норма Amazon 8-15%, низько <5%, добре >12%
+        if avg_cvr >= 12:   _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — вище середнього по Amazon!", "🟢", "#0d2b1e"
+        elif avg_cvr >= 5:  _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — в нормі (Amazon avg 10%).", "🟡", "#2b2400"
         else:               _txt, _em, _col = f"CVR <b>{avg_cvr:.2f}%</b> — нижче норми. Перевір фото/ціну.", "🔴", "#2b0d0d"
-        insight_card(_em, "Конверсія (Units/Impr)", _txt, _col)
+        insight_card(_em, "Конверсія (Units/Sessions)", _txt, _col)
     with _ic[2]:
         insight_card("🎫", "Промо-замовлення",
             f"<b>{promo_pct:.0f}%</b> рядків мають промо (купон/дил/прайм)", "#1a1a2e")
@@ -3703,6 +3739,101 @@ def show_orders(t=None):
         use_container_width=True, hide_index=True, height=400
     )
     st.caption(f"{len(asin_agg)} унікальних ASIN")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 5.5 DEAD SKU ANALYSIS — трафік є, продажів майже немає
+    # ══════════════════════════════════════════════════════
+    st.markdown("### ⚠️ Dead SKUs — трафік без продажів")
+    st.caption("SKU з великим трафіком але низькою конверсією — OOS, проблеми з листингом або невдалі варіанти")
+
+    try:
+        with engine.connect() as conn:
+            dead_sku_df = pd.read_sql(text("""
+                WITH traffic_agg AS (
+                    SELECT
+                        child_asin                                AS asin,
+                        MAX(parent_asin)                          AS parent_asin,
+                        SUM(NULLIF(page_views,'')::numeric)       AS pv,
+                        SUM(NULLIF(sessions,'')::numeric)         AS sess,
+                        SUM(NULLIF(units_ordered,'')::numeric)    AS units_traffic,
+                        SUM(NULLIF(ordered_product_sales,'')::numeric) AS rev_traffic,
+                        AVG(NULLIF(buy_box_percentage,'')::numeric)    AS avg_bb
+                    FROM spapi.sales_traffic
+                    WHERE report_date::date BETWEEN :d1 AND :d2
+                      AND child_asin != '' AND child_asin IS NOT NULL
+                      AND granularity = 'SKU'
+                    GROUP BY child_asin
+                )
+                SELECT *,
+                    CASE WHEN sess > 0 THEN units_traffic / sess * 100 ELSE 0 END AS cvr_sess,
+                    CASE WHEN pv > 0   THEN units_traffic / pv * 100   ELSE 0 END AS cvr_pv
+                FROM traffic_agg
+                WHERE sess > 100  -- тільки SKU з відчутним трафіком
+                ORDER BY sess DESC
+            """), conn, params={"d1": d1, "d2": d2})
+    except Exception as e:
+        st.error(f"Dead SKU error: {e}")
+        dead_sku_df = pd.DataFrame()
+
+    if not dead_sku_df.empty:
+        # Фільтри: 100+ sessions, CVR < 2%
+        dead = dead_sku_df[
+            (dead_sku_df['sess'] >= 100) &
+            (dead_sku_df['cvr_sess'] < 2)
+        ].copy().sort_values('sess', ascending=False)
+
+        healthy = dead_sku_df[dead_sku_df['cvr_sess'] >= 5].copy()
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("🔴 Dead SKUs", f"{len(dead):,}",
+                  f"CVR <2% з 100+ sessions")
+        c2.metric("💸 Втрачений трафік",
+                  f"{int(dead['sess'].sum()):,}",
+                  f"sessions без продажів")
+        c3.metric("🟢 Healthy SKUs (CVR 5%+)",
+                  f"{len(healthy):,}")
+        c4.metric("📊 Всього з трафіком",
+                  f"{len(dead_sku_df):,}")
+
+        if len(dead) > 0:
+            # Estimated missed revenue (if CVR was avg 10%)
+            avg_price_calc = avg_price if avg_price > 0 else 40
+            missed_rev = int(dead['sess'].sum() * 0.10 * avg_price_calc)
+            st.warning(
+                f"⚠️ Якби Dead SKUs мали CVR 10%, вони б принесли ще "
+                f"**~${missed_rev:,}** з поточного трафіку"
+            )
+
+            st.markdown("#### 🔴 Топ 20 Dead SKUs за трафіком")
+            dead_show = dead.head(20).rename(columns={
+                'asin': 'ASIN', 'parent_asin': 'Parent',
+                'pv': 'Page Views', 'sess': 'Sessions',
+                'units_traffic': 'Units', 'rev_traffic': 'Revenue',
+                'cvr_sess': 'CVR %', 'avg_bb': 'Buy Box %'
+            })[['ASIN', 'Parent', 'Page Views', 'Sessions', 'Units', 'Revenue', 'CVR %', 'Buy Box %']]
+
+            # Форматування
+            for c in ['Page Views', 'Sessions', 'Units']:
+                dead_show[c] = dead_show[c].fillna(0).astype(int)
+
+            st.dataframe(
+                dead_show.style.format({
+                    'Revenue': '${:,.0f}',
+                    'CVR %': '{:.2f}%',
+                    'Buy Box %': '{:.1f}%'
+                }).background_gradient(subset=['Sessions'], cmap='Reds'),
+                use_container_width=True, hide_index=True, height=400
+            )
+
+            st.download_button(
+                "📥 CSV всі Dead SKUs",
+                dead.to_csv(index=False).encode(),
+                "dead_skus.csv", "text/csv"
+            )
+        else:
+            st.success("✅ Усі SKUs з трафіком 100+ sessions мають нормальну конверсію!")
 
     st.markdown("---")
 
