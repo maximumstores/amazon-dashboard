@@ -3353,6 +3353,7 @@ def show_inventory_finance(df_filtered, t):
     st.dataframe(dt_.style.format({'Price':"${:.2f}",'Stock Value':"${:,.2f}"}),width="stretch")
     insights_inventory(df_filtered)
 
+
 def show_orders(t=None):
     """
     🛒 Продажі (Orders) v2.0
@@ -3844,6 +3845,212 @@ def show_orders(t=None):
     st.markdown("---")
 
     # ══════════════════════════════════════════════════════
+    # 8.5 AVERAGE ORDER COMPOSITION — структура замовлення
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 🧺 Структура замовлення (Order Composition)")
+    st.caption("AOV тренд + units/order: як змінюється поведінка покупців у часі")
+
+    try:
+        with engine.connect() as conn:
+            # Беремо raw orders без агрегації для точного підрахунку units per order
+            df_comp = pd.read_sql(text("""
+                SELECT
+                    SUBSTRING(o.purchase_date, 1, 10)::date  AS date,
+                    o.amazon_order_id,
+                    SUM(CASE WHEN o.quantity ~ '^[0-9]+$'
+                        THEN o.quantity::numeric ELSE 1 END)  AS units,
+                    SUM(CASE WHEN o.item_price ~ '^[0-9.]+$'
+                        THEN o.item_price::numeric ELSE 0 END) AS revenue,
+                    COUNT(DISTINCT o.sku)                     AS unique_skus
+                FROM orders o
+                WHERE SUBSTRING(o.purchase_date, 1, 10)::date BETWEEN :d1 AND :d2
+                  AND o.purchase_date IS NOT NULL AND o.purchase_date != ''
+                  AND o.amazon_order_id IS NOT NULL
+                GROUP BY 1, 2
+            """), conn, params={"d1": d1, "d2": d2})
+    except Exception as e:
+        st.error(f"Composition error: {e}")
+        df_comp = pd.DataFrame()
+
+    if not df_comp.empty:
+        df_comp['date']     = pd.to_datetime(df_comp['date'])
+        df_comp['units']    = pd.to_numeric(df_comp['units'], errors='coerce').fillna(0)
+        df_comp['revenue']  = pd.to_numeric(df_comp['revenue'], errors='coerce').fillna(0)
+
+        # ── KPI композиції ──
+        avg_units_per_order = df_comp['units'].mean()
+        avg_aov             = df_comp['revenue'].mean()
+        median_aov          = df_comp['revenue'].median()
+        multi_unit_orders   = int((df_comp['units'] > 1).sum())
+        multi_unit_pct      = multi_unit_orders / len(df_comp) * 100
+        multi_sku_orders    = int((df_comp['unique_skus'] > 1).sum())
+        multi_sku_pct       = multi_sku_orders / len(df_comp) * 100
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("📦 Units / Order",    f"{avg_units_per_order:.2f}")
+        c2.metric("💰 AOV (avg)",         f"${avg_aov:.2f}")
+        c3.metric("📊 AOV (median)",      f"${median_aov:.2f}")
+        c4.metric("🛍 Multi-unit orders", f"{multi_unit_pct:.1f}%",
+                  f"{multi_unit_orders:,} замовлень")
+
+        # ── Тренд AOV + Units/Order по днях ──
+        daily_comp = df_comp.groupby('date').agg(
+            orders=('amazon_order_id', 'nunique'),
+            units=('units', 'sum'),
+            revenue=('revenue', 'sum'),
+        ).reset_index()
+        daily_comp['aov']            = (daily_comp['revenue'] / daily_comp['orders']).round(2)
+        daily_comp['units_per_order'] = (daily_comp['units']   / daily_comp['orders']).round(3)
+
+        if gran == "Тиждень":
+            daily_comp = daily_comp.set_index('date').resample('W').agg({
+                'orders': 'sum', 'units': 'sum', 'revenue': 'sum'
+            }).reset_index()
+            daily_comp['aov']            = (daily_comp['revenue'] / daily_comp['orders']).round(2)
+            daily_comp['units_per_order'] = (daily_comp['units']   / daily_comp['orders']).round(3)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 💰 AOV тренд (середній чек)")
+            fig_aov = go.Figure()
+            fig_aov.add_trace(go.Scatter(
+                x=daily_comp['date'], y=daily_comp['aov'],
+                mode='lines+markers', name='AOV',
+                line=dict(color='#4CAF50', width=2.5),
+                fill='tozeroy', fillcolor='rgba(76,175,80,0.1)'
+            ))
+            # Середня лінія
+            fig_aov.add_hline(y=avg_aov, line_dash="dash", line_color="#FFC107",
+                              annotation_text=f"Avg ${avg_aov:.2f}")
+            # MA-7 для days
+            if gran == "День" and len(daily_comp) >= 7:
+                ma_aov = daily_comp['aov'].rolling(7, min_periods=1).mean()
+                fig_aov.add_trace(go.Scatter(
+                    x=daily_comp['date'], y=ma_aov, name='MA-7',
+                    mode='lines', line=dict(color='#AB47BC', width=1.5, dash='dot')
+                ))
+            fig_aov.update_layout(
+                height=320, margin=dict(l=0, r=0, t=10, b=0),
+                yaxis=dict(tickprefix='$'),
+                legend=dict(orientation='h', y=1.12)
+            )
+            st.plotly_chart(fig_aov, use_container_width=True)
+
+        with col2:
+            st.markdown("#### 🧺 Units per Order")
+            colors_upo = ['#4CAF50' if v >= avg_units_per_order else '#F44336' for v in daily_comp['units_per_order']]
+            fig_upo = go.Figure(go.Bar(
+                x=daily_comp['date'], y=daily_comp['units_per_order'],
+                marker_color=colors_upo, opacity=0.85,
+                text=[f"{v:.2f}" for v in daily_comp['units_per_order']],
+                textposition='outside'
+            ))
+            fig_upo.add_hline(y=avg_units_per_order, line_dash="dash",
+                              line_color="#FFC107",
+                              annotation_text=f"Avg {avg_units_per_order:.2f}")
+            fig_upo.update_layout(height=320, margin=dict(l=0, r=0, t=10, b=0),
+                                  yaxis_title='Units / Order')
+            st.plotly_chart(fig_upo, use_container_width=True)
+
+        # ── Розподіл розмірів замовлень ──
+        st.markdown("#### 📊 Розподіл замовлень за кількістю одиниць")
+
+        def _bucket(u):
+            u = int(u)
+            if u == 1:    return '1️⃣ Solo (1 unit)'
+            if u == 2:    return '2️⃣ Pair (2 units)'
+            if u <= 5:    return '3️⃣ Small (3-5)'
+            if u <= 10:   return '4️⃣ Medium (6-10)'
+            return '5️⃣ Bulk (10+)'
+
+        df_comp['bucket'] = df_comp['units'].apply(_bucket)
+        bucket_stats = df_comp.groupby('bucket').agg(
+            orders=('amazon_order_id', 'nunique'),
+            units=('units', 'sum'),
+            revenue=('revenue', 'sum'),
+        ).reset_index().sort_values('bucket')
+        bucket_stats['avg_aov']  = (bucket_stats['revenue'] / bucket_stats['orders']).round(2)
+        bucket_stats['orders_pct'] = (bucket_stats['orders'] / bucket_stats['orders'].sum() * 100).round(1)
+        bucket_stats['rev_pct']    = (bucket_stats['revenue'] / bucket_stats['revenue'].sum() * 100).round(1)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("##### 🛒 Замовлень за розміром")
+            fig_b1 = go.Figure(go.Bar(
+                x=bucket_stats['bucket'], y=bucket_stats['orders'],
+                marker_color=['#4472C4', '#5B9BD5', '#70AD47', '#FFC107', '#F44336'][:len(bucket_stats)],
+                text=[f"{int(v):,} ({p:.0f}%)" for v, p in zip(bucket_stats['orders'], bucket_stats['orders_pct'])],
+                textposition='outside'
+            ))
+            fig_b1.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_b1, use_container_width=True)
+
+        with col2:
+            st.markdown("##### 💰 Виручка за розміром")
+            fig_b2 = go.Figure(go.Bar(
+                x=bucket_stats['bucket'], y=bucket_stats['revenue'],
+                marker_color=['#4472C4', '#5B9BD5', '#70AD47', '#FFC107', '#F44336'][:len(bucket_stats)],
+                text=[f"${v/1000:.1f}K ({p:.0f}%)" for v, p in zip(bucket_stats['revenue'], bucket_stats['rev_pct'])],
+                textposition='outside'
+            ))
+            fig_b2.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=0),
+                                 yaxis=dict(tickprefix='$'))
+            st.plotly_chart(fig_b2, use_container_width=True)
+
+        # Таблиця bucket
+        st.dataframe(
+            bucket_stats.rename(columns={
+                'bucket': 'Розмір', 'orders': 'Orders', 'units': 'Units',
+                'revenue': 'Revenue', 'avg_aov': 'AOV', 'orders_pct': '% Orders', 'rev_pct': '% Revenue'
+            }).style.format({
+                'Revenue': '${:,.0f}', 'AOV': '${:.2f}',
+                '% Orders': '{:.1f}%', '% Revenue': '{:.1f}%'
+            }),
+            use_container_width=True, hide_index=True
+        )
+
+        # ── Інсайти композиції ──
+        _icc = st.columns(3)
+
+        # Solo orders share
+        solo = bucket_stats[bucket_stats['bucket'].str.contains('Solo', na=False)]
+        solo_pct = float(solo['orders_pct'].iloc[0]) if not solo.empty else 0
+        if solo_pct >= 80:
+            _txt = f"<b>{solo_pct:.0f}%</b> замовлень — solo (1 unit). Низький cross-sell."
+            _em, _col = "🔴", "#2b0d0d"
+        elif solo_pct >= 60:
+            _txt = f"<b>{solo_pct:.0f}%</b> — solo. Є потенціал для bundle."
+            _em, _col = "🟡", "#2b2400"
+        else:
+            _txt = f"<b>{solo_pct:.0f}%</b> solo · решта multi-unit. Хороший AOV mix."
+            _em, _col = "🟢", "#0d2b1e"
+        with _icc[0]: insight_card(_em, "Solo замовлення", _txt, _col)
+
+        # AOV trend (cur vs first half)
+        if len(daily_comp) >= 4:
+            half = len(daily_comp) // 2
+            aov_first  = daily_comp['aov'].iloc[:half].mean()
+            aov_second = daily_comp['aov'].iloc[half:].mean()
+            aov_chg    = (aov_second - aov_first) / aov_first * 100 if aov_first > 0 else 0
+            if aov_chg >= 5:    _em, _col = "🟢", "#0d2b1e"
+            elif aov_chg >= -5: _em, _col = "🟡", "#2b2400"
+            else:               _em, _col = "🔴", "#2b0d0d"
+            with _icc[1]: insight_card(_em, "AOV тренд",
+                f"AOV {'↑' if aov_chg >= 0 else '↓'} <b>{aov_chg:+.1f}%</b> "
+                f"(перша половина ${aov_first:.2f} → друга ${aov_second:.2f})", _col)
+
+        # Multi-SKU rate
+        with _icc[2]:
+            insight_card("🛍", "Multi-SKU кошики",
+                f"<b>{multi_sku_pct:.1f}%</b> замовлень містять різні SKU "
+                f"({multi_sku_orders:,} з {len(df_comp):,})", "#1e293b")
+
+    else:
+        st.info("Немає даних для аналізу композиції замовлень")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
     # 9. INSIGHTS (стара функція — залишаємо)
     # ══════════════════════════════════════════════════════
     # Підготуємо df для insights_orders
@@ -3869,9 +4076,9 @@ def show_orders(t=None):
            f"Період {d1}→{d2}")
     show_ai_chat(ctx, [
         "Які ASIN мають найвищу CVR?",
-        "Де промо-акції дають найкращий ефект?",
-        "Порівняй цей тиждень vs минулий за units",
-        "Які ASIN втратили продажі за останні 7 днів?",
+        "Де промо дають найкращий ефект?",
+        "Які SKU в bundle/multi-unit замовленнях?",
+        "Як змінився AOV за останній тиждень?",
     ], "orders_v2")
 
 
