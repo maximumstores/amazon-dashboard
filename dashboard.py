@@ -1611,7 +1611,6 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 # ============================================
 # INVENTORY UNIFIED
 # ============================================
-
 def show_inventory_unified():
     st.markdown("### 📦 Склад (Inventory)")
     engine = get_engine()
@@ -1839,10 +1838,20 @@ def show_inventory_unified():
             total_monthly_loss = total_daily_loss * 30
             top_oos = oos_skus.nlargest(10, 'daily_rev')
 
-            c1, c2, c3 = st.columns(3)
+            # Inbound split
+            if inb_c and inb_c in oos_skus.columns:
+                has_inb = oos_skus[pd.to_numeric(oos_skus[inb_c], errors='coerce').fillna(0) > 0]
+                no_inb  = oos_skus[pd.to_numeric(oos_skus[inb_c], errors='coerce').fillna(0) == 0]
+            else:
+                has_inb, no_inb = pd.DataFrame(), oos_skus
+
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric("🔴 OOS з продажами", f"{len(oos_skus)}", "SKU які продавались але зараз OOS")
             c2.metric("💸 Втрати/день", f"${total_daily_loss:,.0f}", "щоденна втрачена виручка")
-            c3.metric("📅 Втрати/місяць", f"${total_monthly_loss:,.0f}", "прогноз на 30 днів")
+            c3.metric("🚚 Inbound їде", f"{len(has_inb)}",
+                      f"${has_inb['daily_rev'].sum():,.0f}/день повернеться")
+            c4.metric("❌ Без inbound", f"{len(no_inb)}",
+                      f"${no_inb['daily_rev'].sum():,.0f}/день — дій!")
 
             if total_daily_loss > 500:
                 st.error(f"🚨 Ти втрачаєш **${total_daily_loss:,.0f}/день** через OOS! "
@@ -1851,11 +1860,15 @@ def show_inventory_unified():
                 st.warning(f"⚠️ Втрати **${total_daily_loss:,.0f}/день** через OOS")
 
             st.markdown("#### 🔴 Топ OOS SKU за втраченим revenue")
-            oos_show = top_oos[[c for c in [sku_c, asin_c, 'revenue_30d', 'daily_rev', 'daily_units']
+            oos_show = top_oos[[c for c in [sku_c, asin_c, inb_c, 'revenue_30d', 'daily_rev', 'daily_units']
                                 if c and c in top_oos.columns]].copy()
             oos_show['monthly_loss'] = (oos_show['daily_rev'] * 30).round(0)
+            # Статус inbound
+            if inb_c and inb_c in oos_show.columns:
+                oos_show[inb_c] = pd.to_numeric(oos_show[inb_c], errors='coerce').fillna(0).astype(int)
+                oos_show['Status'] = oos_show[inb_c].apply(lambda x: '🚚 їде' if x > 0 else '❌ нема')
             oos_show = oos_show.rename(columns={
-                sku_c: 'SKU', asin_c: 'ASIN',
+                sku_c: 'SKU', asin_c: 'ASIN', inb_c: 'Inbound',
                 'revenue_30d': 'Rev 30д', 'daily_rev': '$/день',
                 'daily_units': 'Units/день', 'monthly_loss': 'Втрати/міс'
             })
@@ -1869,6 +1882,7 @@ def show_inventory_unified():
                     '$/день': '${:,.2f}',
                     'Units/день': '{:.1f}',
                     'Втрати/міс': '${:,.0f}',
+                    'Inbound': '{:,}',
                 }).background_gradient(subset=['$/день'], cmap='Reds'),
                 use_container_width=True, hide_index=True
             )
