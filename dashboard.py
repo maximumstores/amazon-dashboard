@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import numpy as np
 import datetime as dt
 from dotenv import load_dotenv
+import streamlit.components.v1 as components
 from sqlalchemy import create_engine, text
 try:
     import google.generativeai as genai  # TODO: migrate to google.genai
@@ -3733,7 +3734,6 @@ def show_reviews(t=None):
         "Що найчастіше хвалять в 5★ відгуках?",
     ], "reviews")
 
-
 def show_orders(t=None):
     """
     🛒 Продажі (Orders) v2.0
@@ -4114,8 +4114,20 @@ def show_orders(t=None):
         'impressions': 'Impr', 'sessions': 'Sessions',
         'cvr': 'CVR %', 'avg_price': 'Avg Price'
     })
+    # Конвертуємо числові в int для коректного відображення
+    for c in ['Units', 'Orders', 'Impr', 'Sessions']:
+        if c in show_asin.columns:
+            show_asin[c] = pd.to_numeric(show_asin[c], errors='coerce').fillna(0).astype(int)
     st.dataframe(
-        show_asin.head(200).style.format({'Revenue': '${:,.0f}', 'Avg Price': '${:.2f}', 'CVR %': '{:.2f}%'}),
+        show_asin.head(200).style.format({
+            'Units':     '{:,}',
+            'Orders':    '{:,}',
+            'Impr':      '{:,}',
+            'Sessions':  '{:,}',
+            'Revenue':   '${:,.0f}',
+            'Avg Price': '${:.2f}',
+            'CVR %':     '{:.2f}%'
+        }),
         use_container_width=True, hide_index=True, height=400
     )
     st.caption(f"{len(asin_agg)} унікальних ASIN")
@@ -4158,9 +4170,18 @@ def show_orders(t=None):
         dead_sku_df = pd.DataFrame()
 
     if not dead_sku_df.empty:
-        # Фільтри: 100+ sessions, CVR < 2%
+        # Тонка настройка порогів:
+        # Dead   = CVR < 0.5% при 500+ sessions (реально мертві)
+        # Weak   = CVR 0.5-2% при 500+ sessions (слабі, потребують уваги)
+        # Healthy = CVR >= 5%
         dead = dead_sku_df[
-            (dead_sku_df['sess'] >= 100) &
+            (dead_sku_df['sess'] >= 500) &
+            (dead_sku_df['cvr_sess'] < 0.5)
+        ].copy().sort_values('sess', ascending=False)
+
+        weak = dead_sku_df[
+            (dead_sku_df['sess'] >= 500) &
+            (dead_sku_df['cvr_sess'] >= 0.5) &
             (dead_sku_df['cvr_sess'] < 2)
         ].copy().sort_values('sess', ascending=False)
 
@@ -4168,25 +4189,25 @@ def show_orders(t=None):
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("🔴 Dead SKUs", f"{len(dead):,}",
-                  f"CVR <2% з 100+ sessions")
-        c2.metric("💸 Втрачений трафік",
+                  f"CVR <0.5% @ 500+ sess")
+        c2.metric("🟡 Weak SKUs", f"{len(weak):,}",
+                  f"CVR 0.5-2% @ 500+ sess")
+        c3.metric("💸 Втрачений трафік",
                   f"{int(dead['sess'].sum()):,}",
-                  f"sessions без продажів")
-        c3.metric("🟢 Healthy SKUs (CVR 5%+)",
+                  f"sessions на dead SKUs")
+        c4.metric("🟢 Healthy (CVR 5%+)",
                   f"{len(healthy):,}")
-        c4.metric("📊 Всього з трафіком",
-                  f"{len(dead_sku_df):,}")
 
         if len(dead) > 0:
             # Estimated missed revenue (if CVR was avg 10%)
             avg_price_calc = avg_price if avg_price > 0 else 40
             missed_rev = int(dead['sess'].sum() * 0.10 * avg_price_calc)
-            st.warning(
-                f"⚠️ Якби Dead SKUs мали CVR 10%, вони б принесли ще "
-                f"**~${missed_rev:,}** з поточного трафіку"
+            st.error(
+                f"🔴 **{len(dead)} реально мертвих SKU** — трафік йде, але майже ніхто не купує. "
+                f"Втрачений потенціал: **~${missed_rev:,}** якби CVR був 10%."
             )
 
-            st.markdown("#### 🔴 Топ 20 Dead SKUs за трафіком")
+            st.markdown("#### 🔴 Dead SKUs — CVR < 0.5% з вагомим трафіком")
             dead_show = dead.head(20).rename(columns={
                 'asin': 'ASIN', 'parent_asin': 'Parent',
                 'pv': 'Page Views', 'sess': 'Sessions',
@@ -4194,75 +4215,369 @@ def show_orders(t=None):
                 'cvr_sess': 'CVR %', 'avg_bb': 'Buy Box %'
             })[['ASIN', 'Parent', 'Page Views', 'Sessions', 'Units', 'Revenue', 'CVR %', 'Buy Box %']]
 
-            # Форматування
             for c in ['Page Views', 'Sessions', 'Units']:
                 dead_show[c] = dead_show[c].fillna(0).astype(int)
 
             st.dataframe(
                 dead_show.style.format({
-                    'Revenue': '${:,.0f}',
-                    'CVR %': '{:.2f}%',
-                    'Buy Box %': '{:.1f}%'
+                    'Page Views': '{:,}',
+                    'Sessions':   '{:,}',
+                    'Units':      '{:,}',
+                    'Revenue':    '${:,.0f}',
+                    'CVR %':      '{:.2f}%',
+                    'Buy Box %':  '{:.1f}%'
                 }).background_gradient(subset=['Sessions'], cmap='Reds'),
                 use_container_width=True, hide_index=True, height=400
             )
 
-            st.download_button(
-                "📥 CSV всі Dead SKUs",
-                dead.to_csv(index=False).encode(),
-                "dead_skus.csv", "text/csv"
-            )
-        else:
-            st.success("✅ Усі SKUs з трафіком 100+ sessions мають нормальну конверсію!")
+        if len(weak) > 0:
+            with st.expander(f"🟡 Weak SKUs — CVR 0.5-2% ({len(weak)} SKU)", expanded=False):
+                weak_show = weak.head(30).rename(columns={
+                    'asin': 'ASIN', 'parent_asin': 'Parent',
+                    'pv': 'Page Views', 'sess': 'Sessions',
+                    'units_traffic': 'Units', 'rev_traffic': 'Revenue',
+                    'cvr_sess': 'CVR %', 'avg_bb': 'Buy Box %'
+                })[['ASIN', 'Parent', 'Page Views', 'Sessions', 'Units', 'Revenue', 'CVR %', 'Buy Box %']]
+                for c in ['Page Views', 'Sessions', 'Units']:
+                    weak_show[c] = weak_show[c].fillna(0).astype(int)
+                st.dataframe(
+                    weak_show.style.format({
+                        'Page Views': '{:,}',
+                        'Sessions':   '{:,}',
+                        'Units':      '{:,}',
+                        'Revenue':    '${:,.0f}',
+                        'CVR %':      '{:.2f}%',
+                        'Buy Box %':  '{:.1f}%'
+                    }),
+                    use_container_width=True, hide_index=True, height=400
+                )
+                st.caption("Ці SKU працюють, але слабкіше середнього — є що покращити")
+
+        if len(dead) == 0 and len(weak) == 0:
+            st.success("✅ Усі SKU з трафіком 500+ sessions мають нормальну конверсію!")
+
+        # Завжди даємо CSV експорт всіх
+        st.download_button(
+            "📥 CSV всі SKU з трафіком",
+            dead_sku_df.to_csv(index=False).encode(),
+            "sku_performance.csv", "text/csv"
+        )
 
     st.markdown("---")
 
     # ══════════════════════════════════════════════════════
-    # 6. ДЕТАЛЬНА ТАБЛИЦЯ: день × ASIN (матриця Віталіка)
+    # 6. ДЕТАЛЬНА ТАБЛИЦЯ: Parent ASIN → Child SKU (drill-down)
     # ══════════════════════════════════════════════════════
-    st.markdown("### 📋 Деталі: день × ASIN")
-    st.caption("🏷️ купон · ⚡ дил · 🅿️ прайм · 🔄 SnS · 🎫 інше промо")
+    st.markdown("### 📋 Деталі: Parent ASIN → Child SKU")
+    st.caption("Parent з сумою ↓ клік по '▶ Розгорнути' → child SKU · 🏷️ купон · ⚡ дил · 🅿️ прайм")
 
-    group_by_parent = st.toggle("Згорнути по Parent ASIN", value=False, key="ord_parent_toggle")
+    # ── Гранулярність періоду ──
+    _gc1, _gc2, _gc3 = st.columns([1, 1, 2])
+    with _gc1:
+        detail_gran = st.radio(
+            "📅 Період:",
+            ["День", "Тиждень", "Місяць"],
+            horizontal=True,
+            key="detail_gran"
+        )
+    with _gc2:
+        max_parents = st.selectbox(
+            "Показати parent-ів:",
+            [10, 20, 50, 100, 500],
+            index=1, key="max_parents"
+        )
+    with _gc3:
+        search_parent = st.text_input(
+            "🔍 Пошук Parent/ASIN/SKU:",
+            "", key="search_detail"
+        )
 
-    if group_by_parent and 'parent_asin' in df.columns:
-        df_detail = df.copy()
-        df_detail['group_asin'] = df_detail['parent_asin'].where(df_detail['parent_asin'] != '', df_detail['asin'])
-        detail = df_detail.groupby(['date', 'group_asin']).agg(
-            units=('units', 'sum'), revenue=('revenue', 'sum'),
-            orders_cnt=('orders_cnt', 'sum'), impressions=('impressions', 'sum'),
-            offer=('offer', lambda x: ' '.join(sorted(set(v for v in x if v)))),
-        ).reset_index()
-        detail.rename(columns={'group_asin': 'ASIN (Parent)'}, inplace=True)
-        asin_col_name = 'ASIN (Parent)'
-    else:
-        detail = df[['date', 'asin', 'sku', 'units', 'revenue', 'orders_cnt',
-                      'impressions', 'offer']].copy()
-        detail.rename(columns={'asin': 'ASIN', 'sku': 'SKU'}, inplace=True)
-        asin_col_name = 'ASIN'
+    # ── Підготовка df: date_bucket по гранулярності ──
+    df_work = df.copy()
+    if detail_gran == "Тиждень":
+        df_work['period'] = df_work['date'].dt.to_period('W').apply(lambda p: p.start_time)
+    elif detail_gran == "Місяць":
+        df_work['period'] = df_work['date'].dt.to_period('M').apply(lambda p: p.start_time)
+    else:  # День
+        df_work['period'] = df_work['date']
 
-    detail['CVR %'] = (detail['units'] / detail['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
-    detail = detail.sort_values(['date', 'revenue'], ascending=[False, False])
-
-    detail_show = detail.rename(columns={
-        'date': 'Date', 'units': 'Units', 'revenue': 'Revenue',
-        'orders_cnt': 'Orders', 'impressions': 'Impr', 'offer': 'Offer'
-    })
-
-    show_cols = ['Date', asin_col_name]
-    if 'SKU' in detail_show.columns: show_cols.append('SKU')
-    show_cols += ['Units', 'Revenue', 'Orders', 'Impr', 'CVR %', 'Offer']
-    show_cols = [c for c in show_cols if c in detail_show.columns]
-
-    st.dataframe(
-        detail_show[show_cols].head(1000).style.format({'Revenue': '${:,.2f}', 'CVR %': '{:.2f}%'}),
-        use_container_width=True, hide_index=True, height=500
+    # ── Parent як primary key (fallback: asin якщо немає parent) ──
+    df_work['parent_key'] = df_work['parent_asin'].where(
+        df_work['parent_asin'] != '', df_work['asin']
     )
-    st.caption(f"Показано {min(1000, len(detail_show)):,} з {len(detail_show):,} рядків")
 
-    st.download_button("📥 CSV (день × ASIN)",
-        detail_show[show_cols].to_csv(index=False).encode(),
-        "orders_daily_asin.csv", "text/csv")
+    # ── Агрегація по (period, parent) ──
+    parent_agg = df_work.groupby(['period', 'parent_key']).agg(
+        units=('units', 'sum'),
+        revenue=('revenue', 'sum'),
+        orders_cnt=('orders_cnt', 'sum'),
+        impressions=('impressions', 'sum'),
+        sessions=('sessions', 'sum'),
+        offer=('offer', lambda x: ' '.join(sorted(set(v for v in x if v)))),
+        child_count=('asin', 'nunique'),
+    ).reset_index()
+    parent_agg['cvr'] = (parent_agg['units'] / parent_agg['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+    parent_agg = parent_agg.sort_values(['period', 'revenue'], ascending=[False, False])
+
+    # ── Search фільтр ──
+    if search_parent:
+        mask_parent = parent_agg['parent_key'].str.contains(search_parent, case=False, na=False)
+        matched_parents_by_child = df_work[
+            df_work['asin'].str.contains(search_parent, case=False, na=False) |
+            df_work['sku'].astype(str).str.contains(search_parent, case=False, na=False)
+        ]['parent_key'].unique()
+        parent_agg = parent_agg[
+            mask_parent | parent_agg['parent_key'].isin(matched_parents_by_child)
+        ]
+
+    if parent_agg.empty:
+        st.info("Немає даних за фільтром")
+    else:
+        # Обмежуємо кількість parent-ів щоб не рендерити тисячі expander-ів
+        # Групуємо по parent, беремо топ по total revenue
+        parent_totals = parent_agg.groupby('parent_key').agg(
+            total_rev=('revenue', 'sum')
+        ).reset_index().nlargest(max_parents, 'total_rev')
+        top_parents = parent_totals['parent_key'].tolist()
+        parent_agg = parent_agg[parent_agg['parent_key'].isin(top_parents)]
+
+        # ── KPI над таблицею ──
+        _tc1, _tc2, _tc3, _tc4 = st.columns(4)
+        _tc1.metric("👨‍👧 Parent-ів показано", f"{len(top_parents):,}")
+        _tc2.metric("📦 Total units",           f"{int(parent_agg['units'].sum()):,}")
+        _tc3.metric("💰 Total revenue",         _fmt(parent_agg['revenue'].sum()))
+        _tc4.metric("📅 Рядків періоду",         f"{len(parent_agg):,}")
+
+        # ── Формат дати залежно від гранулярності ──
+        if detail_gran == "День":
+            date_fmt = '%Y-%m-%d'
+        elif detail_gran == "Тиждень":
+            date_fmt = 'Тиж. %Y-%m-%d'
+        else:
+            date_fmt = '%Y-%m'
+
+        # ── Рендер: parent summary row → expander з child-ами ──
+        # Для продуктивності — групуємо по parent і показуємо всі його періоди разом
+
+        # Спочатку: загальна таблиця parent-сумаризована (без drill-down)
+        st.markdown("#### 📊 Parent ASIN — сумарно по обраних періодах")
+        parent_total = parent_agg.groupby('parent_key').agg(
+            units=('units', 'sum'),
+            revenue=('revenue', 'sum'),
+            orders_cnt=('orders_cnt', 'sum'),
+            impressions=('impressions', 'sum'),
+            sessions=('sessions', 'sum'),
+            child_count=('child_count', 'max'),
+            periods=('period', 'nunique'),
+        ).reset_index()
+        parent_total['cvr'] = (parent_total['units'] / parent_total['impressions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+        parent_total = parent_total.sort_values('revenue', ascending=False)
+
+        pt_show = parent_total.rename(columns={
+            'parent_key': 'Parent ASIN',
+            'units': 'Units', 'revenue': 'Revenue',
+            'orders_cnt': 'Orders', 'impressions': 'Impr',
+            'sessions': 'Sessions', 'cvr': 'CVR %',
+            'child_count': '# Children', 'periods': '# Periods'
+        })
+        for c in ['Units', 'Orders', 'Impr', 'Sessions', '# Children', '# Periods']:
+            if c in pt_show.columns:
+                pt_show[c] = pd.to_numeric(pt_show[c], errors='coerce').fillna(0).astype(int)
+
+        st.dataframe(
+            pt_show.head(max_parents).style.format({
+                'Units':    '{:,}',
+                'Orders':   '{:,}',
+                'Impr':     '{:,}',
+                'Sessions': '{:,}',
+                'Revenue':  '${:,.0f}',
+                'CVR %':    '{:.2f}%'
+            }),
+            use_container_width=True, hide_index=True, height=400
+        )
+
+        st.markdown("---")
+
+        # ── Drill-down: HTML ієрархічна таблиця (Helium10-style) ──
+        st.markdown("#### 🔍 Детальна таблиця з розгортанням")
+        st.caption("Клік на ▶ розгортає child SKU · зелений CVR ≥5% · червоний <1%")
+
+        # Selectbox для періоду (якщо обрано — показуємо тільки цей період, інакше всі)
+        all_periods = sorted(parent_agg['period'].unique(), reverse=True)
+        period_labels = [pd.Timestamp(p).strftime(date_fmt) for p in all_periods]
+        period_map = dict(zip(period_labels, all_periods))
+
+        _pc1, _pc2 = st.columns([2, 3])
+        with _pc1:
+            sel_period_drill = st.selectbox(
+                f"📅 Оберіть {detail_gran.lower()}:",
+                options=["🔄 Всі періоди разом"] + period_labels,
+                key="drill_period"
+            )
+
+        # Формуємо дані для рендеру
+        if sel_period_drill == "🔄 Всі періоди разом":
+            # Групуємо по parent сумарно
+            parents_to_render = parent_total.sort_values('revenue', ascending=False).to_dict('records')
+            period_filter = None
+        else:
+            period_ts = period_map[sel_period_drill]
+            parents_to_render = parent_agg[parent_agg['period'] == period_ts].sort_values('revenue', ascending=False).to_dict('records')
+            for p in parents_to_render:
+                p['parent_key'] = p.get('parent_key', '')
+            period_filter = period_ts
+
+        # ── Рендер HTML таблиці ──
+        def _cvr_color(v):
+            try:
+                v = float(v)
+                if v >= 5:  return '#4CAF50'
+                if v >= 1:  return '#FFC107'
+                return '#F44336'
+            except: return '#888'
+
+        def _fmt_int(v):
+            try: return f"{int(v):,}"
+            except: return str(v)
+
+        def _fmt_money(v):
+            try: return f"${float(v):,.0f}"
+            except: return str(v)
+
+        # Готуємо HTML
+        html_parts = []
+        html_parts.append("""
+<style>
+.ph-table { width:100%; border-collapse:collapse; font-size:13px;
+            background:#0e1117; color:#fff; border-radius:8px; overflow:hidden; }
+.ph-table th { background:#1a1a2e; color:#aaa; font-weight:600;
+               padding:10px 12px; text-align:right; border-bottom:2px solid #2d2d4a;
+               font-size:11px; text-transform:uppercase; letter-spacing:0.5px; }
+.ph-table th.left { text-align:left; }
+.ph-table td { padding:8px 12px; border-bottom:1px solid #1f1f2e; text-align:right;
+               font-variant-numeric:tabular-nums; }
+.ph-table td.left { text-align:left; }
+.ph-table .parent-row { background:#16213e; font-weight:600; cursor:pointer;
+                         transition:background 0.15s; }
+.ph-table .parent-row:hover { background:#1d2a4a; }
+.ph-table .parent-row .arrow { display:inline-block; transition:transform 0.2s;
+                                color:#5B9BD5; width:12px; }
+.ph-table .parent-row.expanded .arrow { transform:rotate(90deg); }
+.ph-table .child-row { background:#0a0d14; display:none; font-size:12px; color:#bbb; }
+.ph-table .child-row.visible { display:table-row; }
+.ph-table .child-row td { padding:6px 12px; padding-left:36px; }
+.ph-table .child-row td.left { padding-left:48px; }
+.cvr-high { color:#4CAF50; font-weight:600; }
+.cvr-mid  { color:#FFC107; }
+.cvr-low  { color:#F44336; }
+.offer-badge { background:#2b2b1a; border:1px solid #4a4a2d; border-radius:4px;
+               padding:2px 6px; font-size:11px; color:#FFC107; margin-left:6px; }
+</style>
+
+<table class='ph-table'>
+<thead>
+  <tr>
+    <th class='left'>Parent / Child</th>
+    <th>Units</th>
+    <th>Revenue</th>
+    <th>Orders</th>
+    <th>Impr</th>
+    <th>Sessions</th>
+    <th>CVR</th>
+  </tr>
+</thead>
+<tbody>
+""")
+
+        for idx, prow in enumerate(parents_to_render[:max_parents]):
+            pkey = prow.get('parent_key', '')
+            p_units = int(prow.get('units', 0) or 0)
+            p_rev   = float(prow.get('revenue', 0) or 0)
+            p_ord   = int(prow.get('orders_cnt', 0) or 0)
+            p_impr  = int(prow.get('impressions', 0) or 0)
+            p_sess  = int(prow.get('sessions', 0) or 0)
+            p_cvr   = float(prow.get('cvr', 0) or 0)
+            p_offer = prow.get('offer', '') if period_filter else ''
+
+            cvr_cls = 'cvr-high' if p_cvr >= 5 else ('cvr-mid' if p_cvr >= 1 else 'cvr-low')
+            offer_html = f"<span class='offer-badge'>{p_offer}</span>" if p_offer else ""
+
+            # Parent row
+            html_parts.append(f"""
+<tr class='parent-row' onclick='toggleParent_{idx}(this)'>
+  <td class='left'><span class='arrow'>▶</span> <code>{pkey}</code>{offer_html}</td>
+  <td>{_fmt_int(p_units)}</td>
+  <td>{_fmt_money(p_rev)}</td>
+  <td>{_fmt_int(p_ord)}</td>
+  <td>{_fmt_int(p_impr)}</td>
+  <td>{_fmt_int(p_sess)}</td>
+  <td class='{cvr_cls}'>{p_cvr:.2f}%</td>
+</tr>
+""")
+
+            # Children для цього parent
+            if period_filter is not None:
+                children = df_work[(df_work['parent_key'] == pkey) & (df_work['period'] == period_filter)]
+            else:
+                children = df_work[df_work['parent_key'] == pkey]
+
+            if not children.empty:
+                child_grouped = children.groupby(['asin', 'sku']).agg(
+                    units=('units', 'sum'),
+                    revenue=('revenue', 'sum'),
+                    orders_cnt=('orders_cnt', 'sum'),
+                    impressions=('impressions', 'sum'),
+                    sessions=('sessions', 'sum'),
+                    offer=('offer', lambda x: ' '.join(sorted(set(v for v in x if v)))),
+                ).reset_index()
+                child_grouped['cvr'] = (child_grouped['units'] / child_grouped['impressions'].replace(0, float('nan')) * 100).fillna(0)
+                child_grouped = child_grouped.sort_values('revenue', ascending=False)
+
+                for _, crow in child_grouped.iterrows():
+                    c_cvr = float(crow['cvr'] or 0)
+                    c_cvr_cls = 'cvr-high' if c_cvr >= 5 else ('cvr-mid' if c_cvr >= 1 else 'cvr-low')
+                    c_offer_html = f"<span class='offer-badge'>{crow['offer']}</span>" if crow.get('offer') else ""
+
+                    html_parts.append(f"""
+<tr class='child-row child-of-{idx}'>
+  <td class='left'><code>{crow['asin']}</code> · <small>{crow['sku'] or ''}</small>{c_offer_html}</td>
+  <td>{_fmt_int(crow['units'])}</td>
+  <td>${float(crow['revenue']):,.2f}</td>
+  <td>{_fmt_int(crow['orders_cnt'])}</td>
+  <td>{_fmt_int(crow['impressions'])}</td>
+  <td>{_fmt_int(crow['sessions'])}</td>
+  <td class='{c_cvr_cls}'>{c_cvr:.2f}%</td>
+</tr>
+""")
+
+            # JS toggler для цього parent
+            html_parts.append(f"""
+<script>
+function toggleParent_{idx}(row) {{
+    row.classList.toggle('expanded');
+    document.querySelectorAll('.child-of-{idx}').forEach(r => r.classList.toggle('visible'));
+}}
+</script>
+""")
+
+        html_parts.append("</tbody></table>")
+
+        # Рендер
+        total_rows = len(parents_to_render[:max_parents])
+        # Грубо: висота = 60 (header) + parent-и × 40 + запас
+        html_height = min(800, 100 + total_rows * 42)
+
+        st.components.v1.html("".join(html_parts), height=html_height, scrolling=True)
+
+        st.caption(f"Показано {min(max_parents, len(parents_to_render))} parent ASIN. Клік на рядок → розгорне child SKU.")
+
+        # CSV з усіма даними
+        st.download_button(
+            "📥 CSV (всі parent × period)",
+            parent_agg.to_csv(index=False).encode(),
+            f"orders_parent_{detail_gran.lower()}.csv", "text/csv",
+            key="dl_parent_period"
+        )
 
     st.markdown("---")
 
