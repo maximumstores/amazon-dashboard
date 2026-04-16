@@ -3354,6 +3354,386 @@ def show_inventory_finance(df_filtered, t):
     insights_inventory(df_filtered)
 
 
+def show_reviews(t=None):
+    """
+    ⭐ Amazon Reviews
+    - Hero KPI + інсайти
+    - Heatmap ASIN × Country
+    - Фільтри: рейтинг, країна, ASIN
+    - Worst/Best ASIN
+    - Тексти відгуків (balanced до 100 на зірку)
+    - AI чат
+    """
+    if t is None: t = translations.get("UA", {})
+
+    df = load_reviews()
+    if df.empty:
+        st.warning("⚠️ Немає даних відгуків")
+        return
+
+    # ══════════════════════════════════════════════════════
+    # 1. SIDEBAR ФІЛЬТРИ
+    # ══════════════════════════════════════════════════════
+    st.sidebar.markdown("### ⭐ Фільтри відгуків")
+
+    # Країни
+    all_countries = sorted(df['domain'].dropna().unique().tolist()) if 'domain' in df.columns else []
+    country_labels = [DOMAIN_LABELS.get(c, c) for c in all_countries]
+    country_map = dict(zip(country_labels, all_countries))
+
+    sel_countries = st.sidebar.multiselect(
+        "🌍 Країни:",
+        country_labels,
+        default=country_labels,
+        key="rev_countries"
+    )
+    sel_domains = [country_map[c] for c in sel_countries] if sel_countries else all_countries
+
+    # Рейтинг
+    sel_stars = st.sidebar.multiselect(
+        "⭐ Рейтинг:",
+        [1, 2, 3, 4, 5],
+        default=[1, 2, 3, 4, 5],
+        key="rev_stars"
+    )
+
+    # Verified
+    only_verified = st.sidebar.checkbox("✅ Тільки Verified", value=False, key="rev_verified")
+
+    # ASIN
+    search_asin = st.sidebar.text_input("🔍 ASIN", "", key="rev_asin_search")
+
+    # ══════════════════════════════════════════════════════
+    # 2. ФІЛЬТРАЦІЯ
+    # ══════════════════════════════════════════════════════
+    df_f = df.copy()
+    if sel_domains and 'domain' in df_f.columns:
+        df_f = df_f[df_f['domain'].isin(sel_domains)]
+    if sel_stars:
+        df_f = df_f[df_f['rating'].isin(sel_stars)]
+    if only_verified and 'is_verified' in df_f.columns:
+        df_f = df_f[df_f['is_verified'] == True]
+    if search_asin:
+        df_f = df_f[df_f['asin'].astype(str).str.contains(search_asin, case=False, na=False)]
+
+    if df_f.empty:
+        st.warning("Немає відгуків за фільтрами")
+        return
+
+    # ══════════════════════════════════════════════════════
+    # 3. KPI — HERO CARD
+    # ══════════════════════════════════════════════════════
+    total_rev    = len(df_f)
+    avg_rating   = df_f['rating'].mean()
+    neg_cnt      = int((df_f['rating'] <= 2).sum())
+    pos_cnt      = int((df_f['rating'] >= 4).sum())
+    neg_pct      = neg_cnt / total_rev * 100 if total_rev > 0 else 0
+    pos_pct      = pos_cnt / total_rev * 100 if total_rev > 0 else 0
+    verified_pct = df_f['is_verified'].mean() * 100 if 'is_verified' in df_f.columns else 0
+    unique_asins = df_f['asin'].nunique()
+    unique_countries = df_f['domain'].nunique() if 'domain' in df_f.columns else 0
+
+    rating_color = "#4CAF50" if avg_rating >= 4.3 else "#FFC107" if avg_rating >= 4.0 else "#F44336"
+
+    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a2b1e,#0d1f12);border:1px solid #2d4a30;
+            border-radius:12px;padding:20px 28px;margin-bottom:16px;
+            display:flex;align-items:center;gap:32px;flex-wrap:wrap">
+  <div>
+    <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+      ⭐ Середній рейтинг
+    </div>
+    <div style="font-size:48px;font-weight:900;color:{rating_color};font-family:monospace;line-height:1">
+      {avg_rating:.2f}★
+    </div>
+    <div style="font-size:12px;color:#666;margin-top:6px">{total_rev:,} відгуків · {unique_asins} ASIN · {unique_countries} країн</div>
+  </div>
+  <div style="flex:1;min-width:200px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <span style="background:#1e2e1e;border:1px solid #2d4a30;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      🟢 Pos (4-5★) <b style="color:#4CAF50">{pos_pct:.1f}%</b>
+    </span>
+    <span style="background:#2b1a1a;border:1px solid #4a2d2d;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      🔴 Neg (1-2★) <b style="color:#F44336">{neg_pct:.1f}%</b>
+    </span>
+    <span style="background:#1a2b2e;border:1px solid #2d404a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      ✅ Verified <b style="color:#5B9BD5">{verified_pct:.0f}%</b>
+    </span>
+    <span style="background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;padding:6px 12px;font-size:13px;color:#fff">
+      📦 ASINs <b style="color:#AB47BC">{unique_asins}</b>
+    </span>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    # ── Інсайти ──
+    insights_reviews(df_f, asin=None)
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 4. РОЗПОДІЛ ЗІРОК + ТРЕНД
+    # ══════════════════════════════════════════════════════
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 📊 Розподіл по зірках")
+        star_cnt = df_f['rating'].value_counts().sort_index().reset_index()
+        star_cnt.columns = ['Rating', 'Count']
+        star_cnt['Label'] = star_cnt['Rating'].apply(lambda x: '★' * int(x))
+        colors_star = ['#F44336', '#FF6B6B', '#FFC107', '#4CAF50', '#2E7D32']
+        star_cnt['color'] = star_cnt['Rating'].apply(lambda x: colors_star[int(x)-1])
+
+        fig = go.Figure(go.Bar(
+            x=star_cnt['Label'], y=star_cnt['Count'],
+            marker_color=star_cnt['color'],
+            text=star_cnt['Count'], textposition='outside'
+        ))
+        fig.update_layout(height=320, margin=dict(l=0, r=0, t=10, b=0),
+                          xaxis_title='Rating', yaxis_title='Count')
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        st.markdown("#### 📈 Тренд рейтингу по місяцях")
+        df_f['month'] = df_f['review_date'].dt.to_period('M').astype(str)
+        monthly = df_f.groupby('month').agg(
+            avg_rating=('rating', 'mean'),
+            count=('rating', 'count')
+        ).reset_index().tail(12)
+
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(
+            x=monthly['month'], y=monthly['count'],
+            name='Відгуків', marker_color='#5B9BD5', opacity=0.6, yaxis='y2'
+        ))
+        fig2.add_trace(go.Scatter(
+            x=monthly['month'], y=monthly['avg_rating'],
+            name='Avg rating', mode='lines+markers+text',
+            text=[f"{v:.2f}" for v in monthly['avg_rating']],
+            textposition='top center',
+            line=dict(color='#FFC107', width=3), marker=dict(size=10)
+        ))
+        fig2.update_layout(
+            height=320, margin=dict(l=0, r=0, t=10, b=0),
+            yaxis=dict(title='Rating', range=[1, 5]),
+            yaxis2=dict(title='Count', overlaying='y', side='right'),
+            legend=dict(orientation='h', y=1.12)
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 5. WORST / BEST ASIN
+    # ══════════════════════════════════════════════════════
+    asin_stats = df_f.groupby('asin').agg(
+        count=('rating', 'count'),
+        avg_rating=('rating', 'mean'),
+        neg_pct=('rating', lambda x: (x <= 2).sum() / len(x) * 100),
+    ).reset_index()
+    asin_stats = asin_stats[asin_stats['count'] >= 5]  # мін 5 відгуків
+
+    if not asin_stats.empty:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("#### 🔴 Worst ASINs (5+ відгуків)")
+            worst = asin_stats.nsmallest(10, 'avg_rating')
+            fig_w = go.Figure(go.Bar(
+                x=worst['avg_rating'], y=worst['asin'], orientation='h',
+                marker_color='#F44336',
+                text=[f"{v:.2f}★ · {c} rev" for v, c in zip(worst['avg_rating'], worst['count'])],
+                textposition='outside'
+            ))
+            fig_w.update_layout(height=max(350, len(worst) * 35),
+                                yaxis={'categoryorder': 'total descending'},
+                                xaxis=dict(range=[1, 5]),
+                                margin=dict(l=0, r=120, t=10, b=0))
+            st.plotly_chart(fig_w, use_container_width=True)
+
+        with col2:
+            st.markdown("#### 🟢 Best ASINs (5+ відгуків)")
+            best = asin_stats.nlargest(10, 'avg_rating')
+            fig_b = go.Figure(go.Bar(
+                x=best['avg_rating'], y=best['asin'], orientation='h',
+                marker_color='#4CAF50',
+                text=[f"{v:.2f}★ · {c} rev" for v, c in zip(best['avg_rating'], best['count'])],
+                textposition='outside'
+            ))
+            fig_b.update_layout(height=max(350, len(best) * 35),
+                                yaxis={'categoryorder': 'total ascending'},
+                                xaxis=dict(range=[1, 5]),
+                                margin=dict(l=0, r=120, t=10, b=0))
+            st.plotly_chart(fig_b, use_container_width=True)
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 6. HEATMAP ASIN × COUNTRY
+    # ══════════════════════════════════════════════════════
+    if 'domain' in df_f.columns and df_f['domain'].nunique() > 1:
+        st.markdown("### 🔥 Heatmap: ASIN × Country")
+        st.caption("Клітинки = середній рейтинг · мінімум 3 відгуки для показу")
+
+        # Top 20 ASINs за кількістю
+        top_asins = df_f['asin'].value_counts().head(20).index.tolist()
+        df_heat = df_f[df_f['asin'].isin(top_asins)]
+
+        heat = df_heat.groupby(['asin', 'domain']).agg(
+            avg_r=('rating', 'mean'),
+            cnt=('rating', 'count')
+        ).reset_index()
+        heat = heat[heat['cnt'] >= 3]
+
+        if not heat.empty:
+            pivot = heat.pivot(index='asin', columns='domain', values='avg_r')
+
+            fig_heat = go.Figure(data=go.Heatmap(
+                z=pivot.values,
+                x=pivot.columns,
+                y=pivot.index,
+                colorscale='RdYlGn',
+                zmin=1, zmax=5,
+                text=pivot.values,
+                texttemplate='%{text:.1f}',
+                textfont={"size": 11},
+                colorbar=dict(title='Rating')
+            ))
+            fig_heat.update_layout(
+                height=max(400, len(pivot) * 25),
+                margin=dict(l=0, r=0, t=10, b=0),
+                xaxis_title='Country', yaxis_title='ASIN'
+            )
+            st.plotly_chart(fig_heat, use_container_width=True)
+
+        st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 7. ПО КРАЇНАХ
+    # ══════════════════════════════════════════════════════
+    if 'domain' in df_f.columns and df_f['domain'].nunique() > 1:
+        st.markdown("### 🌍 Аналіз по країнах")
+
+        country_stats = df_f.groupby('domain').agg(
+            count=('rating', 'count'),
+            avg_rating=('rating', 'mean'),
+            neg_pct=('rating', lambda x: (x <= 2).sum() / len(x) * 100),
+            pos_pct=('rating', lambda x: (x >= 4).sum() / len(x) * 100),
+        ).reset_index().sort_values('count', ascending=False)
+        country_stats['Label'] = country_stats['domain'].map(DOMAIN_LABELS).fillna(country_stats['domain'])
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown("#### 📊 Кількість")
+            fig_c1 = px.bar(country_stats, x='count', y='Label', orientation='h',
+                            color='count', color_continuous_scale='Blues',
+                            text='count', height=350)
+            fig_c1.update_layout(yaxis={'categoryorder': 'total ascending'},
+                                 showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_c1, use_container_width=True)
+
+        with col2:
+            st.markdown("#### ⭐ Рейтинг")
+            fig_c2 = go.Figure(go.Bar(
+                x=country_stats['avg_rating'], y=country_stats['Label'],
+                orientation='h',
+                marker_color=['#4CAF50' if v >= 4.3 else '#FFC107' if v >= 4 else '#F44336'
+                              for v in country_stats['avg_rating']],
+                text=[f"{v:.2f}★" for v in country_stats['avg_rating']],
+                textposition='outside'
+            ))
+            fig_c2.update_layout(height=350, xaxis=dict(range=[1, 5]),
+                                 yaxis={'categoryorder': 'total ascending'},
+                                 margin=dict(l=0, r=60, t=10, b=0))
+            st.plotly_chart(fig_c2, use_container_width=True)
+
+        with col3:
+            st.markdown("#### 🔴 % Негативу")
+            fig_c3 = go.Figure(go.Bar(
+                x=country_stats['neg_pct'], y=country_stats['Label'],
+                orientation='h',
+                marker_color=['#4CAF50' if v <= 10 else '#FFC107' if v <= 20 else '#F44336'
+                              for v in country_stats['neg_pct']],
+                text=[f"{v:.1f}%" for v in country_stats['neg_pct']],
+                textposition='outside'
+            ))
+            fig_c3.update_layout(height=350,
+                                 yaxis={'categoryorder': 'total ascending'},
+                                 margin=dict(l=0, r=60, t=10, b=0))
+            st.plotly_chart(fig_c3, use_container_width=True)
+
+        st.dataframe(
+            country_stats[['Label', 'count', 'avg_rating', 'pos_pct', 'neg_pct']].rename(columns={
+                'Label': 'Країна', 'count': 'Відгуків',
+                'avg_rating': 'Avg ★', 'pos_pct': '% Pos', 'neg_pct': '% Neg'
+            }).style.format({
+                'Avg ★': '{:.2f}', '% Pos': '{:.1f}%', '% Neg': '{:.1f}%'
+            }),
+            use_container_width=True, hide_index=True
+        )
+
+        st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 8. ТЕКСТИ ВІДГУКІВ
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 📋 Тексти відгуків")
+    st.caption("Balanced вибірка: до 100 на кожну зірку · 1★ зверху щоб проблеми були першими")
+
+    # Balanced за зірками, 1★ зверху
+    parts = []
+    for s in [1, 2, 3, 4, 5]:
+        parts.append(df_f[df_f['rating'] == s].head(100))
+    df_balanced = pd.concat(parts, ignore_index=True) if parts else df_f
+
+    show_cols = [c for c in ['review_date', 'rating', 'asin', 'domain', 'title',
+                              'content', 'author', 'is_verified']
+                 if c in df_balanced.columns]
+
+    df_show = df_balanced[show_cols].copy()
+    if 'domain' in df_show.columns:
+        df_show['Country'] = df_show['domain'].map(DOMAIN_LABELS).fillna(df_show['domain'])
+        df_show = df_show.drop(columns=['domain'])
+    if 'review_date' in df_show.columns:
+        df_show['review_date'] = df_show['review_date'].dt.strftime('%Y-%m-%d')
+
+    df_show = df_show.rename(columns={
+        'review_date': 'Date', 'rating': '★', 'asin': 'ASIN',
+        'title': 'Title', 'content': 'Content', 'author': 'Author',
+        'is_verified': '✅'
+    })
+
+    st.dataframe(df_show, use_container_width=True, hide_index=True, height=500)
+    st.caption(f"Показано {len(df_show):,} з {len(df_f):,} відгуків")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            "📥 CSV (balanced)",
+            df_balanced.to_csv(index=False).encode(),
+            "reviews_balanced.csv", "text/csv"
+        )
+    with col2:
+        st.download_button(
+            "📥 CSV (всі за фільтром)",
+            df_f.to_csv(index=False).encode(),
+            "reviews_all.csv", "text/csv"
+        )
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 9. AI CHAT
+    # ══════════════════════════════════════════════════════
+    ctx = (f"Reviews: {total_rev:,} відгуків | Avg {avg_rating:.2f}★ | "
+           f"Neg {neg_pct:.1f}% | Pos {pos_pct:.1f}% | Verified {verified_pct:.0f}% | "
+           f"ASINs {unique_asins} | Countries {unique_countries}")
+    show_ai_chat(ctx, [
+        "Які ASINи мають найбільше негативних відгуків?",
+        "Головні скарги в 1-2★ відгуках",
+        "Різниця між US і DE відгуками",
+        "Що найчастіше хвалять в 5★ відгуках?",
+    ], "reviews")
+
+
 def show_orders(t=None):
     """
     🛒 Продажі (Orders) v2.0
