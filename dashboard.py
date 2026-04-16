@@ -1611,7 +1611,6 @@ def show_ai_chat(context: str, preset_questions: list, section_key: str):
 # ============================================
 # INVENTORY UNIFIED
 # ============================================
-
 def show_inventory_unified():
     st.markdown("### 📦 Склад (Inventory)")
     engine = get_engine()
@@ -1640,7 +1639,6 @@ def show_inventory_unified():
         elif lc in ('store_name','marketplace','market_place'): col_map['store'] = c
         elif lc in ('product_name','title','name'):        col_map['name']       = c
         elif lc in ('afn_unsellable_quantity','unsellable'):col_map['unsellable']= c
-        # Age колонки
         elif 'upto_90' in lc or '0_to_90' in lc or 'age_0' in lc:   col_map['age_0_90']    = c
         elif '91_to_180' in lc or 'age_91' in lc:                     col_map['age_91_180']  = c
         elif '181_to_270' in lc or 'age_181' in lc:                    col_map['age_181_270'] = c
@@ -1689,7 +1687,6 @@ def show_inventory_unified():
 
     df['_value'] = (df[avail_c] * df[price_c]) if (avail_c and price_c) else 0
 
-    # DoS розрахунок
     if not dos_c and vel_c and avail_c:
         df['_dos'] = (df[avail_c] / df[vel_c].replace(0, float('nan'))).round(0).fillna(0)
         dos_use = '_dos'
@@ -1787,7 +1784,7 @@ def show_inventory_unified():
             cols_u = [c for c in [sku_c, avail_c, vel_c, dos_use, price_c] if c and c in urgent.columns]
             st.dataframe(urgent[cols_u].rename(columns={sku_c:'SKU',avail_c:'Available',
                          vel_c:'Velocity',dos_use:'Days',price_c:'Price'}).head(10),
-                         width="stretch", hide_index=True)
+                         use_container_width=True, hide_index=True)
     if low30_cnt > 0:
         st.warning(f"🟡 **{low30_cnt} SKU** — менше 30 днів запасів")
     if oos_cnt > 0:
@@ -1797,7 +1794,47 @@ def show_inventory_unified():
 
     st.markdown("---")
 
-    # ── Графіки ──
+    # ══════════════════════════════════════════════════════
+    # HTML BAR HELPER (inline)
+    # ══════════════════════════════════════════════════════
+    def _html_bars(labels, values, texts, colors=None, color='#5B9BD5',
+                   uid='bars', lbl_width=180, bar_h=22):
+        """HTML horizontal bars з копіюваними label-ами."""
+        n = len(labels)
+        if n == 0: return
+        max_v = max(values) if values else 1
+        if max_v <= 0: max_v = 1
+        if not colors: colors = [color] * n
+
+        html = f"""
+<style>
+.hb-{uid} .r {{ display:flex; align-items:center; margin:2px 0; gap:6px; }}
+.hb-{uid} .l {{ min-width:{lbl_width}px; max-width:{lbl_width}px; font-family:monospace;
+                font-size:12px; text-align:right; padding-right:8px; overflow:hidden;
+                text-overflow:ellipsis; white-space:nowrap; user-select:all; cursor:pointer;
+                color:#ccc; }}
+.hb-{uid} .l:hover {{ color:#fff; background:#1a1a2e; border-radius:3px; }}
+.hb-{uid} .bg {{ flex:1; background:#1a1a1a; border-radius:3px; overflow:hidden; }}
+.hb-{uid} .b {{ height:{bar_h}px; border-radius:3px; }}
+.hb-{uid} .t {{ font-size:11px; color:#aaa; white-space:nowrap; min-width:80px; }}
+</style>
+<div class='hb-{uid}'>"""
+
+        for i in range(n):
+            w = int(float(values[i]) / max_v * 100)
+            html += f"""
+<div class='r'>
+  <div class='l' title='{labels[i]}'>{labels[i]}</div>
+  <div class='bg'><div class='b' style='width:{w}%;background:{colors[i]}'></div></div>
+  <div class='t'>{texts[i]}</div>
+</div>"""
+
+        html += "</div>"
+        st.components.v1.html(html, height=10 + n * (bar_h + 6), scrolling=False)
+
+    # ══════════════════════════════════════════════════════
+    # ГРАФІКИ
+    # ══════════════════════════════════════════════════════
     col1, col2 = st.columns(2)
 
     with col1:
@@ -1808,24 +1845,25 @@ def show_inventory_unified():
             fig = px.treemap(dm, path=path, values='_value',
                              color='_value', color_continuous_scale='RdYlGn_r', height=380)
             fig.update_layout(margin=dict(l=0,r=0,t=10,b=0))
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
 
     with col2:
         st.markdown("#### 🏆 Топ 15 SKU за залишками")
+        st.caption("Клік на SKU → виділяє для копіювання · 🔴<14д 🟡<30д 🟢норм")
         if avail_c and sku_c:
             top = df_f[df_f[avail_c] > 0].nlargest(15, avail_c)
-            colors = []
-            for _, row in top.iterrows():
-                d = row.get(dos_use, 999) if dos_use else 999
-                colors.append('#F44336' if d < 14 else '#FFC107' if d < 30 else '#4CAF50')
-            fig2 = go.Figure(go.Bar(
-                x=top[avail_c], y=top[sku_c], orientation='h',
-                marker_color=colors,
-                text=[f"{int(v)} units" for v in top[avail_c]], textposition='outside'
-            ))
-            fig2.update_layout(height=380, yaxis={'categoryorder':'total ascending'},
-                               margin=dict(l=0,r=80,t=10,b=0))
-            st.plotly_chart(fig2, width="stretch")
+            if not top.empty:
+                bar_colors = []
+                for _, row in top.iterrows():
+                    d = row.get(dos_use, 999) if dos_use else 999
+                    bar_colors.append('#F44336' if d < 14 else '#FFC107' if d < 30 else '#4CAF50')
+                _html_bars(
+                    labels=top[sku_c].tolist(),
+                    values=top[avail_c].tolist(),
+                    texts=[f"{int(v):,} units" for v in top[avail_c]],
+                    colors=bar_colors,
+                    uid='inv_top15'
+                )
 
     # ── Age Analysis ──
     if age_cols:
@@ -1852,21 +1890,21 @@ def show_inventory_unified():
             df_age = pd.DataFrame(age_data)
             col1, col2 = st.columns(2)
             with col1:
-                colors_age = ['#4CAF50','#FFC107','#FF9800','#F44336','#B71C1C'][:len(df_age)]
-                fig_age = go.Figure(go.Bar(
-                    x=df_age['Одиниць'], y=df_age['Вік'], orientation='h',
-                    marker_color=colors_age,
-                    text=[f"{v:,} units" for v in df_age['Одиниць']], textposition='outside'
-                ))
-                fig_age.update_layout(height=300, title="Одиниць по віку",
-                                      margin=dict(l=0,r=80,t=30,b=0))
-                st.plotly_chart(fig_age, width="stretch")
+                age_clrs = ['#4CAF50','#FFC107','#FF9800','#F44336','#B71C1C'][:len(df_age)]
+                _html_bars(
+                    labels=df_age['Вік'].tolist(),
+                    values=df_age['Одиниць'].tolist(),
+                    texts=[f"{v:,} units" for v in df_age['Одиниць']],
+                    colors=age_clrs,
+                    uid='inv_age',
+                    lbl_width=130
+                )
             with col2:
                 fig_pie = px.pie(df_age, values='Вартість', names='Вік',
                                  color_discrete_sequence=['#4CAF50','#FFC107','#FF9800','#F44336','#B71C1C'],
                                  hole=0.4, title="Вартість по віку")
                 fig_pie.update_layout(height=300)
-                st.plotly_chart(fig_pie, width="stretch")
+                st.plotly_chart(fig_pie, use_container_width=True)
 
             # Топ старих SKU
             old_cols = [age_cols[k] for k in ['age_181_270','age_271_365','age_365_plus'] if k in age_cols]
@@ -1880,42 +1918,39 @@ def show_inventory_unified():
                         sku_c:'SKU', avail_c:'Available', price_c:'Price',
                         '_value':'Stock Value', '_old_units':'Old Units (180+d)'
                     }).style.format({'Price':'${:.2f}','Stock Value':'${:,.0f}'}),
-                    width="stretch", hide_index=True)
+                    use_container_width=True, hide_index=True)
 
-    # ── Velocity Chart ──
+    # ── Velocity Chart (HTML) ──
     if vel_c and sku_c:
         st.markdown("---")
         st.markdown("#### 🚀 Топ 15 SKU за Velocity (продажів/місяць)")
+        st.caption("Клік на SKU → виділяє для копіювання")
         top_vel = df_f[df_f[vel_c] > 0].nlargest(15, vel_c)
         if not top_vel.empty:
-            fig_v = go.Figure(go.Bar(
-                x=top_vel[vel_c], y=top_vel[sku_c], orientation='h',
-                marker_color='#5B9BD5',
-                text=[f"{v:.1f}/міс" for v in top_vel[vel_c]], textposition='outside'
-            ))
-            fig_v.update_layout(height=max(300, len(top_vel)*35),
-                                yaxis={'categoryorder':'total ascending'},
-                                margin=dict(l=0,r=80,t=10,b=0))
-            st.plotly_chart(fig_v, width="stretch")
+            _html_bars(
+                labels=top_vel[sku_c].tolist(),
+                values=top_vel[vel_c].tolist(),
+                texts=[f"{v:.1f}/міс" for v in top_vel[vel_c]],
+                color='#5B9BD5',
+                uid='inv_vel'
+            )
 
-    # ── DoS Chart ──
+    # ── Days of Supply Chart (HTML) ──
     if dos_use and sku_c:
         st.markdown("---")
         st.markdown("#### ⏳ Days of Supply (топ 20 ризикованих)")
+        st.caption("🔴 <14д критично · 🟡 <30д увага · 🟢 норм · Клік на SKU → копіювання")
         df_dos = df_f[(df_f[dos_use] > 0) & (df_f[dos_use] < 60)].nsmallest(20, dos_use)
         if not df_dos.empty:
-            colors_dos = ['#F44336' if v < 14 else '#FFC107' if v < 30 else '#4CAF50' for v in df_dos[dos_use]]
-            fig3 = go.Figure(go.Bar(
-                x=df_dos[dos_use], y=df_dos[sku_c], orientation='h',
-                marker_color=colors_dos,
-                text=[f"{int(v)}д" for v in df_dos[dos_use]], textposition='outside'
-            ))
-            fig3.add_vline(x=14, line_dash="dash", line_color="#F44336", annotation_text="14д ⚠️")
-            fig3.add_vline(x=30, line_dash="dash", line_color="#FFC107", annotation_text="30д")
-            fig3.update_layout(height=max(300, len(df_dos)*35),
-                               yaxis={'categoryorder':'total ascending'},
-                               margin=dict(l=0,r=80,t=10,b=0))
-            st.plotly_chart(fig3, width="stretch")
+            dos_colors = ['#F44336' if v < 14 else '#FFC107' if v < 30 else '#4CAF50'
+                          for v in df_dos[dos_use]]
+            _html_bars(
+                labels=df_dos[sku_c].tolist(),
+                values=df_dos[dos_use].tolist(),
+                texts=[f"{int(v)} днів" for v in df_dos[dos_use]],
+                colors=dos_colors,
+                uid='inv_dos'
+            )
 
     # ── Таблиця ──
     st.markdown("---")
@@ -1924,15 +1959,30 @@ def show_inventory_unified():
                 inb_c:'Inbound', res_c:'Reserved', price_c:'Price',
                 vel_c:'Velocity', dos_use:'DoS', store_c:'Store', '_value':'Value'}
     show_c = [c for c in show_map if c and c in df_f.columns]
-    df_show = df_f[show_c].rename(columns=show_map).sort_values('DoS' if 'DoS' in [show_map[c] for c in show_c] else 'Available').head(500)
+    df_show = df_f[show_c].rename(columns=show_map)
+    if 'DoS' in df_show.columns:
+        df_show = df_show.sort_values('DoS')
+    elif 'Available' in df_show.columns:
+        df_show = df_show.sort_values('Available', ascending=False)
+    df_show = df_show.head(500)
     fmt = {}
     if 'Price' in df_show.columns:  fmt['Price']  = '${:.2f}'
     if 'Value' in df_show.columns:  fmt['Value']  = '${:,.0f}'
     if 'DoS' in df_show.columns:    fmt['DoS']    = '{:.0f}'
     st.dataframe(df_show.style.format(fmt) if fmt else df_show,
-                 width="stretch", hide_index=True, height=450)
+                 use_container_width=True, hide_index=True, height=450)
     st.caption(f"Показано {len(df_show):,} з {len(df_f):,} SKU")
     st.download_button("📥 CSV", df_f.to_csv(index=False).encode(), "inventory.csv", "text/csv")
+
+    st.markdown("---")
+
+    # ── Insights (old function) ──
+    try:
+        insights_inventory(df_f)
+    except Exception:
+        pass
+
+    st.markdown("---")
 
     # ── AI ──
     ctx = f"""Inventory: {total_sku} SKU | Available: {total_avail:,} | Value: {_fmt(total_value)}
