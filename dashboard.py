@@ -7012,25 +7012,7 @@ elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "📋 Податки (Tax)":            show_tax(t)
 elif report_choice == "📦 Restock Agent":            show_restock_agent(t)
 elif report_choice == "📈 Прогноз (Forecast)":       show_forecast(t)
-elif report_choice == "⭐ Amazon Reviews":
-    st.markdown("### ⭐ Amazon Reviews")
-    st.info("Сторінка Reviews тимчасово недоступна")
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            df_rev = pd.read_sql(text(
-                "SELECT asin, domain, rating, title, content, author, "
-                "review_date, is_verified FROM amazon_reviews "
-                "ORDER BY review_date DESC LIMIT 500"
-            ), conn)
-        if not df_rev.empty:
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Всього відгуків", f"{len(df_rev):,}")
-            c2.metric("Середній рейтинг", f"{df_rev['rating'].mean():.2f}★")
-            c3.metric("1-2★", f"{int((df_rev['rating'] <= 2).sum())}")
-            st.dataframe(df_rev, use_container_width=True, hide_index=True, height=500)
-    except Exception as e:
-        st.error(f"Помилка: {e}")
+elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 elif report_choice == "👑 User Management":          show_admin_panel()
