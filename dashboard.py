@@ -3689,18 +3689,46 @@ def show_sqp(t=None):
         )
         st.plotly_chart(fig_ac, use_container_width=True)
 
-    st.dataframe(
-        asin_perf.rename(columns={
-            'our_asin': 'ASIN', 'terms_count': 'Terms',
-            'avg_position': 'Avg Pos', 'avg_click_share': 'Avg CTR %',
-            'avg_conv_share': 'Avg CVR %', 'best_rank': 'Best Rank',
-            'pos1_count': '#1 Count'
-        }).style.format({
-            'Avg CTR %': '{:.2f}%', 'Avg CVR %': '{:.2f}%',
-            'Avg Pos': '{:.1f}', 'Best Rank': '{:,}'
-        }),
-        use_container_width=True, hide_index=True, height=400
-    )
+    # ── HTML таблиця наших ASIN з клікабельними посиланнями ──
+    our_html = """
+<style>
+.our-table { width:100%; border-collapse:collapse; font-size:13px;
+             background:#0e1117; color:#fff; border-radius:8px; overflow:hidden; }
+.our-table th { background:#1a2b1e; color:#aaa; font-weight:600; padding:10px 12px;
+                text-align:center; border-bottom:2px solid #2d4a30; font-size:11px;
+                text-transform:uppercase; }
+.our-table th:first-child { text-align:left; }
+.our-table td { padding:8px 12px; border-bottom:1px solid #1f2e1f; text-align:center; }
+.our-table td:first-child { text-align:left; }
+.our-table tr:hover { background:#1a2b1e; }
+.our-link { color:#4CAF50; text-decoration:none; font-weight:600; font-family:monospace; }
+.our-link:hover { color:#81c784; text-decoration:underline; }
+.pos-1 { color:#4CAF50; font-weight:bold; }
+.pos-2 { color:#FFC107; }
+.pos-3 { color:#FF9800; }
+</style>
+<table class='our-table'>
+<thead><tr>
+  <th>ASIN</th><th>Terms</th><th>Avg Pos</th><th>Avg CTR</th><th>Avg CVR</th><th>Best Rank</th><th>#1 Count</th>
+</tr></thead><tbody>
+"""
+    for _, row in asin_perf.iterrows():
+        asin = row['our_asin']
+        url = f"https://www.amazon.com/dp/{asin}"
+        pos_cls = 'pos-1' if row['avg_position'] <= 1.3 else ('pos-2' if row['avg_position'] <= 2 else 'pos-3')
+        our_html += f"""
+<tr>
+  <td><a class='our-link' href='{url}' target='_blank'>🔗 {asin}</a></td>
+  <td>{int(row['terms_count'])}</td>
+  <td class='{pos_cls}'>{row['avg_position']:.1f}</td>
+  <td>{row['avg_click_share']:.2f}%</td>
+  <td>{row['avg_conv_share']:.2f}%</td>
+  <td>{int(row['best_rank']):,}</td>
+  <td>{int(row['pos1_count'])}</td>
+</tr>"""
+
+    our_html += "</tbody></table>"
+    st.components.v1.html(our_html, height=min(600, 60 + len(asin_perf) * 40), scrolling=True)
 
     st.markdown("---")
 
