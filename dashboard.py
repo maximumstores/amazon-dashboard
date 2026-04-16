@@ -11,7 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 import datetime as dt
-from dotenv import load_dotenv
+from dotenv import load_dotenv   
 import streamlit.components.v1 as components
 from sqlalchemy import create_engine, text
 try:
@@ -3354,6 +3354,7 @@ def show_inventory_finance(df_filtered, t):
     st.dataframe(dt_.style.format({'Price':"${:.2f}",'Stock Value':"${:,.2f}"}),width="stretch")
     insights_inventory(df_filtered)
 
+
 def show_sqp(t=None):
     """
     📊 Brand Analytics — Search Query Performance (SQP)
@@ -3656,38 +3657,25 @@ def show_sqp(t=None):
     with col1:
         st.markdown("#### 🏆 По кількості terms")
         top_asin = asin_perf.head(15)
-        fig_a = go.Figure(go.Bar(
-            x=top_asin['terms_count'], y=top_asin['our_asin'],
-            orientation='h', marker_color='#5B9BD5',
-            text=[f"{c} terms · CTR {cs:.2f}%" for c, cs in
-                  zip(top_asin['terms_count'], top_asin['avg_click_share'])],
-            textposition='outside'
-        ))
-        fig_a.update_layout(
-            height=max(400, len(top_asin) * 30),
-            yaxis={'categoryorder': 'total ascending'},
-            margin=dict(l=0, r=120, t=10, b=0)
-        )
-        st.plotly_chart(fig_a, use_container_width=True)
+        max_tc = int(top_asin['terms_count'].max()) if not top_asin.empty else 1
+        bars1 = "<style>.ab-row{display:flex;align-items:center;margin:3px 0;gap:6px}.ab-lbl{min-width:110px;font-family:monospace;font-size:12px}.ab-lbl a{color:#5B9BD5;text-decoration:none;font-weight:600}.ab-lbl a:hover{color:#82b1ff;text-decoration:underline}.ab-bar{height:20px;border-radius:3px;background:#5B9BD5}.ab-txt{font-size:11px;color:#aaa;white-space:nowrap}</style>"
+        for _, r in top_asin.iterrows():
+            url = f"https://www.amazon.com/dp/{r['our_asin']}"
+            w = int(r['terms_count'] / max_tc * 100)
+            bars1 += f"<div class='ab-row'><div class='ab-lbl'><a href='{url}' target='_blank'>{r['our_asin']}</a></div><div style='flex:1;background:#1a1a1a;border-radius:3px;overflow:hidden'><div class='ab-bar' style='width:{w}%'></div></div><div class='ab-txt'>{int(r['terms_count'])} · CTR {r['avg_click_share']:.1f}%</div></div>"
+        st.components.v1.html(bars1, height=min(450, 10 + len(top_asin) * 28))
 
     with col2:
         st.markdown("#### 📊 По Click Share")
         top_cs_asin = asin_perf.nlargest(15, 'avg_click_share')
-        fig_ac = go.Figure(go.Bar(
-            x=top_cs_asin['avg_click_share'], y=top_cs_asin['our_asin'],
-            orientation='h',
-            marker_color=['#4CAF50' if v >= 10 else '#FFC107' if v >= 5 else '#F44336'
-                          for v in top_cs_asin['avg_click_share']],
-            text=[f"{v:.2f}%" for v in top_cs_asin['avg_click_share']],
-            textposition='outside'
-        ))
-        fig_ac.update_layout(
-            height=max(400, len(top_cs_asin) * 30),
-            yaxis={'categoryorder': 'total ascending'},
-            xaxis_title='Avg Click Share %',
-            margin=dict(l=0, r=80, t=10, b=0)
-        )
-        st.plotly_chart(fig_ac, use_container_width=True)
+        max_cs = float(top_cs_asin['avg_click_share'].max()) if not top_cs_asin.empty else 1
+        bars2 = "<style>.ac-row{display:flex;align-items:center;margin:3px 0;gap:6px}.ac-lbl{min-width:110px;font-family:monospace;font-size:12px}.ac-lbl a{color:#4CAF50;text-decoration:none;font-weight:600}.ac-lbl a:hover{color:#81c784;text-decoration:underline}.ac-bar{height:20px;border-radius:3px}.ac-txt{font-size:11px;color:#aaa;white-space:nowrap}</style>"
+        for _, r in top_cs_asin.iterrows():
+            url = f"https://www.amazon.com/dp/{r['our_asin']}"
+            w = int(r['avg_click_share'] / max_cs * 100)
+            clr = '#4CAF50' if r['avg_click_share'] >= 10 else '#FFC107' if r['avg_click_share'] >= 5 else '#F44336'
+            bars2 += f"<div class='ac-row'><div class='ac-lbl'><a href='{url}' target='_blank'>{r['our_asin']}</a></div><div style='flex:1;background:#1a1a1a;border-radius:3px;overflow:hidden'><div class='ac-bar' style='width:{w}%;background:{clr}'></div></div><div class='ac-txt'>{r['avg_click_share']:.2f}%</div></div>"
+        st.components.v1.html(bars2, height=min(450, 10 + len(top_cs_asin) * 28))
 
     # ── HTML таблиця наших ASIN з клікабельними посиланнями ──
     our_html = """
@@ -3766,24 +3754,34 @@ def show_sqp(t=None):
         comp_agg['avg_click_share'] = (comp_agg['avg_click_share'] * 100).round(2)
         comp_agg['avg_position'] = comp_agg['avg_position'].round(1)
 
-        # Топ 20 конкурентів
+        # Топ 20 конкурентів — HTML bars з клікабельними ASIN
         st.markdown("#### 🏴 Топ 20 конкурентів")
-        top_comp = comp_agg.head(20)
 
-        fig_comp = go.Figure(go.Bar(
-            x=top_comp['appearances'], y=top_comp['asin'],
-            orientation='h', marker_color='#F44336',
-            text=[f"{a} terms · CTR {cs:.1f}%" for a, cs in
-                  zip(top_comp['appearances'], top_comp['avg_click_share'])],
-            textposition='outside'
-        ))
-        fig_comp.update_layout(
-            height=max(400, len(top_comp) * 30),
-            yaxis={'categoryorder': 'total ascending'},
-            xaxis_title='Appearances on our keywords',
-            margin=dict(l=0, r=140, t=10, b=0)
-        )
-        st.plotly_chart(fig_comp, use_container_width=True)
+        max_app = int(comp_agg['appearances'].max()) if not comp_agg.empty else 1
+        bars_html = """
+<style>
+.cb-row { display:flex; align-items:center; margin:3px 0; gap:8px; }
+.cb-label { min-width:120px; font-family:monospace; font-size:13px; }
+.cb-label a { color:#F44336; text-decoration:none; font-weight:600; }
+.cb-label a:hover { color:#ff6b6b; text-decoration:underline; }
+.cb-bar { height:22px; border-radius:3px; background:#F44336; transition:width 0.3s; }
+.cb-text { font-size:12px; color:#aaa; white-space:nowrap; }
+</style>
+"""
+        for _, row in comp_agg.head(20).iterrows():
+            asin = row['asin']
+            url = f"https://www.amazon.com/dp/{asin}"
+            w = int(row['appearances'] / max_app * 100)
+            bars_html += f"""
+<div class='cb-row'>
+  <div class='cb-label'><a href='{url}' target='_blank'>{asin}</a></div>
+  <div style='flex:1;background:#1a1a1a;border-radius:3px;overflow:hidden'>
+    <div class='cb-bar' style='width:{w}%'></div>
+  </div>
+  <div class='cb-text'>{int(row['appearances'])} terms · CTR {row['avg_click_share']:.1f}%</div>
+</div>"""
+
+        st.components.v1.html(bars_html, height=min(550, 20 + len(comp_agg.head(20)) * 28), scrolling=False)
 
         # ── HTML таблиця з клікабельними ASIN + запити ──
         st.markdown("#### 📋 Деталі конкурентів (клікни ASIN → Amazon)")
