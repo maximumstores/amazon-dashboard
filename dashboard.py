@@ -1836,7 +1836,7 @@ def show_inventory_unified():
         if not oos_skus.empty:
             total_daily_loss = oos_skus['daily_rev'].sum()
             total_monthly_loss = total_daily_loss * 30
-            top_oos = oos_skus.nlargest(10, 'daily_rev')
+            top_oos = oos_skus.sort_values('daily_rev', ascending=False)
 
             # Inbound split
             if inb_c and inb_c in oos_skus.columns:
@@ -1859,7 +1859,7 @@ def show_inventory_unified():
             elif total_daily_loss > 100:
                 st.warning(f"⚠️ Втрати **${total_daily_loss:,.0f}/день** через OOS")
 
-            st.markdown("#### 🔴 Топ OOS SKU за втраченим revenue")
+            st.markdown("#### 🔴 Всі OOS SKU за втраченим revenue")
             oos_show = top_oos[[c for c in [sku_c, asin_c, inb_c, 'revenue_30d', 'daily_rev', 'daily_units']
                                 if c and c in top_oos.columns]].copy()
             oos_show['monthly_loss'] = (oos_show['daily_rev'] * 30).round(0)
@@ -1876,16 +1876,39 @@ def show_inventory_unified():
                 if c in oos_show.columns:
                     oos_show[c] = pd.to_numeric(oos_show[c], errors='coerce').fillna(0)
 
+            # TOTAL row
+            total_row_oos = pd.DataFrame([{
+                'SKU': f'📊 TOTAL ({len(oos_show)})',
+                'ASIN': '',
+                'Inbound': int(oos_show['Inbound'].sum()) if 'Inbound' in oos_show.columns else 0,
+                'Rev 30д': float(oos_show['Rev 30д'].sum()),
+                '$/день': float(oos_show['$/день'].sum()),
+                'Units/день': float(oos_show['Units/день'].sum()) if 'Units/день' in oos_show.columns else 0,
+                'Втрати/міс': float(oos_show['Втрати/міс'].sum()),
+                'Status': '',
+            }])
+            oos_with_total = pd.concat([oos_show, total_row_oos], ignore_index=True)
+
+            def _hl_total_oos(row):
+                if str(row.get('SKU', '')).startswith('📊 TOTAL'):
+                    return ['background-color:#1a2b1e;color:#4CAF50;font-weight:bold'] * len(row)
+                return [''] * len(row)
+
             st.dataframe(
-                oos_show.style.format({
+                oos_with_total.style.format({
                     'Rev 30д': '${:,.0f}',
                     '$/день': '${:,.2f}',
                     'Units/день': '{:.1f}',
                     'Втрати/міс': '${:,.0f}',
                     'Inbound': '{:,}',
-                }).background_gradient(subset=['$/день'], cmap='Reds'),
-                use_container_width=True, hide_index=True
+                }).apply(_hl_total_oos, axis=1).background_gradient(subset=['$/день'], cmap='Reds'),
+                use_container_width=True, hide_index=True, height=600
             )
+            st.caption(f"Всього {len(oos_show)} OOS SKU з продажами · Втрати ${total_daily_loss:,.0f}/день · ${total_monthly_loss:,.0f}/міс")
+
+            st.download_button("📥 CSV всі OOS SKU",
+                oos_show.to_csv(index=False).encode(),
+                "oos_revenue_at_risk.csv", "text/csv", key="dl_oos")
         else:
             st.success("✅ Жодного OOS SKU з продажами — все в наявності!")
 
