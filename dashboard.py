@@ -1219,7 +1219,7 @@ def show_overview_insights(df_inventory):
  
             styled = df_tbl.style.format(fmt)
             if "Status" in df_tbl.columns:
-                styled = styled.applymap(color_status, subset=["Status"])
+                styled = styled.map(color_status, subset=["Status"])
             st.dataframe(styled, width="stretch", hide_index=True, height=400)
             st.caption(f"{len(df_tbl)} з {len(df_show)} SKU")
  
@@ -2291,7 +2291,7 @@ def show_etl_status():
         if "Застарів" in str(val): return "color:#F44336;font-weight:bold"
         return "color:#888"
 
-    st.dataframe(pd.DataFrame(data).style.applymap(color_status, subset=["Статус"]),
+    st.dataframe(pd.DataFrame(data).style.map(color_status, subset=["Статус"]),
                  width="stretch", hide_index=True, height=min(50+len(data)*35, 650))
 
     if warn_cnt > 0:   st.warning(f"⚠️ {warn_cnt} таблиць не оновлювались більше 1 дня")
@@ -7585,7 +7585,7 @@ def show_restock_agent(t=None):
         if val == 'WARNING':  return 'background-color:#2b2400;color:#f59e0b'
         return 'background-color:#0d2b1e;color:#22c55e'
 
-    st.dataframe(show_df.style.applymap(color_status, subset=['Статус'])
+    st.dataframe(show_df.style.map(color_status, subset=['Статус'])
                  .format({'Price':'${:.2f}','Вартість':'${:,.0f}','Velocity':'{:.2f}','DoS':'{:.0f}'}),
                  width="stretch", hide_index=True, height=400)
 
