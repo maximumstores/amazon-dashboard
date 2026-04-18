@@ -4445,8 +4445,9 @@ def show_reviews(t=None):
                         _disp['is_amazon_vine'] = _disp['is_amazon_vine'].map({True: '🍇', False: ''}).fillna('')
                     if 'source' in _disp.columns:
                         _disp['source'] = _disp['source'].map({
-                            'apify': '🟡', 'brightdata': '🟣'
-                        }).fillna('—')
+                            'apify':      '🟡 Apify',
+                            'brightdata': '🟣 Bright Data',
+                        }).fillna('⚪ —')
                     if 'helpful_count' in _disp.columns:
                         _disp['helpful_count'] = pd.to_numeric(_disp['helpful_count'], errors='coerce').fillna(0).astype(int)
                         _disp['helpful_count'] = _disp['helpful_count'].apply(lambda x: f"👍 {x}" if x > 0 else '')
@@ -4460,7 +4461,7 @@ def show_reviews(t=None):
                         'helpful_count':   '👍',
                         'is_amazon_vine':  '🍇 Vine',
                         'badge':           '🏷 Badge',
-                        'source':          '🔌',
+                        'source':          '🔌 Сервіс',
                         'title':           'Title',
                         'content':         'Content',
                         'author':          'Author',
@@ -4475,8 +4476,8 @@ def show_reviews(t=None):
                                                        help='Скільки користувачів вважають відгук корисним'),
                     '🍇 Vine': st.column_config.TextColumn('🍇', width='small',
                                                           help='Amazon Vine (безкоштовний товар в обмін на відгук)'),
-                    '🔌': st.column_config.TextColumn('🔌', width='small',
-                                                      help='🟡 Apify · 🟣 Bright Data'),
+                    '🔌 Сервіс': st.column_config.TextColumn('🔌 Сервіс', width='small',
+                                                              help='Яким сервісом зібрано: 🟡 Apify · 🟣 Bright Data'),
                     '🏷 Badge': st.column_config.TextColumn('🏷', width='small'),
                     '📦 Варіант': st.column_config.TextColumn('📦 Варіант', width='medium',
                                                               help='Size / Color варіанту — допомагає знайти проблемний SKU'),
