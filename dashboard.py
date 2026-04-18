@@ -4276,6 +4276,127 @@ def show_reviews(t=None):
     st.markdown("---")
 
     # ══════════════════════════════════════════════════════
+    # 3.5 🆕 НОВІ ВІДГУКИ (за сьогодні / 7 днів)
+    # ══════════════════════════════════════════════════════
+    if 'created_at' in df_f.columns:
+        _df_new = df_f.copy()
+        _df_new['created_at'] = pd.to_datetime(_df_new['created_at'], errors='coerce')
+        _now = pd.Timestamp.now()
+        _new_1d = _df_new[_df_new['created_at'] >= _now - pd.Timedelta(days=1)]
+        _new_7d = _df_new[_df_new['created_at'] >= _now - pd.Timedelta(days=7)]
+        _new_1d_neg = _new_1d[_new_1d['rating'] <= 3]  # 1-3★ = проблемні
+        _new_7d_neg = _new_7d[_new_7d['rating'] <= 3]
+
+        with st.container(border=True):
+            _nh1, _nh2 = st.columns([3, 1])
+            with _nh1:
+                st.markdown("### 🆕 Нові відгуки")
+                st.caption("Зібрані через скрапер · моніторинг оновлюється щодня")
+            with _nh2:
+                _nperiod = st.radio(
+                    "Період:",
+                    ["📅 24 години", "📆 7 днів"],
+                    horizontal=True, key="rev_new_period", label_visibility="collapsed"
+                )
+
+            _df_disp = _new_1d if _nperiod.startswith("📅") else _new_7d
+            _df_disp_neg = _new_1d_neg if _nperiod.startswith("📅") else _new_7d_neg
+
+            if _df_disp.empty:
+                st.info(f"Немає нових відгуків за {('24 години' if _nperiod.startswith('📅') else '7 днів')}. "
+                        "Запусти моніторинг у **🕷 Scraper Reviews → 📊 Моніторинг**.")
+            else:
+                _nk1, _nk2, _nk3, _nk4 = st.columns(4)
+                _nk1.metric("🆕 Нових всього", len(_df_disp))
+                _nk2.metric("🔴 Проблемних (1-3★)", len(_df_disp_neg),
+                            f"{len(_df_disp_neg)/len(_df_disp)*100:.0f}%")
+                _nk3.metric("📦 ASINів", _df_disp['asin'].nunique())
+                _nk4.metric("⭐ Середній", f"{_df_disp['rating'].mean():.2f}★")
+
+                # ── AI аналіз нових відгуків ──
+                _ai_col1, _ai_col2 = st.columns([3, 1])
+                with _ai_col1:
+                    st.markdown("#### 🤖 AI аналіз нових відгуків")
+                    st.caption("Тренди, нові скарги, critical issues — на основі нових відгуків у вибраному періоді")
+                with _ai_col2:
+                    _ai_btn_key = f"btn_new_ai_{_nperiod[:5]}"
+                    if st.button("🧠 Проаналізувати", key=_ai_btn_key, type="primary", use_container_width=True):
+                        with st.spinner("AI аналізує нові відгуки..."):
+                            _new_reviews_text = "\n".join([
+                                f"[{r['rating']}★] {r['asin']} · {str(r.get('title',''))[:60]} — {str(r.get('content',''))[:300]}"
+                                for _, r in _df_disp.head(50).iterrows()
+                            ])
+                            _asin_counts = _df_disp['asin'].value_counts().head(5).to_dict()
+                            _asin_summary = "; ".join([f"{a}: {c}" for a, c in _asin_counts.items()])
+                            _rating_dist = _df_disp['rating'].value_counts().sort_index().to_dict()
+                            _rating_str = ", ".join([f"{k}★: {v}" for k, v in _rating_dist.items()])
+
+                            _prompt = f"""Ти — Amazon FBA аналітик. Нові відгуки за {_nperiod}:
+
+СТАТИСТИКА:
+- Всього нових: {len(_df_disp)}
+- Проблемних (1-3★): {len(_df_disp_neg)} ({len(_df_disp_neg)/len(_df_disp)*100:.0f}%)
+- Розподіл: {_rating_str}
+- Топ ASIN за кількістю: {_asin_summary}
+
+ТЕКСТИ НОВИХ ВІДГУКІВ:
+{_new_reviews_text}
+
+Дай стислий аналіз у форматі:
+🔥 ТРЕНД: [загальна картина за цей період — що змінилось]
+⚠️ КРИТИЧНІ ПРОБЛЕМИ: [нові скарги, що повторюються — топ 3]
+📦 ПРОБЛЕМНІ ASIN: [які ASIN мають найбільше негативу — з причинами]
+✅ ПОЗИТИВ: [що хвалять у 4-5★]
+🎯 ДІЇ: [3 конкретних кроки — що виправити терміново]
+
+Відповідай стисло, по суті. Мова: українська."""
+
+                            try:
+                                if GEMINI_OK:
+                                    _api_key = os.environ.get("GEMINI_API_KEY", "") or (st.secrets.get("GEMINI_API_KEY","") if hasattr(st,"secrets") else "")
+                                    if _api_key:
+                                        genai.configure(api_key=_api_key)
+                                        _model = genai.GenerativeModel(os.environ.get("GEMINI_MODEL","gemini-1.5-flash"))
+                                        _resp = _model.generate_content(_prompt)
+                                        st.session_state[f"new_ai_result_{_nperiod[:5]}"] = _resp.text
+                                    else:
+                                        st.session_state[f"new_ai_result_{_nperiod[:5]}"] = "⚠️ GEMINI_API_KEY не задано"
+                                else:
+                                    st.session_state[f"new_ai_result_{_nperiod[:5]}"] = "⚠️ google-generativeai не встановлено"
+                            except Exception as _e:
+                                st.session_state[f"new_ai_result_{_nperiod[:5]}"] = f"❌ Помилка: {_e}"
+
+                _ai_result = st.session_state.get(f"new_ai_result_{_nperiod[:5]}", "")
+                if _ai_result:
+                    st.markdown(
+                        f'<div style="background:#0f172a;border:1px solid #334155;border-radius:10px;padding:14px 18px;color:#e2e8f0;font-size:0.88rem;line-height:1.7;white-space:pre-wrap">{_ai_result}</div>',
+                        unsafe_allow_html=True
+                    )
+
+                # ── Таблиця нових відгуків ──
+                st.markdown("#### 📋 Таблиця нових відгуків")
+                _show_new = _df_disp.sort_values(['rating','created_at'], ascending=[True, False])
+                _new_cols = [c for c in ['created_at','review_date','rating','asin','domain','title','content','is_verified']
+                             if c in _show_new.columns]
+                _new_disp = _show_new[_new_cols].copy()
+                if 'created_at' in _new_disp.columns:
+                    _new_disp['created_at'] = pd.to_datetime(_new_disp['created_at'], errors='coerce').dt.strftime('%d.%m %H:%M')
+                if 'review_date' in _new_disp.columns:
+                    _new_disp['review_date'] = _new_disp['review_date'].dt.strftime('%Y-%m-%d') if hasattr(_new_disp['review_date'], 'dt') else _new_disp['review_date']
+                if 'domain' in _new_disp.columns:
+                    _new_disp['Country'] = _new_disp['domain'].map(DOMAIN_LABELS).fillna(_new_disp['domain'])
+                    _new_disp = _new_disp.drop(columns=['domain'])
+                _new_disp = _new_disp.rename(columns={
+                    'created_at': '🕐 Зібрано', 'review_date': 'Дата відгуку',
+                    'rating': '★', 'asin': 'ASIN',
+                    'title': 'Title', 'content': 'Content', 'is_verified': '✅'
+                })
+                st.dataframe(_new_disp, use_container_width=True, hide_index=True, height=400)
+                st.caption(f"Показано {len(_new_disp)} нових відгуків · 1★ зверху (критичні першими)")
+
+        st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
     # 4. РОЗПОДІЛ ЗІРОК + ТРЕНД
     # ══════════════════════════════════════════════════════
     col1, col2 = st.columns(2)
@@ -5874,8 +5995,85 @@ def _scr_ensure_table():
             product_attributes TEXT, review_date TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS monitored_asins (
+            id SERIAL PRIMARY KEY,
+            asin VARCHAR(20) NOT NULL,
+            domain VARCHAR(20) DEFAULT 'com',
+            stars_to_monitor TEXT DEFAULT '1,2,3,4',
+            is_active BOOLEAN DEFAULT TRUE,
+            last_check TIMESTAMP,
+            last_new_count INT DEFAULT 0,
+            added_at TIMESTAMP DEFAULT NOW(),
+            added_by TEXT,
+            note TEXT,
+            UNIQUE(asin, domain)
+        );
     """)
     conn.commit(); cur.close(); conn.close()
+
+
+# ── Helpers для monitored_asins ──
+def _mon_list():
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("""
+            SELECT m.id, m.asin, m.domain, m.stars_to_monitor, m.is_active,
+                   m.last_check, m.last_new_count, m.added_at, m.added_by, m.note,
+                   (SELECT COUNT(*) FROM amazon_reviews r WHERE r.asin = m.asin AND r.domain = m.domain) AS total_reviews,
+                   (SELECT COUNT(*) FROM amazon_reviews r WHERE r.asin = m.asin AND r.domain = m.domain
+                     AND r.created_at > NOW() - INTERVAL '7 days') AS new_7d,
+                   (SELECT COUNT(*) FROM amazon_reviews r WHERE r.asin = m.asin AND r.domain = m.domain
+                     AND r.created_at > NOW() - INTERVAL '1 day') AS new_1d
+            FROM monitored_asins m
+            ORDER BY m.added_at DESC
+        """)
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return rows
+    except Exception:
+        return []
+
+
+def _mon_add(asin, domain, stars, note, added_by):
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO monitored_asins (asin, domain, stars_to_monitor, note, added_by)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (asin, domain) DO UPDATE
+              SET stars_to_monitor = EXCLUDED.stars_to_monitor,
+                  note = EXCLUDED.note,
+                  is_active = TRUE
+        """, (asin.upper(), domain, stars, note, added_by))
+        conn.commit(); cur.close(); conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def _mon_toggle(mon_id, active):
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE monitored_asins SET is_active=%s WHERE id=%s", (active, mon_id))
+        conn.commit(); cur.close(); conn.close()
+    except Exception: pass
+
+
+def _mon_delete(mon_id):
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("DELETE FROM monitored_asins WHERE id=%s", (mon_id,))
+        conn.commit(); cur.close(); conn.close()
+    except Exception: pass
+
+
+def _mon_update_check(mon_id, new_count):
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE monitored_asins SET last_check=NOW(), last_new_count=%s WHERE id=%s",
+                    (new_count, mon_id))
+        conn.commit(); cur.close(); conn.close()
+    except Exception: pass
 
 
 def _scr_save(reviews, asin, domain):
@@ -5925,6 +6123,72 @@ def _scr_parse_url(url):
     domain = p.netloc.replace("www.amazon.", "")
     m = re.search(r"([A-Z0-9]{10})", p.path)
     return domain, (m.group(1) if m else "UNKNOWN")
+
+
+def _mon_worker(monitored, max_per_star, log_q, progress_q, stop_event, apify_token):
+    """Воркер моніторингу: проходить по списку monitored_asins,
+    скрапить лише вибрані зірки, логує скільки нових."""
+    try:
+        _scr_ensure_table()
+    except Exception as e:
+        log_q.put(f"❌ DB error: {e}"); progress_q.put({"done": True}); return
+
+    apify_token = apify_token or os.getenv("APIFY_TOKEN", "")
+    endpoint = ("https://api.apify.com/v2/acts/junglee~amazon-reviews-scraper"
+                f"/run-sync-get-dataset-items?token={apify_token}")
+
+    log_q.put(f"🚀 Моніторинг: {len(monitored)} ASIN · старт {datetime.now().strftime('%H:%M:%S')}")
+    log_q.put("=" * 50)
+
+    total_new = 0
+    for idx, m in enumerate(monitored):
+        if stop_event.is_set(): break
+        mon_id, asin, domain, stars_str = m[0], m[1], m[2], m[3]
+        try:
+            stars = [int(s.strip()) for s in stars_str.split(",") if s.strip().isdigit()]
+        except Exception:
+            stars = [1, 2, 3, 4]
+
+        flag = DOMAIN_FLAGS.get(domain, "🌍")
+        url = f"https://www.amazon.{domain}/dp/{asin}"
+        log_q.put(f"\n{flag} [{idx+1}/{len(monitored)}] {asin} ({domain}) · зірки: {stars}")
+
+        asin_new = 0
+        for star_num in stars:
+            if stop_event.is_set(): break
+            star_text = STARS_MAP.get(star_num)
+            if not star_text: continue
+            pct = int((idx * len(stars) + stars.index(star_num) + 1) / (len(monitored) * len(stars)) * 100)
+            progress_q.put({"pct": pct, "label": f"{asin} · {star_num}★"})
+            payload = {
+                "productUrls": [{"url": url}],
+                "filterByRatings": [star_text],
+                "maxReviews": max_per_star,
+                "sort": "recent",
+            }
+            try:
+                res = requests.post(endpoint, json=payload, timeout=360)
+                if res.status_code in (200, 201):
+                    data = res.json()
+                    if data:
+                        ins = _scr_save(data, asin, domain)
+                        asin_new += ins
+                        log_q.put(f"  ✅ {star_num}★: {len(data)} got, {ins} NEW")
+                    else:
+                        log_q.put(f"  ⚠️ {star_num}★: порожньо")
+                else:
+                    log_q.put(f"  ❌ {star_num}★: HTTP {res.status_code}")
+            except Exception as e:
+                log_q.put(f"  ❌ {star_num}★: {e}")
+            time.sleep(2)
+
+        _mon_update_check(mon_id, asin_new)
+        total_new += asin_new
+        log_q.put(f"🎯 {asin}: +{asin_new} нових")
+        time.sleep(3)
+
+    log_q.put(f"\n🏁 МОНІТОРИНГ ЗАВЕРШЕНО: +{total_new} нових відгуків всього")
+    progress_q.put({"pct": 100, "label": f"Готово: +{total_new} нових", "done": True, "total": 1})
 
 
 def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, apify_token):
@@ -7979,6 +8243,7 @@ ML ПРОГНОЗ на {forecast_days} днів:
 def show_scraper_manager():
     _scr_init()
     _scr_flush()
+    _scr_ensure_table()  # гарантуємо що monitored_asins існує
 
     st.markdown("## 🕷 Scraper Reviews")
 
@@ -7990,60 +8255,204 @@ def show_scraper_manager():
     st.progress(st.session_state.scr_pct, text=st.session_state.scr_label or " ")
     st.markdown("---")
 
-    urls_input = st.text_area(
-        "🔗 Посилання Amazon (по одному на рядок):",
-        height=180,
-        placeholder=(
-            "https://www.amazon.com/dp/B08HR2131Z\n"
-            "https://www.amazon.de/dp/B08HWCL2RY\n"
-            "https://www.amazon.co.uk/dp/B07XCDPRGZ"
-        ),
-        disabled=st.session_state.scr_running,
-        key="scr_urls_input"
-    )
+    tab_single, tab_monitor = st.tabs(["🎯 Одноразовий збір", "📊 Моніторинг ASIN"])
 
-    max_per_star = 100
-    c2, c3 = st.columns([3, 1])
-    with c2:
-        loop_mode = st.toggle(
-            "🔄 Нескінченний цикл (пауза 30 хв між проходами)",
-            value=False,
-            disabled=st.session_state.scr_running
-        )
-    with c3:
-        st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
-        if st.session_state.scr_running:
-            if st.button("⛔ Зупинити", width="stretch", type="secondary"):
-                if st.session_state.scr_stop_event:
-                    st.session_state.scr_stop_event.set()
-                st.session_state.scr_running = False
-                st.session_state.scr_done    = True
-                st.rerun()
+    # ══════════════════════════════════════════════════════
+    # TAB: Моніторинг
+    # ══════════════════════════════════════════════════════
+    with tab_monitor:
+        st.markdown("### 📊 Щоденний моніторинг нових відгуків")
+        st.caption("Додай список ASIN → запускай кнопкою «Перевірити зараз» · Скрапить лише вибрані зірки (дефолт: 1-4★)")
+
+        # ── Форма додавання ──
+        with st.expander("➕ Додати ASIN у моніторинг", expanded=False):
+            _ac1, _ac2 = st.columns([3, 2])
+            with _ac1:
+                mon_urls_txt = st.text_area(
+                    "ASIN або URL (по одному на рядок):",
+                    height=100,
+                    placeholder="B08HR2131Z\nhttps://www.amazon.de/dp/B08HWCL2RY\nB0CLB31PCN",
+                    key="mon_urls_txt",
+                )
+            with _ac2:
+                mon_stars = st.multiselect(
+                    "⭐ Які зірки моніторити:",
+                    [1, 2, 3, 4, 5],
+                    default=[1, 2, 3, 4],
+                    key="mon_stars",
+                    help="1-4★ = всі незадоволені. 5★ не критичні → зазвичай пропускають."
+                )
+                mon_note = st.text_input("📝 Нотатка (опц.):", key="mon_note", placeholder="merino socks, US")
+            if st.button("➕ Додати до моніторингу", type="primary", use_container_width=True, key="btn_mon_add"):
+                lines = [l.strip() for l in (mon_urls_txt or "").splitlines() if l.strip()]
+                added = 0
+                for line in lines:
+                    if line.startswith("http"):
+                        domain, asin = _scr_parse_url(line)
+                    else:
+                        asin = line.upper()
+                        domain = "com"
+                    if asin and asin != "UNKNOWN":
+                        stars_str = ",".join(map(str, sorted(mon_stars))) if mon_stars else "1,2,3,4"
+                        user_email = st.session_state.get("user", {}).get("email", "")
+                        if _mon_add(asin, domain, stars_str, mon_note, user_email):
+                            added += 1
+                if added > 0:
+                    st.success(f"✅ Додано {added} ASIN до моніторингу")
+                    st.rerun()
+                else:
+                    st.error("Не додано жодного ASIN (перевір формат)")
+
+        # ── Таблиця моніторингу ──
+        monitored = _mon_list()
+
+        if not monitored:
+            st.info("📭 Список моніторингу порожній — додай ASIN вище")
         else:
-            raw_lines = [u.strip() for u in (urls_input or "").splitlines() if u.strip()]
-            if st.button("🚀 Запустити", width="stretch", type="primary",
-                         disabled=not raw_lines):
-                lq      = queue.Queue()
-                pq      = queue.Queue()
-                stop_ev = threading.Event()
+            # KPI
+            active_cnt = sum(1 for m in monitored if m[4])
+            new_1d = sum((m[12] or 0) for m in monitored)
+            new_7d = sum((m[11] or 0) for m in monitored)
+            total_rev = sum((m[10] or 0) for m in monitored)
 
-                st.session_state.scr_logs       = []
-                st.session_state.scr_pct        = 0
-                st.session_state.scr_label      = "Старт..."
-                st.session_state.scr_done       = False
-                st.session_state.scr_running    = True
-                st.session_state.scr_cycles     = 0
-                st.session_state.scr_log_q      = lq
-                st.session_state.scr_prog_q     = pq
-                st.session_state.scr_stop_event = stop_ev
+            _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+            _mc1.metric("📊 Активних ASIN", active_cnt, f"з {len(monitored)}")
+            _mc2.metric("🆕 Нових за 24г", new_1d)
+            _mc3.metric("📅 Нових за 7д", new_7d)
+            _mc4.metric("📦 Всього в БД", f"{total_rev:,}")
 
-                threading.Thread(
-                    target=_scr_worker,
-                    args=(raw_lines, max_per_star, lq, pq,
-                          loop_mode, stop_ev, APIFY_TOKEN_DEFAULT),
-                    daemon=True
-                ).start()
-                st.rerun()
+            st.markdown("---")
+
+            # ── Кнопка запустити моніторинг ──
+            active_list = [m for m in monitored if m[4]]
+            _rc1, _rc2 = st.columns([3, 1])
+            with _rc1:
+                st.markdown(f"**Готово до перевірки: {len(active_list)} активних ASIN**")
+                st.caption("Натисни → скрапер пройде по кожному і збере нові відгуки")
+            with _rc2:
+                if st.session_state.scr_running:
+                    st.button("⛔ Зупинити", width="stretch", type="secondary",
+                              disabled=False, key="mon_stop_btn",
+                              on_click=lambda: st.session_state.scr_stop_event.set()
+                              if st.session_state.scr_stop_event else None)
+                else:
+                    if st.button("🚀 Перевірити зараз", type="primary", width="stretch",
+                                 disabled=len(active_list) == 0, key="btn_mon_run"):
+                        lq = queue.Queue(); pq = queue.Queue(); stop_ev = threading.Event()
+                        st.session_state.scr_logs = []
+                        st.session_state.scr_pct = 0
+                        st.session_state.scr_label = "Моніторинг..."
+                        st.session_state.scr_done = False
+                        st.session_state.scr_running = True
+                        st.session_state.scr_log_q = lq
+                        st.session_state.scr_prog_q = pq
+                        st.session_state.scr_stop_event = stop_ev
+                        threading.Thread(
+                            target=_mon_worker,
+                            args=(active_list, 100, lq, pq, stop_ev, APIFY_TOKEN_DEFAULT),
+                            daemon=True
+                        ).start()
+                        st.rerun()
+
+            st.markdown("---")
+            st.markdown("#### 📋 Список моніторингу")
+
+            for m in monitored:
+                mon_id, asin, domain, stars, is_active, last_chk, last_new, added_at, added_by, note, total, n7, n1 = m
+                flag = DOMAIN_FLAGS.get(domain, "🌍")
+                last_chk_str = last_chk.strftime("%d.%m %H:%M") if last_chk else "ніколи"
+                added_str = added_at.strftime("%d.%m.%Y") if added_at else ""
+
+                row_c1, row_c2, row_c3, row_c4, row_c5, row_c6 = st.columns([2, 1, 1, 2, 1, 1])
+                with row_c1:
+                    _color = "#22c55e" if is_active else "#94a3b8"
+                    st.markdown(
+                        f'<div style="border-left:3px solid {_color};padding-left:8px">'
+                        f'<a href="https://www.amazon.{domain}/dp/{asin}" target="_blank" '
+                        f'style="color:#5B9BD5;text-decoration:none;font-weight:600">{flag} {asin}</a>'
+                        f'<div style="font-size:0.72rem;color:#64748b">⭐ {stars} · {note or "—"}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                with row_c2:
+                    _n1_c = "#22c55e" if n1 > 0 else "#64748b"
+                    st.markdown(f'<div style="text-align:center"><div style="font-size:1.1rem;font-weight:800;color:{_n1_c}">{n1}</div><div style="font-size:0.65rem;color:#64748b">за 24г</div></div>', unsafe_allow_html=True)
+                with row_c3:
+                    _n7_c = "#22c55e" if n7 > 0 else "#64748b"
+                    st.markdown(f'<div style="text-align:center"><div style="font-size:1.1rem;font-weight:800;color:{_n7_c}">{n7}</div><div style="font-size:0.65rem;color:#64748b">за 7д</div></div>', unsafe_allow_html=True)
+                with row_c4:
+                    st.caption(f"📅 додано {added_str}")
+                    st.caption(f"🕐 перевірка: {last_chk_str}")
+                with row_c5:
+                    if is_active:
+                        if st.button("⏸", key=f"mon_pause_{mon_id}", help="Пауза"):
+                            _mon_toggle(mon_id, False); st.rerun()
+                    else:
+                        if st.button("▶", key=f"mon_resume_{mon_id}", help="Відновити"):
+                            _mon_toggle(mon_id, True); st.rerun()
+                with row_c6:
+                    if st.button("🗑", key=f"mon_del_{mon_id}", help="Видалити"):
+                        _mon_delete(mon_id); st.rerun()
+                st.divider()
+
+    # ══════════════════════════════════════════════════════
+    # TAB: Одноразовий збір (існуючий функціонал)
+    # ══════════════════════════════════════════════════════
+    with tab_single:
+        urls_input = st.text_area(
+            "🔗 Посилання Amazon (по одному на рядок):",
+            height=180,
+            placeholder=(
+                "https://www.amazon.com/dp/B08HR2131Z\n"
+                "https://www.amazon.de/dp/B08HWCL2RY\n"
+                "https://www.amazon.co.uk/dp/B07XCDPRGZ"
+            ),
+            disabled=st.session_state.scr_running,
+            key="scr_urls_input"
+        )
+
+        max_per_star = 100
+        c2, c3 = st.columns([3, 1])
+        with c2:
+            loop_mode = st.toggle(
+                "🔄 Нескінченний цикл (пауза 30 хв між проходами)",
+                value=False,
+                disabled=st.session_state.scr_running
+            )
+        with c3:
+            st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
+            if st.session_state.scr_running:
+                if st.button("⛔ Зупинити", width="stretch", type="secondary", key="single_stop"):
+                    if st.session_state.scr_stop_event:
+                        st.session_state.scr_stop_event.set()
+                    st.session_state.scr_running = False
+                    st.session_state.scr_done    = True
+                    st.rerun()
+            else:
+                raw_lines = [u.strip() for u in (urls_input or "").splitlines() if u.strip()]
+                if st.button("🚀 Запустити", width="stretch", type="primary",
+                             disabled=not raw_lines, key="single_run"):
+                    lq      = queue.Queue()
+                    pq      = queue.Queue()
+                    stop_ev = threading.Event()
+
+                    st.session_state.scr_logs       = []
+                    st.session_state.scr_pct        = 0
+                    st.session_state.scr_label      = "Старт..."
+                    st.session_state.scr_done       = False
+                    st.session_state.scr_running    = True
+                    st.session_state.scr_cycles     = 0
+                    st.session_state.scr_log_q      = lq
+                    st.session_state.scr_prog_q     = pq
+                    st.session_state.scr_stop_event = stop_ev
+
+                    threading.Thread(
+                        target=_scr_worker,
+                        args=(raw_lines, max_per_star, lq, pq,
+                              loop_mode, stop_ev, APIFY_TOKEN_DEFAULT),
+                        daemon=True
+                    ).start()
+                    st.rerun()
 
     st.markdown("---")
     st.markdown("### 📜 Логи")
