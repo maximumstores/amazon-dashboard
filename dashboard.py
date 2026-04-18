@@ -4529,12 +4529,16 @@ def show_reviews(t=None):
             parts.append(df_f[df_f['rating'] == s].head(100))
         df_show_src = pd.concat(parts, ignore_index=True) if parts else df_f
     else:
-        # Всі: 1★ зверху для швидкого сканування проблем
-        df_show_src = df_f.sort_values('rating', ascending=True)
+        # Всі: 1★ зверху · свіжозібрані зверху в межах рейтингу
+        _sort_cols = ['rating']
+        _sort_asc  = [True]
+        if 'created_at' in df_f.columns:
+            _sort_cols.append('created_at'); _sort_asc.append(False)
+        df_show_src = df_f.sort_values(_sort_cols, ascending=_sort_asc)
 
     df_balanced = df_show_src  # для CSV нижче
 
-    show_cols = [c for c in ['review_date', 'rating', 'asin', 'domain', 'title',
+    show_cols = [c for c in ['review_date', 'created_at', 'rating', 'asin', 'domain', 'title',
                               'content', 'author', 'is_verified']
                  if c in df_show_src.columns]
 
@@ -4544,9 +4548,13 @@ def show_reviews(t=None):
         df_show = df_show.drop(columns=['domain'])
     if 'review_date' in df_show.columns:
         df_show['review_date'] = df_show['review_date'].dt.strftime('%Y-%m-%d')
+    if 'created_at' in df_show.columns:
+        df_show['created_at'] = pd.to_datetime(df_show['created_at'], errors='coerce').dt.strftime('%d.%m.%Y %H:%M')
 
     df_show = df_show.rename(columns={
-        'review_date': 'Date', 'rating': '★', 'asin': 'ASIN',
+        'review_date': 'Дата відгуку',
+        'created_at':  '🕐 Зібрано',
+        'rating': '★', 'asin': 'ASIN',
         'title': 'Title', 'content': 'Content', 'author': 'Author',
         'is_verified': '✅'
     })
