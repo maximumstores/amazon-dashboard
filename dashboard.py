@@ -8170,14 +8170,13 @@ tools_nav = [
 ]
 
 _eff_bi_role = user.get("bi_role") or user.get("role") or "viewer"
-if _eff_bi_role == "admin":
-    tools_nav_full = ["⚙️ Кабінет"] + tools_nav
-else:
-    tools_nav_full = tools_nav
+# ⚙️ Кабінет видно ВСІМ: admin → управління юзерами, viewer → власний профіль
+tools_nav_full = ["⚙️ Кабінет"] + tools_nav
 
-if user["role"] != "admin":
+if _eff_bi_role != "admin":
     main_nav       = [r for r in main_nav       if can_view(r)]
-    tools_nav_full = [r for r in tools_nav_full if can_view(r)]
+    # Кабінет доступний усім (всередині різна поведінка для admin / viewer)
+    tools_nav_full = [r for r in tools_nav_full if (r == "⚙️ Кабінет" or can_view(r))]
 
 all_real = main_nav + tools_nav_full
 if not all_real:
@@ -8232,4 +8231,4 @@ elif report_choice == "ℹ️ Про додаток":              show_about()
 elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍") 
+st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
