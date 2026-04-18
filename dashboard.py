@@ -8169,8 +8169,9 @@ tools_nav = [
     "🔌 API",
 ]
 
-if user["role"] == "admin":
-    tools_nav_full = ["👑 User Management"] + tools_nav
+_eff_bi_role = user.get("bi_role") or user.get("role") or "viewer"
+if _eff_bi_role == "admin":
+    tools_nav_full = ["⚙️ Кабінет"] + tools_nav
 else:
     tools_nav_full = tools_nav
 
@@ -8226,9 +8227,9 @@ elif report_choice == "📊 Brand Analytics":          show_sqp(t)
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
-elif report_choice == "👑 User Management":          show_admin_panel()
+elif report_choice in ("⚙️ Кабінет", "👑 User Management"): show_admin_panel()
 elif report_choice == "ℹ️ Про додаток":              show_about()
 elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍") 
+st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
