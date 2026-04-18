@@ -8354,6 +8354,82 @@ def show_scraper_manager():
         st.markdown("### 📊 Щоденний моніторинг нових відгуків")
         st.caption("Додай список ASIN → запускай кнопкою «Перевірити зараз» · Скрапить лише вибрані зірки (дефолт: 1-4★)")
 
+        # ── Банер автоматичного розкладу ──
+        import datetime as _dtm
+        _now_utc  = _dtm.datetime.now(_dtm.timezone.utc)
+        # Cron: 06:00 UTC щодня
+        _next_run = _now_utc.replace(hour=6, minute=0, second=0, microsecond=0)
+        if _now_utc >= _next_run:
+            _next_run += _dtm.timedelta(days=1)
+        _mins_left  = int((_next_run - _now_utc).total_seconds() // 60)
+        _hours_left = _mins_left // 60
+        _mins_rem   = _mins_left % 60
+        _kyiv_time  = (_next_run + _dtm.timedelta(hours=3)).strftime("%d.%m %H:%M")  # +03:00 Kyiv
+        _berlin_time = (_next_run + _dtm.timedelta(hours=1)).strftime("%H:%M")  # +01:00 Berlin
+        _utc_time   = _next_run.strftime("%H:%M")
+
+        # Останній авто-запуск: беремо MAX(last_check) з monitored_asins
+        _last_auto = None
+        try:
+            _cm = _scr_get_conn(); _curm = _cm.cursor()
+            _curm.execute("SELECT MAX(last_check), COUNT(*) FILTER (WHERE last_check::date = CURRENT_DATE) FROM monitored_asins WHERE is_active=TRUE")
+            _r = _curm.fetchone()
+            _last_auto = _r[0]
+            _today_checks = int(_r[1] or 0)
+            _curm.close(); _cm.close()
+        except Exception:
+            _today_checks = 0
+
+        if _last_auto:
+            _last_auto_str = _last_auto.strftime("%d.%m %H:%M")
+            _hrs_since = int((_now_utc.replace(tzinfo=None) - _last_auto).total_seconds() / 3600)
+        else:
+            _last_auto_str = "ніколи"
+            _hrs_since = 999
+
+        _status_color = "#22c55e" if _hrs_since < 26 else ("#f59e0b" if _hrs_since < 50 else "#ef4444")
+        _status_text  = "🟢 Працює" if _hrs_since < 26 else ("🟡 Затримка" if _hrs_since < 50 else "🔴 Не працює >2 діб")
+
+        st.markdown(f"""
+<div style="background:linear-gradient(135deg,#0f172a,#1e293b);border:1px solid #334155;
+            border-radius:12px;padding:16px 22px;margin-bottom:14px;color:#e2e8f0">
+  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:20px;align-items:center">
+    <div>
+      <div style="font-size:11px;color:#64748b;letter-spacing:0.08em;font-weight:700;text-transform:uppercase">
+        🤖 Автоматичний запуск (GitHub Actions cron)
+      </div>
+      <div style="font-size:1.1rem;font-weight:700;color:#e2e8f0;margin-top:4px">
+        ⏰ Наступний запуск: <b style="color:#60a5fa">{_kyiv_time} Kyiv</b>
+        <span style="color:#64748b;font-size:0.85rem">({_berlin_time} Berlin · {_utc_time} UTC)</span>
+      </div>
+      <div style="font-size:0.85rem;color:#94a3b8;margin-top:4px">
+        Залишилось: <b>{_hours_left}г {_mins_rem}хв</b>
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:11px;color:#64748b;letter-spacing:0.08em;font-weight:700;text-transform:uppercase">
+        Статус
+      </div>
+      <div style="font-size:1rem;font-weight:700;color:{_status_color};margin-top:4px">
+        {_status_text}
+      </div>
+      <div style="font-size:0.8rem;color:#94a3b8;margin-top:4px">
+        Останній: <b>{_last_auto_str}</b>
+      </div>
+      <div style="font-size:0.78rem;color:#64748b;margin-top:2px">
+        Сьогодні перевірено: {_today_checks} ASIN
+      </div>
+    </div>
+  </div>
+  <div style="margin-top:10px;padding-top:10px;border-top:1px solid #334155;
+              font-size:0.78rem;color:#64748b">
+    Розклад: щодня о <code style="background:#0f172a;padding:1px 6px;border-radius:3px;color:#93c5fd">06:00 UTC</code>
+    · налаштовано у <code style="background:#0f172a;padding:1px 6px;border-radius:3px;color:#93c5fd">.github/workflows/daily_monitor.yml</code>
+    · запускає <code style="background:#0f172a;padding:1px 6px;border-radius:3px;color:#93c5fd">daily_monitor.py</code>
+    для кожного активного ASIN
+  </div>
+</div>""", unsafe_allow_html=True)
+
         # ── Форма додавання ──
         with st.expander("➕ Додати ASIN у моніторинг", expanded=False):
             _ac1, _ac2 = st.columns([3, 2])
