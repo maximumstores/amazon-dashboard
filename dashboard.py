@@ -6149,10 +6149,33 @@ def _bd_scrape(asin, domain, existing_review_ids=None, log_fn=print, max_wait_se
         log_fn(f"⚠️ BD: очікували list, отримали {type(data).__name__}")
         return []
 
-    # 4. Convert BD format → Apify-compatible
+    # DEBUG: покажемо структуру першого відгука щоб побачити реальні назви полів
+    if data:
+        _first = data[0]
+        if isinstance(_first, dict):
+            _nested = _first.get("reviews") if "reviews" in _first else None
+            _sample = _nested[0] if (_nested and isinstance(_nested, list) and _nested) else _first
+            if isinstance(_sample, dict):
+                _keys = list(_sample.keys())[:15]
+                log_fn(f"🔍 BD sample keys: {_keys}")
+
+    # 4. Convert BD format → Apify-compatible + нові поля
     converted = []
+    _product_rating_saved = False
     for item in data:
         if not isinstance(item, dict): continue
+
+        # Зберегти product_rating_object один раз для ASIN (snapshot розподілу зірок)
+        if not _product_rating_saved:
+            _prod_rating = item.get("product_rating_object") or item.get("product_ratings")
+            if _prod_rating and isinstance(_prod_rating, dict):
+                _avg = item.get("product_rating") or item.get("average_rating")
+                try: _avg = float(_avg) if _avg else None
+                except: _avg = None
+                if _save_product_rating_snapshot(asin, domain, _prod_rating, _avg):
+                    log_fn(f"  📊 Product rating snapshot saved: {_prod_rating}")
+                    _product_rating_saved = True
+
         # BD може повернути або один prod-обʼєкт з вкладеним reviews[], або flat
         nested = item.get("reviews") if "reviews" in item else None
         if nested and isinstance(nested, list):
@@ -6167,15 +6190,63 @@ def _bd_scrape(asin, domain, existing_review_ids=None, log_fn=print, max_wait_se
                     rev.get("url") or "")
             if not rurl and rid:
                 rurl = f"https://www.amazon.{domain}/review/{rid}"
+            _title_v = (rev.get("title") or rev.get("review_title") or rev.get("reviewTitle")
+                        or rev.get("review_headline") or rev.get("headline") or
+                        rev.get("review_title_text") or "")
+            _text_v  = (rev.get("text") or rev.get("review_text") or rev.get("body")
+                        or rev.get("reviewDescription") or rev.get("review_body")
+                        or rev.get("content") or rev.get("review_content") or "")
+            _date_v  = (rev.get("date") or rev.get("review_date") or rev.get("reviewed_at")
+                        or rev.get("created_at") or rev.get("timestamp")
+                        or rev.get("date_posted") or rev.get("review_date_text") or "")
+            _author_v = (rev.get("author") or rev.get("reviewer_name")
+                         or rev.get("customer_name") or rev.get("author_name")
+                         or rev.get("reviewer") or "Amazon User")
+            _verified_v = bool(rev.get("verified") or rev.get("is_verified")
+                               or rev.get("isVerified") or rev.get("verified_purchase")
+                               or rev.get("is_verified_purchase") or False)
+            # Витягуємо варіант (Size/Color) як зручну строку
+            _variant_asin = (rev.get("variant_asin") or rev.get("child_asin") or
+                             rev.get("product_asin") or None)
+            _variant_attrs = (rev.get("variant_attributes") or rev.get("variant")
+                              or rev.get("product_variant") or rev.get("product_attributes"))
+            if isinstance(_variant_attrs, dict):
+                _variant_name = ", ".join(f"{k}: {v}" for k, v in _variant_attrs.items() if v)
+            elif isinstance(_variant_attrs, list):
+                _variant_name = ", ".join(str(x) for x in _variant_attrs if x)
+            else:
+                _variant_name = str(_variant_attrs) if _variant_attrs else ""
+
+            try:
+                _helpful = int(rev.get("helpful_count") or rev.get("helpful_votes") or
+                               rev.get("helpfulness") or 0)
+            except Exception:
+                _helpful = 0
+
             converted.append({
+                # Apify-compatible (існуючі)
                 "reviewUrl": rurl,
-                "author": rev.get("author") or rev.get("reviewer_name") or "Amazon User",
-                "ratingScore": int(float(rev.get("rating") or rev.get("stars") or rev.get("ratingScore") or 0)),
-                "reviewTitle": rev.get("title") or rev.get("review_title") or rev.get("reviewTitle") or "",
-                "reviewDescription": rev.get("text") or rev.get("review_text") or rev.get("body") or rev.get("reviewDescription") or "",
-                "isVerified": bool(rev.get("verified") or rev.get("is_verified") or rev.get("isVerified") or False),
-                "variant": rev.get("variant") or rev.get("product_variant") or "",
-                "date": rev.get("date") or rev.get("review_date") or "",
+                "author": _author_v,
+                "ratingScore": int(float(rev.get("rating") or rev.get("stars") or rev.get("ratingScore") or rev.get("rating_stars") or 0)),
+                "reviewTitle": _title_v,
+                "reviewDescription": _text_v,
+                "isVerified": _verified_v,
+                "variant": _variant_name,
+                "date": _date_v,
+                # НОВІ Bright Data поля
+                "review_id": rid,
+                "author_id":       (rev.get("author_id") or rev.get("reviewer_id") or None),
+                "author_link":     (rev.get("author_link") or rev.get("reviewer_url") or
+                                    rev.get("profile_url") or None),
+                "badge":           (rev.get("badge") or rev.get("verified_badge") or None),
+                "is_amazon_vine":  bool(rev.get("is_amazon_vine") or rev.get("vine") or
+                                       rev.get("is_vine") or False),
+                "helpful_count":   _helpful,
+                "variant_asin":    _variant_asin,
+                "variant_name":    _variant_name or None,
+                "review_country":  (rev.get("review_country") or rev.get("country")
+                                    or rev.get("marketplace_country") or domain),
+                "source":          "brightdata",
             })
     log_fn(f"🔄 BD конверсія: {len(converted)} відгуків готові до збереження")
     return converted
@@ -6223,6 +6294,32 @@ def _scr_ensure_table():
             title TEXT, content TEXT, is_verified BOOLEAN,
             product_attributes TEXT, review_date TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        -- Нові колонки — Bright Data дає набагато більше даних
+        ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS author_id       TEXT;
+        ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS author_link     TEXT;
+        ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS badge           TEXT;
+        ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS is_amazon_vine  BOOLEAN DEFAULT FALSE;
+        ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS helpful_count   INTEGER DEFAULT 0;
+        ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS variant_asin    VARCHAR(20);
+        ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS variant_name    TEXT;
+        ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS review_country  VARCHAR(10);
+        ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS source          VARCHAR(20);
+        -- Окрема таблиця для snapshot розподілу рейтингу продукту
+        CREATE TABLE IF NOT EXISTS amazon_product_ratings (
+            id SERIAL PRIMARY KEY,
+            asin VARCHAR(20) NOT NULL,
+            domain VARCHAR(20) DEFAULT 'com',
+            snapshot_date DATE DEFAULT CURRENT_DATE,
+            one_star INT DEFAULT 0,
+            two_star INT DEFAULT 0,
+            three_star INT DEFAULT 0,
+            four_star INT DEFAULT 0,
+            five_star INT DEFAULT 0,
+            total_count INT DEFAULT 0,
+            avg_rating NUMERIC(3,2),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(asin, domain, snapshot_date)
         );
         CREATE TABLE IF NOT EXISTS monitored_asins (
             id SERIAL PRIMARY KEY,
@@ -6350,32 +6447,89 @@ def _scr_save(reviews, asin, domain):
     conn = _scr_get_conn(); cur = conn.cursor(); inserted = 0
     for rev in reviews:
         url = rev.get("reviewUrl", "")
-        if url:
-            rid = url.split("/")[-1] or url[-80:]
-        else:
-            # Fallback: детермінований хеш з контенту (якщо Apify не дав reviewUrl)
-            _h_src = (
-                f"{asin}|{domain}|"
-                f"{rev.get('author','')}|"
-                f"{rev.get('date','')}|"
-                f"{rev.get('ratingScore',0)}|"
-                f"{(rev.get('reviewTitle','') or '')[:100]}|"
-                f"{(rev.get('reviewDescription','') or '')[:200]}"
-            )
-            rid = f"{asin}_{domain}_{hashlib.md5(_h_src.encode()).hexdigest()[:20]}"
+        # Пріоритет: review_id (BD) → останній сегмент URL → hash контенту
+        rid = rev.get("review_id") or ""
+        if not rid:
+            if url:
+                rid = url.split("/")[-1] or url[-80:]
+            else:
+                _h_src = (
+                    f"{asin}|{domain}|{rev.get('author','')}|{rev.get('date','')}|"
+                    f"{rev.get('ratingScore',0)}|{(rev.get('reviewTitle','') or '')[:100]}|"
+                    f"{(rev.get('reviewDescription','') or '')[:200]}"
+                )
+                rid = f"{asin}_{domain}_{hashlib.md5(_h_src.encode()).hexdigest()[:20]}"
         try:
             cur.execute("""
                 INSERT INTO amazon_reviews
-                (asin,domain,review_id,author,rating,title,content,is_verified,product_attributes,review_date)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (review_id) DO NOTHING
-            """, (asin, domain, rid,
-                  rev.get("author","Amazon User"), int(rev.get("ratingScore",0)),
-                  rev.get("reviewTitle",""), rev.get("reviewDescription",""),
-                  bool(rev.get("isVerified",False)), rev.get("variant",""), rev.get("date","")))
+                (asin, domain, review_id, author, rating, title, content, is_verified,
+                 product_attributes, review_date,
+                 author_id, author_link, badge, is_amazon_vine, helpful_count,
+                 variant_asin, variant_name, review_country, source)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,  %s,%s,%s,%s,%s,  %s,%s,%s,%s)
+                ON CONFLICT (review_id) DO NOTHING
+            """, (
+                asin, domain, rid,
+                rev.get("author", "Amazon User"),
+                int(rev.get("ratingScore", 0)),
+                rev.get("reviewTitle", ""),
+                rev.get("reviewDescription", ""),
+                bool(rev.get("isVerified", False)),
+                rev.get("variant", ""),
+                rev.get("date", ""),
+                # Нові BD поля (для Apify будуть None/0)
+                rev.get("author_id") or None,
+                rev.get("author_link") or None,
+                rev.get("badge") or None,
+                bool(rev.get("is_amazon_vine", False)),
+                int(rev.get("helpful_count", 0) or 0),
+                rev.get("variant_asin") or None,
+                rev.get("variant_name") or None,
+                rev.get("review_country") or None,
+                rev.get("source") or None,
+            ))
             if cur.rowcount > 0: inserted += 1
-        except: pass
+        except Exception: pass
     conn.commit(); cur.close(); conn.close()
     return inserted
+
+
+def _save_product_rating_snapshot(asin, domain, rating_obj, avg_rating=None):
+    """Зберігає snapshot розподілу зірок продукту (з product_rating_object від BD).
+    rating_obj: {"one_star": 17, "two_star": 26, "three_star": 68, "four_star": 111, "five_star": 629}
+    Один запис на ASIN на день (UNIQUE(asin, domain, snapshot_date)).
+    Повторні запуски в той самий день — UPSERT з оновленням значень."""
+    if not rating_obj or not isinstance(rating_obj, dict):
+        return False
+    one   = int(rating_obj.get("one_star", 0) or 0)
+    two   = int(rating_obj.get("two_star", 0) or 0)
+    three = int(rating_obj.get("three_star", 0) or 0)
+    four  = int(rating_obj.get("four_star", 0) or 0)
+    five  = int(rating_obj.get("five_star", 0) or 0)
+    total = one + two + three + four + five
+    if total == 0:
+        return False
+    if avg_rating is None:
+        avg_rating = (one*1 + two*2 + three*3 + four*4 + five*5) / total
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO amazon_product_ratings
+            (asin, domain, snapshot_date, one_star, two_star, three_star, four_star, five_star, total_count, avg_rating)
+            VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (asin, domain, snapshot_date) DO UPDATE
+              SET one_star    = EXCLUDED.one_star,
+                  two_star    = EXCLUDED.two_star,
+                  three_star  = EXCLUDED.three_star,
+                  four_star   = EXCLUDED.four_star,
+                  five_star   = EXCLUDED.five_star,
+                  total_count = EXCLUDED.total_count,
+                  avg_rating  = EXCLUDED.avg_rating
+        """, (asin, domain, one, two, three, four, five, total, round(float(avg_rating), 2)))
+        conn.commit(); cur.close(); conn.close()
+        return True
+    except Exception:
+        return False
 
 
 def _scr_count(asin, domain):
