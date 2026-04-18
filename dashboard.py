@@ -4191,45 +4191,23 @@ def show_reviews(t=None):
         return
 
     # ══════════════════════════════════════════════════════
-    # 1. INLINE ФІЛЬТРИ (над усім контентом, щоб було видно відразу)
+    # 1. ФІЛЬТРИ — рендеримо внизу над таблицею, але значення читаємо зараз
+    #    зі session_state (віджети створяться пізніше й оновлять стан).
     # ══════════════════════════════════════════════════════
     st.markdown("### ⭐ Amazon Reviews")
-    with st.expander("⭐ Фільтри відгуків", expanded=True):
-        # Країни
-        all_countries = sorted(df['domain'].dropna().unique().tolist()) if 'domain' in df.columns else []
-        country_labels = [DOMAIN_LABELS.get(c, c) for c in all_countries]
-        country_map = dict(zip(country_labels, all_countries))
 
-        _f1, _f2 = st.columns([2, 2])
-        with _f1:
-            sel_countries = st.multiselect(
-                "🌍 Країни:",
-                country_labels,
-                default=country_labels,
-                key="rev_countries"
-            )
-        with _f2:
-            sel_stars = st.multiselect(
-                "⭐ Рейтинг:",
-                [1, 2, 3, 4, 5],
-                default=[1, 2, 3, 4, 5],
-                key="rev_stars"
-            )
-        sel_domains = [country_map[c] for c in sel_countries] if sel_countries else all_countries
+    all_countries  = sorted(df['domain'].dropna().unique().tolist()) if 'domain' in df.columns else []
+    country_labels = [DOMAIN_LABELS.get(c, c) for c in all_countries]
+    country_map    = dict(zip(country_labels, all_countries))
 
-        _f3, _f4 = st.columns([3, 1])
-        with _f3:
-            # Глобальний ASIN-фільтр як дефолт, якщо заданий
-            _default_asin = st.session_state.get("gf_asin", "") if "gf_asin" in st.session_state else ""
-            search_asin = st.text_input(
-                "🔍 ASIN",
-                value=st.session_state.get("rev_asin_search", _default_asin),
-                key="rev_asin_search",
-                placeholder="B0... (порожньо = всі)"
-            )
-        with _f4:
-            st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
-            only_verified = st.checkbox("✅ Тільки Verified", value=False, key="rev_verified")
+    # Читаємо поточні значення фільтрів зі session_state (дефолти на першому заході)
+    sel_countries = st.session_state.get("rev_countries", country_labels)
+    sel_stars     = st.session_state.get("rev_stars", [1, 2, 3, 4, 5])
+    only_verified = st.session_state.get("rev_verified", False)
+    # Глобальний ASIN (з sidebar) як дефолт на першому заході
+    _gf_asin_default = st.session_state.get("gf_asin", "") if "gf_asin" in st.session_state else ""
+    search_asin   = st.session_state.get("rev_asin_search", _gf_asin_default)
+    sel_domains   = [country_map[c] for c in sel_countries if c in country_map] if sel_countries else all_countries
 
     # ══════════════════════════════════════════════════════
     # 2. ФІЛЬТРАЦІЯ
@@ -4501,54 +4479,66 @@ def show_reviews(t=None):
         st.markdown("---")
 
     # ══════════════════════════════════════════════════════
-    # 8. ТЕКСТИ ВІДГУКІВ
+    # 8. ТЕКСТИ ВІДГУКІВ — з фільтрами прямо над таблицею
     # ══════════════════════════════════════════════════════
     st.markdown("### 📋 Тексти відгуків")
 
-    # ── Сводка активних фільтрів + швидкі коригування ─────────────────────
-    _active_pills = []
-    if sel_countries and len(sel_countries) < len(country_labels):
-        _active_pills.append(f"🌍 {len(sel_countries)} країн")
-    elif sel_countries:
-        _active_pills.append("🌍 всі країни")
-    if sel_stars and len(sel_stars) < 5:
-        _active_pills.append(f"⭐ {','.join(map(str, sorted(sel_stars)))}★")
-    elif sel_stars:
-        _active_pills.append("⭐ всі зірки")
-    if search_asin:
-        _active_pills.append(f"🔍 ASIN: {search_asin}")
-    if only_verified:
-        _active_pills.append("✅ Verified")
+    # ── Фільтри прямо над таблицею ─────────────────────────────────────────
+    with st.container(border=True):
+        _f1, _f2 = st.columns([2, 2])
+        with _f1:
+            st.multiselect(
+                "🌍 Країни:",
+                country_labels,
+                default=country_labels,
+                key="rev_countries"
+            )
+        with _f2:
+            st.multiselect(
+                "⭐ Рейтинг:",
+                [1, 2, 3, 4, 5],
+                default=[1, 2, 3, 4, 5],
+                key="rev_stars"
+            )
+        _f3, _f4 = st.columns([3, 1])
+        with _f3:
+            st.text_input(
+                "🔍 ASIN",
+                value=_gf_asin_default if "rev_asin_search" not in st.session_state else st.session_state["rev_asin_search"],
+                key="rev_asin_search",
+                placeholder="B0... (порожньо = всі)"
+            )
+        with _f4:
+            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+            st.checkbox("✅ Тільки Verified", value=False, key="rev_verified")
 
-    _af_col1, _af_col2 = st.columns([4, 1])
-    with _af_col1:
-        st.markdown(
-            '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">' +
-            ''.join([
-                f'<span style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;'
-                f'border-radius:4px;padding:3px 10px;font-size:0.75rem">{p}</span>'
-                for p in _active_pills
-            ]) + '</div>',
-            unsafe_allow_html=True
+    # ── Режим показу: balanced vs усі ─────────────────────────────────────
+    _vc1, _vc2 = st.columns([3, 2])
+    with _vc1:
+        _view_mode = st.radio(
+            "Режим:",
+            [f"📊 Balanced (до 500)", f"📋 Всі ({len(df_f):,})"],
+            horizontal=True, key="rev_view_mode", label_visibility="collapsed"
         )
-    with _af_col2:
-        if st.button("🔼 До фільтрів", key="rev_scroll_to_filters", use_container_width=True,
-                     help="Прокрути вверх до блоку фільтрів щоб змінити"):
-            pass  # кнопка-анкор, просто візуальна підказка
+    with _vc2:
+        st.caption("Balanced: до 100 на кожну зірку · 1★ зверху · щоб проблеми були першими")
 
-    st.caption("Balanced вибірка: до 100 на кожну зірку · 1★ зверху щоб проблеми були першими")
+    if _view_mode.startswith("📊"):
+        parts = []
+        for s in [1, 2, 3, 4, 5]:
+            parts.append(df_f[df_f['rating'] == s].head(100))
+        df_show_src = pd.concat(parts, ignore_index=True) if parts else df_f
+    else:
+        # Всі: 1★ зверху для швидкого сканування проблем
+        df_show_src = df_f.sort_values('rating', ascending=True)
 
-    # Balanced за зірками, 1★ зверху
-    parts = []
-    for s in [1, 2, 3, 4, 5]:
-        parts.append(df_f[df_f['rating'] == s].head(100))
-    df_balanced = pd.concat(parts, ignore_index=True) if parts else df_f
+    df_balanced = df_show_src  # для CSV нижче
 
     show_cols = [c for c in ['review_date', 'rating', 'asin', 'domain', 'title',
                               'content', 'author', 'is_verified']
-                 if c in df_balanced.columns]
+                 if c in df_show_src.columns]
 
-    df_show = df_balanced[show_cols].copy()
+    df_show = df_show_src[show_cols].copy()
     if 'domain' in df_show.columns:
         df_show['Country'] = df_show['domain'].map(DOMAIN_LABELS).fillna(df_show['domain'])
         df_show = df_show.drop(columns=['domain'])
@@ -4561,7 +4551,8 @@ def show_reviews(t=None):
         'is_verified': '✅'
     })
 
-    st.dataframe(df_show, use_container_width=True, hide_index=True, height=500)
+    _tbl_height = min(800, 50 + len(df_show) * 35) if len(df_show) < 25 else 700
+    st.dataframe(df_show, use_container_width=True, hide_index=True, height=_tbl_height)
     st.caption(f"Показано {len(df_show):,} з {len(df_f):,} відгуків")
 
     col1, col2 = st.columns(2)
