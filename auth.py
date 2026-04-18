@@ -1,3 +1,22 @@
+"""
+auth.py — спільна авторизація для merino-bi та listing-analyze.
+Одна БД users, але ролі окремо для кожного застосунку:
+  • role         — глобальна (fallback; 'admin' = супер-адмін)
+  • bi_role      — роль у merino-bi ('admin' / 'viewer' / NULL)
+  • listing_role — роль у listing-analyze ('admin' / 'viewer' / NULL)
+
+Таблиці: users, user_permissions
+"""
+
+import os
+import bcrypt
+import psycopg2
+import streamlit as st
+from datetime import datetime
+from urllib.parse import urlparse
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
 # Всі доступні звіти merino-bi (синхронізовано з main_nav / tools_nav у quantum_backend.py.py)
 ALL_REPORTS = [
     # Main nav
@@ -680,5 +699,5 @@ def show_admin_panel():
 
 
 # Alias для listing-analyze (якщо імпортує під цим іменем)
-show_listing_admin_panel = show_admin_panel 
+show_listing_admin_panel = show_admin_panel
 
