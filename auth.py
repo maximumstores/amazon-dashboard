@@ -680,5 +680,5 @@ def show_admin_panel():
 
 
 # Alias для listing-analyze (якщо імпортує під цим іменем)
-show_listing_admin_panel = show_admin_panel
+show_listing_admin_panel = show_admin_panel 
 
