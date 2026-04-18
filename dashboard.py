@@ -4416,10 +4416,24 @@ def show_reviews(t=None):
                 )
 
                 def _prepare_show(df_in):
-                    _show = df_in.sort_values(['rating', 'created_at'], ascending=[True, False])
-                    _cols = [c for c in ['created_at','review_date','rating','asin','domain','title','content','is_verified']
-                             if c in _show.columns]
+                    # Сортування: 1★ зверху · у межах — помічні зверху · потім свіжі
+                    _sort_cols = ['rating']
+                    _sort_asc  = [True]
+                    if 'helpful_count' in df_in.columns:
+                        _sort_cols.append('helpful_count'); _sort_asc.append(False)
+                    if 'created_at' in df_in.columns:
+                        _sort_cols.append('created_at');    _sort_asc.append(False)
+                    _show = df_in.sort_values(_sort_cols, ascending=_sort_asc)
+
+                    # Порядок колонок — важливі першими
+                    _cols = [c for c in [
+                        'created_at', 'review_date', 'rating', 'asin',
+                        'variant_name', 'helpful_count', 'is_amazon_vine', 'badge',
+                        'source', 'domain',
+                        'title', 'content', 'author', 'author_link', 'is_verified',
+                    ] if c in _show.columns]
                     _disp = _show[_cols].copy()
+
                     if 'created_at' in _disp.columns:
                         _disp['created_at'] = pd.to_datetime(_disp['created_at'], errors='coerce').dt.strftime('%d.%m %H:%M')
                     if 'review_date' in _disp.columns and hasattr(_disp['review_date'], 'dt'):
@@ -4427,11 +4441,46 @@ def show_reviews(t=None):
                     if 'domain' in _disp.columns:
                         _disp['Country'] = _disp['domain'].map(DOMAIN_LABELS).fillna(_disp['domain'])
                         _disp = _disp.drop(columns=['domain'])
+                    if 'is_amazon_vine' in _disp.columns:
+                        _disp['is_amazon_vine'] = _disp['is_amazon_vine'].map({True: '🍇', False: ''}).fillna('')
+                    if 'source' in _disp.columns:
+                        _disp['source'] = _disp['source'].map({
+                            'apify': '🟡', 'brightdata': '🟣'
+                        }).fillna('—')
+                    if 'helpful_count' in _disp.columns:
+                        _disp['helpful_count'] = pd.to_numeric(_disp['helpful_count'], errors='coerce').fillna(0).astype(int)
+                        _disp['helpful_count'] = _disp['helpful_count'].apply(lambda x: f"👍 {x}" if x > 0 else '')
+
                     return _disp.rename(columns={
-                        'created_at': '🕐 Зібрано', 'review_date': 'Дата відгуку',
-                        'rating': '★', 'asin': 'ASIN',
-                        'title': 'Title', 'content': 'Content', 'is_verified': '✅'
+                        'created_at':      '🕐 Зібрано',
+                        'review_date':     'Дата відгуку',
+                        'rating':          '★',
+                        'asin':            'ASIN',
+                        'variant_name':    '📦 Варіант',
+                        'helpful_count':   '👍',
+                        'is_amazon_vine':  '🍇 Vine',
+                        'badge':           '🏷 Badge',
+                        'source':          '🔌',
+                        'title':           'Title',
+                        'content':         'Content',
+                        'author':          'Author',
+                        'author_link':     'Profile',
+                        'is_verified':     '✅',
                     })
+
+                # Конфіг колонок (link для profile, компактний helpful)
+                _col_cfg_new = {
+                    'Profile': st.column_config.LinkColumn('👤', display_text='Profile ↗', width='small'),
+                    '👍': st.column_config.TextColumn('👍', width='small',
+                                                       help='Скільки користувачів вважають відгук корисним'),
+                    '🍇 Vine': st.column_config.TextColumn('🍇', width='small',
+                                                          help='Amazon Vine (безкоштовний товар в обмін на відгук)'),
+                    '🔌': st.column_config.TextColumn('🔌', width='small',
+                                                      help='🟡 Apify · 🟣 Bright Data'),
+                    '🏷 Badge': st.column_config.TextColumn('🏷', width='small'),
+                    '📦 Варіант': st.column_config.TextColumn('📦 Варіант', width='medium',
+                                                              help='Size / Color варіанту — допомагає знайти проблемний SKU'),
+                }
 
                 if _df_tbl.empty:
                     st.info("Немає відгуків під обрані фільтри")
@@ -4442,17 +4491,24 @@ def show_reviews(t=None):
                         _neg     = int((_grp['rating'] <= 3).sum())
                         _avg     = _grp['rating'].mean()
                         _flag    = DOMAIN_FLAGS.get(_grp['domain'].iloc[0] if 'domain' in _grp.columns else 'com', '🌍')
-                        _rat_clr = "#ef4444" if _avg < 3 else ("#f59e0b" if _avg < 4 else "#22c55e")
+                        # Додаткові KPI для BD-даних
+                        _vine_cnt = int(_grp['is_amazon_vine'].fillna(False).astype(bool).sum()) if 'is_amazon_vine' in _grp.columns else 0
+                        _helpful_sum = int(pd.to_numeric(_grp['helpful_count'], errors='coerce').fillna(0).sum()) if 'helpful_count' in _grp.columns else 0
+                        _extra = ""
+                        if _vine_cnt > 0:    _extra += f" · 🍇 {_vine_cnt} Vine"
+                        if _helpful_sum > 0: _extra += f" · 👍 {_helpful_sum}"
                         with st.expander(
-                            f"{_flag} **{_a}** · {_cnt} нов. · 🔴 {_neg} проблем · ⭐ {_avg:.2f}",
+                            f"{_flag} **{_a}** · {_cnt} нов. · 🔴 {_neg} проблем · ⭐ {_avg:.2f}{_extra}",
                             expanded=(_neg > 0)
                         ):
                             _disp_grp = _prepare_show(_grp)
-                            st.dataframe(_disp_grp, use_container_width=True, hide_index=True,
+                            st.dataframe(_disp_grp, column_config=_col_cfg_new,
+                                         use_container_width=True, hide_index=True,
                                          height=min(500, 50 + len(_disp_grp) * 35))
                 else:
                     _new_disp = _prepare_show(_df_tbl)
-                    st.dataframe(_new_disp, use_container_width=True, hide_index=True, height=400)
+                    st.dataframe(_new_disp, column_config=_col_cfg_new,
+                                 use_container_width=True, hide_index=True, height=400)
 
                 st.caption(f"Показано {len(_df_tbl)} з {len(_df_disp)} нових відгуків · 1★ зверху")
 
