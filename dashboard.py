@@ -8105,9 +8105,42 @@ else:
     dates  = []
     stores = [t.get("all_stores","Всі")]
 
-# ── Всі фільтри разом в одному місці ──
+# ── Глобальні фільтри (видимі на всіх сторінках, значення персистяться) ──
 _cur_page = st.session_state.get("report_choice", "🏠 Overview")
 st.sidebar.header(t["sidebar_title"])
+
+# 🔎 Глобальний ASIN — зберігається між сторінками, використовується як default
+#   у кожному звіті, який фільтрує по ASIN. Deep-link: клік "Показати в Inventory"
+#   просто записує сюди ASIN і перемикає report_choice.
+_gf_asin = st.sidebar.text_input(
+    "🔎 ASIN (глобальний)",
+    value=st.session_state.get("gf_asin", ""),
+    key="gf_asin",
+    placeholder="B0...",
+    help="Фільтрує всі звіти які вміють по ASIN. Персистить між сторінками."
+)
+if st.sidebar.button("🗑 Скинути ASIN", key="gf_asin_reset", use_container_width=True, disabled=not _gf_asin):
+    st.session_state["gf_asin"] = ""
+    st.rerun()
+
+# ── Helper для cross-report навігації ───────────────────────────────────────
+def nav_to(page: str, *, asin: str = None, **filters):
+    """Перехід між звітами з передачею фільтрів.
+    Приклад: nav_to("📦 Склад (Inventory)", asin="B08XYZ")
+    """
+    if asin is not None:
+        st.session_state["gf_asin"] = asin
+    for k, v in filters.items():
+        st.session_state[k] = v
+    st.session_state["report_choice"] = page
+    st.rerun()
+
+# ── Helper для кешу SQL-запитів ─────────────────────────────────────────────
+# Використання:
+#   @cached_query(ttl=600)
+#   def _load_returns(asin=None): ...
+# 600 сек = 10 хв. Ctrl+клік по "🔄 Оновити дані" — очистить всі кеші.
+cached_query = lambda ttl=300: st.cache_data(ttl=ttl, show_spinner=False)
 
 # 📅 Дата і 🏪 Магазин — для інвентарних сторінок
 selected_date  = st.sidebar.selectbox(t["date_label"], dates, key="sel_date") if dates else None
@@ -8143,6 +8176,32 @@ _nav_labels = {
     "EN": ("📊 Reports", "── Tools ──"),
 }
 _lbl_reports, _lbl_tools_sep = _nav_labels.get(lang, _nav_labels["UA"])
+
+# ── Переклади навігації (ключ = канонічна назва) ──
+NAV_I18N = {
+    "🏠 Overview":                     {"UA": "🏠 Огляд",              "EN": "🏠 Overview",         "RU": "🏠 Обзор"},
+    "📈 Трафик (Sales & Traffic)":     {"UA": "📈 Продажі і трафік",   "EN": "📈 Sales & Traffic",  "RU": "📈 Продажи и трафик"},
+    "💰 Фінанси (Settlements)":        {"UA": "💰 Фінанси",            "EN": "💰 Settlements",      "RU": "💰 Финансы"},
+    "🛒 Продажи (Orders)":             {"UA": "🛒 Замовлення",         "EN": "🛒 Orders",           "RU": "🛒 Заказы"},
+    "📦 Склад (Inventory)":            {"UA": "📦 Склад",              "EN": "📦 Inventory",        "RU": "📦 Склад"},
+    "🔙 Повернення (Returns)":         {"UA": "🔙 Повернення",         "EN": "🔙 Returns",          "RU": "🔙 Возвраты"},
+    "📝 Листинги (Listings)":          {"UA": "📝 Лістинги",           "EN": "📝 Listings",         "RU": "📝 Листинги"},
+    "💲 Pricing / BuyBox":             {"UA": "💲 Ціни / BuyBox",      "EN": "💲 Pricing / BuyBox", "RU": "💲 Цены / BuyBox"},
+    "📦 FBA Operations":               {"UA": "📦 FBA Операції",       "EN": "📦 FBA Operations",   "RU": "📦 FBA Операции"},
+    "📋 Податки (Tax)":                {"UA": "📋 Податки",            "EN": "📋 Tax",              "RU": "📋 Налоги"},
+    "⭐ Amazon Reviews":               {"UA": "⭐ Відгуки",             "EN": "⭐ Reviews",          "RU": "⭐ Отзывы"},
+    "📊 Brand Analytics":              {"UA": "📊 Brand Analytics",    "EN": "📊 Brand Analytics",  "RU": "📊 Brand Analytics"},
+    "── AI Агенти ──":                 {"UA": "── AI Агенти ──",       "EN": "── AI Agents ──",     "RU": "── AI Агенты ──"},
+    "📦 Restock Agent":                {"UA": "📦 Restock Agent",      "EN": "📦 Restock Agent",    "RU": "📦 Restock Agent"},
+    "📈 Прогноз (Forecast)":           {"UA": "📈 Прогноз",            "EN": "📈 Forecast",         "RU": "📈 Прогноз"},
+    "📊 ETL Status":                   {"UA": "📊 Статус ETL",         "EN": "📊 ETL Status",       "RU": "📊 Статус ETL"},
+    "🕷 Scraper Reviews":              {"UA": "🕷 Скрапер відгуків",    "EN": "🕷 Scraper Reviews",  "RU": "🕷 Скрапер отзывов"},
+    "⚙️ Кабінет":                      {"UA": "⚙️ Кабінет",             "EN": "⚙️ Cabinet",          "RU": "⚙️ Кабинет"},
+    "ℹ️ Про додаток":                  {"UA": "ℹ️ Про додаток",         "EN": "ℹ️ About",            "RU": "ℹ️ О приложении"},
+    "🔌 API":                          {"UA": "🔌 API",                 "EN": "🔌 API",              "RU": "🔌 API"},
+}
+def _nav_tr(key):
+    return NAV_I18N.get(key, {}).get(lang, key)
 
 main_nav = [
     "🏠 Overview",
@@ -8198,7 +8257,8 @@ raw_choice = st.sidebar.radio(
     "nav", all_nav,
     index=_cur_idx,
     label_visibility="collapsed",
-    key="nav_single"
+    key="nav_single",
+    format_func=_nav_tr,
 )
 
 # Якщо вибрали роздільник — повертаємось до попереднього
