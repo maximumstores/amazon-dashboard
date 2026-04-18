@@ -6080,7 +6080,7 @@ def _bd_scrape(asin, domain, existing_review_ids=None, log_fn=print, max_wait_se
     reviewTitle, reviewDescription, isVerified, variant, date).
     existing_review_ids — передаємо у reviews_to_not_include для dedup → економія $$"""
     if not BRIGHTDATA_TOKEN_DEFAULT:
-        log_fn("❌ BRIGHTDATA_TOKEN не заданий"); return []
+        log_fn("❌ BRIGHTDATA_TOKEN не заданий у secrets"); return []
 
     url = f"https://www.amazon.{domain}/dp/{asin}"
     payload = [{
@@ -6090,6 +6090,7 @@ def _bd_scrape(asin, domain, existing_review_ids=None, log_fn=print, max_wait_se
     headers = {"Authorization": f"Bearer {BRIGHTDATA_TOKEN_DEFAULT}", "Content-Type": "application/json"}
 
     # 1. Trigger
+    log_fn(f"🚀 BD trigger: POST dataset={BRIGHTDATA_DATASET_ID}")
     try:
         r = requests.post(
             f"https://api.brightdata.com/datasets/v3/trigger"
@@ -6100,42 +6101,52 @@ def _bd_scrape(asin, domain, existing_review_ids=None, log_fn=print, max_wait_se
             log_fn(f"❌ BD trigger {r.status_code}: {r.text[:200]}"); return []
         snap_id = r.json().get("snapshot_id")
         if not snap_id:
-            log_fn("❌ BD: no snapshot_id у відповіді"); return []
+            log_fn(f"❌ BD: no snapshot_id у відповіді: {r.text[:200]}"); return []
+        log_fn(f"✅ BD snapshot: {snap_id}")
     except Exception as e:
         log_fn(f"❌ BD trigger error: {e}"); return []
 
     # 2. Polling
     polls = max_wait_sec // 10
+    log_fn(f"⏳ BD polling (макс {max_wait_sec}с, кожні 10с)...")
+    ready = False
     for i in range(polls):
         time.sleep(10)
+        elapsed = (i + 1) * 10
         try:
             s = requests.get(
                 f"https://api.brightdata.com/datasets/v3/progress/{snap_id}",
                 headers=headers, timeout=30
             ).json()
             status = s.get("status", "unknown")
+            log_fn(f"  ⏱ [{elapsed}с] status: {status}")
             if status == "ready":
+                ready = True
                 break
             if status == "failed":
-                log_fn(f"❌ BD snapshot failed"); return []
-        except Exception:
-            pass
-    else:
-        log_fn(f"⚠️ BD timeout {max_wait_sec}s"); return []
+                log_fn(f"❌ BD snapshot failed: {s}"); return []
+        except Exception as e:
+            log_fn(f"  ⚠️ [{elapsed}с] poll error: {e}")
+
+    if not ready:
+        log_fn(f"⚠️ BD timeout {max_wait_sec}s — переривання"); return []
 
     # 3. Download
+    log_fn(f"📥 BD download: snapshot {snap_id}")
     try:
         r = requests.get(
             f"https://api.brightdata.com/datasets/v3/snapshot/{snap_id}?format=json",
             headers=headers, timeout=90
         )
         if r.status_code != 200:
-            log_fn(f"❌ BD download {r.status_code}"); return []
+            log_fn(f"❌ BD download {r.status_code}: {r.text[:200]}"); return []
         data = r.json()
+        log_fn(f"✅ BD raw: {len(data) if isinstance(data, list) else '?'} items")
     except Exception as e:
         log_fn(f"❌ BD download error: {e}"); return []
 
     if not isinstance(data, list):
+        log_fn(f"⚠️ BD: очікували list, отримали {type(data).__name__}")
         return []
 
     # 4. Convert BD format → Apify-compatible
@@ -6166,6 +6177,7 @@ def _bd_scrape(asin, domain, existing_review_ids=None, log_fn=print, max_wait_se
                 "variant": rev.get("variant") or rev.get("product_variant") or "",
                 "date": rev.get("date") or rev.get("review_date") or "",
             })
+    log_fn(f"🔄 BD конверсія: {len(converted)} відгуків готові до збереження")
     return converted
 
 
