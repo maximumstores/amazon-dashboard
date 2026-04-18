@@ -4191,36 +4191,45 @@ def show_reviews(t=None):
         return
 
     # ══════════════════════════════════════════════════════
-    # 1. SIDEBAR ФІЛЬТРИ
+    # 1. INLINE ФІЛЬТРИ (над усім контентом, щоб було видно відразу)
     # ══════════════════════════════════════════════════════
-    st.sidebar.markdown("### ⭐ Фільтри відгуків")
+    st.markdown("### ⭐ Amazon Reviews")
+    with st.expander("⭐ Фільтри відгуків", expanded=True):
+        # Країни
+        all_countries = sorted(df['domain'].dropna().unique().tolist()) if 'domain' in df.columns else []
+        country_labels = [DOMAIN_LABELS.get(c, c) for c in all_countries]
+        country_map = dict(zip(country_labels, all_countries))
 
-    # Країни
-    all_countries = sorted(df['domain'].dropna().unique().tolist()) if 'domain' in df.columns else []
-    country_labels = [DOMAIN_LABELS.get(c, c) for c in all_countries]
-    country_map = dict(zip(country_labels, all_countries))
+        _f1, _f2 = st.columns([2, 2])
+        with _f1:
+            sel_countries = st.multiselect(
+                "🌍 Країни:",
+                country_labels,
+                default=country_labels,
+                key="rev_countries"
+            )
+        with _f2:
+            sel_stars = st.multiselect(
+                "⭐ Рейтинг:",
+                [1, 2, 3, 4, 5],
+                default=[1, 2, 3, 4, 5],
+                key="rev_stars"
+            )
+        sel_domains = [country_map[c] for c in sel_countries] if sel_countries else all_countries
 
-    sel_countries = st.sidebar.multiselect(
-        "🌍 Країни:",
-        country_labels,
-        default=country_labels,
-        key="rev_countries"
-    )
-    sel_domains = [country_map[c] for c in sel_countries] if sel_countries else all_countries
-
-    # Рейтинг
-    sel_stars = st.sidebar.multiselect(
-        "⭐ Рейтинг:",
-        [1, 2, 3, 4, 5],
-        default=[1, 2, 3, 4, 5],
-        key="rev_stars"
-    )
-
-    # Verified
-    only_verified = st.sidebar.checkbox("✅ Тільки Verified", value=False, key="rev_verified")
-
-    # ASIN
-    search_asin = st.sidebar.text_input("🔍 ASIN", "", key="rev_asin_search")
+        _f3, _f4 = st.columns([3, 1])
+        with _f3:
+            # Глобальний ASIN-фільтр як дефолт, якщо заданий
+            _default_asin = st.session_state.get("gf_asin", "") if "gf_asin" in st.session_state else ""
+            search_asin = st.text_input(
+                "🔍 ASIN",
+                value=st.session_state.get("rev_asin_search", _default_asin),
+                key="rev_asin_search",
+                placeholder="B0... (порожньо = всі)"
+            )
+        with _f4:
+            st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
+            only_verified = st.checkbox("✅ Тільки Verified", value=False, key="rev_verified")
 
     # ══════════════════════════════════════════════════════
     # 2. ФІЛЬТРАЦІЯ
@@ -4495,6 +4504,38 @@ def show_reviews(t=None):
     # 8. ТЕКСТИ ВІДГУКІВ
     # ══════════════════════════════════════════════════════
     st.markdown("### 📋 Тексти відгуків")
+
+    # ── Сводка активних фільтрів + швидкі коригування ─────────────────────
+    _active_pills = []
+    if sel_countries and len(sel_countries) < len(country_labels):
+        _active_pills.append(f"🌍 {len(sel_countries)} країн")
+    elif sel_countries:
+        _active_pills.append("🌍 всі країни")
+    if sel_stars and len(sel_stars) < 5:
+        _active_pills.append(f"⭐ {','.join(map(str, sorted(sel_stars)))}★")
+    elif sel_stars:
+        _active_pills.append("⭐ всі зірки")
+    if search_asin:
+        _active_pills.append(f"🔍 ASIN: {search_asin}")
+    if only_verified:
+        _active_pills.append("✅ Verified")
+
+    _af_col1, _af_col2 = st.columns([4, 1])
+    with _af_col1:
+        st.markdown(
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">' +
+            ''.join([
+                f'<span style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;'
+                f'border-radius:4px;padding:3px 10px;font-size:0.75rem">{p}</span>'
+                for p in _active_pills
+            ]) + '</div>',
+            unsafe_allow_html=True
+        )
+    with _af_col2:
+        if st.button("🔼 До фільтрів", key="rev_scroll_to_filters", use_container_width=True,
+                     help="Прокрути вверх до блоку фільтрів щоб змінити"):
+            pass  # кнопка-анкор, просто візуальна підказка
+
     st.caption("Balanced вибірка: до 100 на кожну зірку · 1★ зверху щоб проблеми були першими")
 
     # Balanced за зірками, 1★ зверху
