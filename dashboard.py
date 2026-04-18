@@ -6404,7 +6404,7 @@ def _mon_worker(monitored, max_per_star, log_q, progress_q, stop_event, apify_to
 
     apify_token = apify_token or os.getenv("APIFY_TOKEN", "")
 
-    log_q.put(f"🚀 Моніторинг: {len(monitored)} ASIN · старт {datetime.now().strftime('%H:%M:%S')}")
+    log_q.put(f"🚀 Моніторинг: {len(monitored)} ASIN · старт {dt.datetime.now().strftime('%H:%M:%S')}")
     log_q.put("=" * 50)
 
     total_new = 0
