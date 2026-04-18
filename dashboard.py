@@ -8231,4 +8231,4 @@ elif report_choice == "ℹ️ Про додаток":              show_about()
 elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍") 
