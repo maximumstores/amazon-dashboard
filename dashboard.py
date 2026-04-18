@@ -8828,13 +8828,36 @@ def show_scraper_manager():
             key="scr_urls_input"
         )
 
+        # ── Вибір джерела + зірок ──
+        _src_col, _stars_col = st.columns([2, 3])
+        with _src_col:
+            single_source = st.radio(
+                "🔌 Джерело:",
+                options=['apify', 'brightdata'],
+                horizontal=True,
+                format_func=lambda x: "🟡 Apify" if x == 'apify' else "🟣 Bright Data",
+                key="single_source",
+                disabled=st.session_state.scr_running,
+                help="Apify: окремий запит на кожну зірку · Bright Data: один запит з dedup"
+            )
+        with _stars_col:
+            single_stars = st.multiselect(
+                "⭐ Які зірки збирати:",
+                [1, 2, 3, 4, 5],
+                default=[1, 2, 3, 4, 5],
+                key="single_stars",
+                disabled=st.session_state.scr_running,
+                help="Apify робить запит на кожну зірку окремо. BD — один запит + фільтр на нашому боці."
+            )
+
         max_per_star = 100
         c2, c3 = st.columns([3, 1])
         with c2:
             loop_mode = st.toggle(
                 "🔄 Нескінченний цикл (пауза 30 хв між проходами)",
                 value=False,
-                disabled=st.session_state.scr_running
+                disabled=st.session_state.scr_running or single_source == 'brightdata',
+                help="Недоступно для Bright Data (вона без dedup повертає ті самі відгуки — немає сенсу в циклі)"
             )
         with c3:
             st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
@@ -8863,12 +8886,31 @@ def show_scraper_manager():
                     st.session_state.scr_prog_q     = pq
                     st.session_state.scr_stop_event = stop_ev
 
-                    threading.Thread(
-                        target=_scr_worker,
-                        args=(raw_lines, max_per_star, lq, pq,
-                              loop_mode, stop_ev, APIFY_TOKEN_DEFAULT),
-                        daemon=True
-                    ).start()
+                    if single_source == 'brightdata':
+                        # BD-шлях: переробляємо URLs у формат monitored_asins для _mon_worker
+                        _fake_monitored = []
+                        for _i, _u in enumerate(raw_lines):
+                            _u2 = _u if _u.startswith("http") else ("https://" + _u)
+                            _dom, _asin = _scr_parse_url(_u2)
+                            if _asin and _asin != "UNKNOWN":
+                                _fake_monitored.append((
+                                    -(_i+1),  # fake id (від'ємний — щоб не плутати з реальним)
+                                    _asin, _dom,
+                                    ",".join(map(str, sorted(single_stars))) if single_stars else "1,2,3,4",
+                                    True, None, 0, None, "", "", 0, 0, 0, 'brightdata'
+                                ))
+                        threading.Thread(
+                            target=_mon_worker,
+                            args=(_fake_monitored, max_per_star, lq, pq, stop_ev, APIFY_TOKEN_DEFAULT),
+                            daemon=True
+                        ).start()
+                    else:
+                        threading.Thread(
+                            target=_scr_worker,
+                            args=(raw_lines, max_per_star, lq, pq,
+                                  loop_mode, stop_ev, APIFY_TOKEN_DEFAULT),
+                            daemon=True
+                        ).start()
                     st.rerun()
 
     st.markdown("---")
