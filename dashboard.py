@@ -4373,26 +4373,116 @@ def show_reviews(t=None):
                         unsafe_allow_html=True
                     )
 
-                # ── Таблиця нових відгуків ──
+                # ── Таблиця нових відгуків з фільтрами ──
                 st.markdown("#### 📋 Таблиця нових відгуків")
-                _show_new = _df_disp.sort_values(['rating','created_at'], ascending=[True, False])
-                _new_cols = [c for c in ['created_at','review_date','rating','asin','domain','title','content','is_verified']
-                             if c in _show_new.columns]
-                _new_disp = _show_new[_new_cols].copy()
-                if 'created_at' in _new_disp.columns:
-                    _new_disp['created_at'] = pd.to_datetime(_new_disp['created_at'], errors='coerce').dt.strftime('%d.%m %H:%M')
-                if 'review_date' in _new_disp.columns:
-                    _new_disp['review_date'] = _new_disp['review_date'].dt.strftime('%Y-%m-%d') if hasattr(_new_disp['review_date'], 'dt') else _new_disp['review_date']
-                if 'domain' in _new_disp.columns:
-                    _new_disp['Country'] = _new_disp['domain'].map(DOMAIN_LABELS).fillna(_new_disp['domain'])
-                    _new_disp = _new_disp.drop(columns=['domain'])
-                _new_disp = _new_disp.rename(columns={
-                    'created_at': '🕐 Зібрано', 'review_date': 'Дата відгуку',
-                    'rating': '★', 'asin': 'ASIN',
-                    'title': 'Title', 'content': 'Content', 'is_verified': '✅'
-                })
-                st.dataframe(_new_disp, use_container_width=True, hide_index=True, height=400)
-                st.caption(f"Показано {len(_new_disp)} нових відгуків · 1★ зверху (критичні першими)")
+
+                # ── Фільтри для таблиці (ASIN + зірки) ──
+                _tf1, _tf2 = st.columns([3, 2])
+                with _tf1:
+                    # Список ASIN з лічильниками
+                    _asin_counts_tbl = _df_disp.groupby('asin').size().sort_values(ascending=False)
+                    _asin_options = [
+                        f"{_a}  ({_c} нов.)" for _a, _c in _asin_counts_tbl.items()
+                    ]
+                    _asin_key_map = {f"{_a}  ({_c} нов.)": _a for _a, _c in _asin_counts_tbl.items()}
+                    _sel_asins_lbl = st.multiselect(
+                        "🔍 Фільтр по ASIN (пусто = всі):",
+                        _asin_options,
+                        default=[],
+                        key=f"new_tbl_asin_{_nperiod[:5]}",
+                        placeholder=f"Всі {len(_asin_options)} ASIN",
+                    )
+                    _sel_asins = [_asin_key_map[l] for l in _sel_asins_lbl]
+                with _tf2:
+                    _sel_stars_tbl = st.multiselect(
+                        "⭐ Зірки:",
+                        [1, 2, 3, 4, 5],
+                        default=[1, 2, 3, 4, 5],
+                        key=f"new_tbl_stars_{_nperiod[:5]}",
+                    )
+
+                # Застосовуємо фільтри
+                _df_tbl = _df_disp.copy()
+                if _sel_asins:
+                    _df_tbl = _df_tbl[_df_tbl['asin'].isin(_sel_asins)]
+                if _sel_stars_tbl:
+                    _df_tbl = _df_tbl[_df_tbl['rating'].isin(_sel_stars_tbl)]
+
+                # ── Групування по ASIN (акордеон) vs плоска таблиця ──
+                _vmode = st.radio(
+                    "Вигляд:",
+                    ["📋 Плоска таблиця", "📦 Згруповано по ASIN"],
+                    horizontal=True, key=f"new_tbl_view_{_nperiod[:5]}", label_visibility="collapsed"
+                )
+
+                def _prepare_show(df_in):
+                    _show = df_in.sort_values(['rating', 'created_at'], ascending=[True, False])
+                    _cols = [c for c in ['created_at','review_date','rating','asin','domain','title','content','is_verified']
+                             if c in _show.columns]
+                    _disp = _show[_cols].copy()
+                    if 'created_at' in _disp.columns:
+                        _disp['created_at'] = pd.to_datetime(_disp['created_at'], errors='coerce').dt.strftime('%d.%m %H:%M')
+                    if 'review_date' in _disp.columns and hasattr(_disp['review_date'], 'dt'):
+                        _disp['review_date'] = _disp['review_date'].dt.strftime('%Y-%m-%d')
+                    if 'domain' in _disp.columns:
+                        _disp['Country'] = _disp['domain'].map(DOMAIN_LABELS).fillna(_disp['domain'])
+                        _disp = _disp.drop(columns=['domain'])
+                    return _disp.rename(columns={
+                        'created_at': '🕐 Зібрано', 'review_date': 'Дата відгуку',
+                        'rating': '★', 'asin': 'ASIN',
+                        'title': 'Title', 'content': 'Content', 'is_verified': '✅'
+                    })
+
+                if _df_tbl.empty:
+                    st.info("Немає відгуків під обрані фільтри")
+                elif _vmode.startswith("📦"):
+                    # Згруповано: expander на кожний ASIN
+                    for _a, _grp in _df_tbl.groupby('asin', sort=False):
+                        _cnt     = len(_grp)
+                        _neg     = int((_grp['rating'] <= 3).sum())
+                        _avg     = _grp['rating'].mean()
+                        _flag    = DOMAIN_FLAGS.get(_grp['domain'].iloc[0] if 'domain' in _grp.columns else 'com', '🌍')
+                        _rat_clr = "#ef4444" if _avg < 3 else ("#f59e0b" if _avg < 4 else "#22c55e")
+                        with st.expander(
+                            f"{_flag} **{_a}** · {_cnt} нов. · 🔴 {_neg} проблем · ⭐ {_avg:.2f}",
+                            expanded=(_neg > 0)
+                        ):
+                            _disp_grp = _prepare_show(_grp)
+                            st.dataframe(_disp_grp, use_container_width=True, hide_index=True,
+                                         height=min(500, 50 + len(_disp_grp) * 35))
+                else:
+                    _new_disp = _prepare_show(_df_tbl)
+                    st.dataframe(_new_disp, use_container_width=True, hide_index=True, height=400)
+
+                st.caption(f"Показано {len(_df_tbl)} з {len(_df_disp)} нових відгуків · 1★ зверху")
+
+                # ── CSV експорт ──
+                _csv_c1, _csv_c2 = st.columns(2)
+                with _csv_c1:
+                    _csv_filter = _df_tbl.copy()
+                    if 'domain' in _csv_filter.columns:
+                        _csv_filter['country'] = _csv_filter['domain'].map(DOMAIN_LABELS).fillna(_csv_filter['domain'])
+                    st.download_button(
+                        f"📥 CSV по фільтру ({len(_csv_filter)})",
+                        _csv_filter.to_csv(index=False).encode(),
+                        f"new_reviews_{_nperiod[:5].strip()}_{len(_csv_filter)}.csv",
+                        "text/csv",
+                        use_container_width=True,
+                        key=f"new_csv_filter_{_nperiod[:5]}",
+                    )
+                with _csv_c2:
+                    # Повний дамп усіх нових за період (без ASIN/зірок фільтру)
+                    _csv_all = _df_disp.copy()
+                    if 'domain' in _csv_all.columns:
+                        _csv_all['country'] = _csv_all['domain'].map(DOMAIN_LABELS).fillna(_csv_all['domain'])
+                    st.download_button(
+                        f"📥 CSV всі нові ({len(_csv_all)})",
+                        _csv_all.to_csv(index=False).encode(),
+                        f"new_reviews_all_{_nperiod[:5].strip()}_{len(_csv_all)}.csv",
+                        "text/csv",
+                        use_container_width=True,
+                        key=f"new_csv_all_{_nperiod[:5]}",
+                    )
 
         st.markdown("---")
 
