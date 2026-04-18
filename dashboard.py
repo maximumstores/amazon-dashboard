@@ -5879,10 +5879,23 @@ def _scr_ensure_table():
 
 
 def _scr_save(reviews, asin, domain):
+    import hashlib
     conn = _scr_get_conn(); cur = conn.cursor(); inserted = 0
     for rev in reviews:
         url = rev.get("reviewUrl", "")
-        rid = url.split("/")[-1] if url else f"{asin}_{domain}_{rev.get('position','?')}"
+        if url:
+            rid = url.split("/")[-1] or url[-80:]
+        else:
+            # Fallback: детермінований хеш з контенту (якщо Apify не дав reviewUrl)
+            _h_src = (
+                f"{asin}|{domain}|"
+                f"{rev.get('author','')}|"
+                f"{rev.get('date','')}|"
+                f"{rev.get('ratingScore',0)}|"
+                f"{(rev.get('reviewTitle','') or '')[:100]}|"
+                f"{(rev.get('reviewDescription','') or '')[:200]}"
+            )
+            rid = f"{asin}_{domain}_{hashlib.md5(_h_src.encode()).hexdigest()[:20]}"
         try:
             cur.execute("""
                 INSERT INTO amazon_reviews
