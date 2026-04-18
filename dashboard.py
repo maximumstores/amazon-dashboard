@@ -6057,8 +6057,135 @@ function toggleParent_{idx}(row) {{
 # SCRAPER MANAGER
 # ============================================
 
-APIFY_TOKEN_DEFAULT = os.getenv("APIFY_TOKEN", "")
+def _secret(key: str, default: str = "") -> str:
+    """Читає з ENV → st.secrets → default. Для сумісності Streamlit Cloud + cron."""
+    v = os.getenv(key, "")
+    if v: return v
+    try:
+        v = st.secrets.get(key, "") if hasattr(st, "secrets") else ""
+    except Exception:
+        v = ""
+    return v or default
+
+APIFY_TOKEN_DEFAULT      = _secret("APIFY_TOKEN", "")
+BRIGHTDATA_TOKEN_DEFAULT = _secret("BRIGHTDATA_TOKEN", "") or _secret("BD_TOKEN", "")
+BRIGHTDATA_DATASET_ID    = _secret("BRIGHTDATA_DATASET_ID", "gd_le8e811kzy4ggddlq")
+
 STARS_MAP = {5: "fiveStar", 4: "fourStar", 3: "threeStar", 2: "twoStar", 1: "oneStar"}
+
+
+def _bd_scrape(asin, domain, existing_review_ids=None, log_fn=print, max_wait_sec=180):
+    """Скрапить через Bright Data Dataset API. Повертає список відгуків
+    у форматі сумісному з Apify (ключі: reviewUrl, author, ratingScore,
+    reviewTitle, reviewDescription, isVerified, variant, date).
+    existing_review_ids — передаємо у reviews_to_not_include для dedup → економія $$"""
+    if not BRIGHTDATA_TOKEN_DEFAULT:
+        log_fn("❌ BRIGHTDATA_TOKEN не заданий"); return []
+
+    url = f"https://www.amazon.{domain}/dp/{asin}"
+    payload = [{
+        "url": url,
+        "reviews_to_not_include": list(existing_review_ids or [])[:500],
+    }]
+    headers = {"Authorization": f"Bearer {BRIGHTDATA_TOKEN_DEFAULT}", "Content-Type": "application/json"}
+
+    # 1. Trigger
+    try:
+        r = requests.post(
+            f"https://api.brightdata.com/datasets/v3/trigger"
+            f"?dataset_id={BRIGHTDATA_DATASET_ID}&format=json&uncompressed_webhook=true&include_errors=true",
+            headers=headers, json=payload, timeout=60
+        )
+        if r.status_code != 200:
+            log_fn(f"❌ BD trigger {r.status_code}: {r.text[:200]}"); return []
+        snap_id = r.json().get("snapshot_id")
+        if not snap_id:
+            log_fn("❌ BD: no snapshot_id у відповіді"); return []
+    except Exception as e:
+        log_fn(f"❌ BD trigger error: {e}"); return []
+
+    # 2. Polling
+    polls = max_wait_sec // 10
+    for i in range(polls):
+        time.sleep(10)
+        try:
+            s = requests.get(
+                f"https://api.brightdata.com/datasets/v3/progress/{snap_id}",
+                headers=headers, timeout=30
+            ).json()
+            status = s.get("status", "unknown")
+            if status == "ready":
+                break
+            if status == "failed":
+                log_fn(f"❌ BD snapshot failed"); return []
+        except Exception:
+            pass
+    else:
+        log_fn(f"⚠️ BD timeout {max_wait_sec}s"); return []
+
+    # 3. Download
+    try:
+        r = requests.get(
+            f"https://api.brightdata.com/datasets/v3/snapshot/{snap_id}?format=json",
+            headers=headers, timeout=90
+        )
+        if r.status_code != 200:
+            log_fn(f"❌ BD download {r.status_code}"); return []
+        data = r.json()
+    except Exception as e:
+        log_fn(f"❌ BD download error: {e}"); return []
+
+    if not isinstance(data, list):
+        return []
+
+    # 4. Convert BD format → Apify-compatible
+    converted = []
+    for item in data:
+        if not isinstance(item, dict): continue
+        # BD може повернути або один prod-обʼєкт з вкладеним reviews[], або flat
+        nested = item.get("reviews") if "reviews" in item else None
+        if nested and isinstance(nested, list):
+            src_reviews = nested
+        else:
+            src_reviews = [item]  # flat: це сам відгук
+        for rev in src_reviews:
+            if not isinstance(rev, dict): continue
+            rid = (rev.get("review_id") or rev.get("reviewId") or
+                   rev.get("id") or "")
+            rurl = (rev.get("review_url") or rev.get("reviewUrl") or
+                    rev.get("url") or "")
+            if not rurl and rid:
+                rurl = f"https://www.amazon.{domain}/review/{rid}"
+            converted.append({
+                "reviewUrl": rurl,
+                "author": rev.get("author") or rev.get("reviewer_name") or "Amazon User",
+                "ratingScore": int(float(rev.get("rating") or rev.get("stars") or rev.get("ratingScore") or 0)),
+                "reviewTitle": rev.get("title") or rev.get("review_title") or rev.get("reviewTitle") or "",
+                "reviewDescription": rev.get("text") or rev.get("review_text") or rev.get("body") or rev.get("reviewDescription") or "",
+                "isVerified": bool(rev.get("verified") or rev.get("is_verified") or rev.get("isVerified") or False),
+                "variant": rev.get("variant") or rev.get("product_variant") or "",
+                "date": rev.get("date") or rev.get("review_date") or "",
+            })
+    return converted
+
+
+# ── Routing акторів по доменах (економимо) ──
+# US (com): xmiso — $0.42/1000 відгуків
+# EU/UK/CA: web_wanderer — $6/1000
+APIFY_ACTOR_US       = os.getenv("APIFY_ACTOR_US",       "xmiso~amazon-reviews-scraper")
+APIFY_ACTOR_EU       = os.getenv("APIFY_ACTOR_EU",       "web_wanderer~amazon-reviews-scraper")
+APIFY_ACTOR_FALLBACK = os.getenv("APIFY_ACTOR_FALLBACK", "junglee~amazon-reviews-scraper")
+_US_DOMAINS = {"com"}
+_EU_DOMAINS = {"co.uk","de","fr","it","es","nl","pl","se","ca","com.au","com.mx","co.jp"}
+
+def _apify_actor_for(domain: str) -> str:
+    if domain in _US_DOMAINS: return APIFY_ACTOR_US
+    if domain in _EU_DOMAINS: return APIFY_ACTOR_EU
+    return APIFY_ACTOR_FALLBACK
+
+def _apify_endpoint(domain: str, token: str) -> str:
+    actor = _apify_actor_for(domain)
+    return f"https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items?token={token}"
 DOMAIN_FLAGS = {
     "com": "🇺🇸", "ca": "🇨🇦", "de": "🇩🇪", "co.uk": "🇬🇧",
     "it": "🇮🇹", "es": "🇪🇸", "fr": "🇫🇷", "co.jp": "🇯🇵",
@@ -6098,6 +6225,8 @@ def _scr_ensure_table():
             note TEXT,
             UNIQUE(asin, domain)
         );
+        ALTER TABLE monitored_asins ADD COLUMN IF NOT EXISTS scraper_source VARCHAR(20) DEFAULT 'apify';
+        CREATE INDEX IF NOT EXISTS idx_monitored_source ON monitored_asins(scraper_source) WHERE is_active = TRUE;
     """)
     conn.commit(); cur.close(); conn.close()
 
@@ -6113,7 +6242,8 @@ def _mon_list():
                    (SELECT COUNT(*) FROM amazon_reviews r WHERE r.asin = m.asin AND r.domain = m.domain
                      AND r.created_at > NOW() - INTERVAL '7 days') AS new_7d,
                    (SELECT COUNT(*) FROM amazon_reviews r WHERE r.asin = m.asin AND r.domain = m.domain
-                     AND r.created_at > NOW() - INTERVAL '1 day') AS new_1d
+                     AND r.created_at > NOW() - INTERVAL '1 day') AS new_1d,
+                   COALESCE(m.scraper_source, 'apify') AS scraper_source
             FROM monitored_asins m
             ORDER BY m.added_at DESC
         """)
@@ -6124,21 +6254,58 @@ def _mon_list():
         return []
 
 
-def _mon_add(asin, domain, stars, note, added_by):
+def _mon_add(asin, domain, stars, note, added_by, source='apify'):
     try:
         conn = _scr_get_conn(); cur = conn.cursor()
         cur.execute("""
-            INSERT INTO monitored_asins (asin, domain, stars_to_monitor, note, added_by)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO monitored_asins (asin, domain, stars_to_monitor, note, added_by, scraper_source)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (asin, domain) DO UPDATE
               SET stars_to_monitor = EXCLUDED.stars_to_monitor,
                   note = EXCLUDED.note,
+                  scraper_source = EXCLUDED.scraper_source,
                   is_active = TRUE
-        """, (asin.upper(), domain, stars, note, added_by))
+        """, (asin.upper(), domain, stars, note, added_by, source))
         conn.commit(); cur.close(); conn.close()
         return True
     except Exception:
         return False
+
+
+def _mon_set_source(mon_id, source):
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE monitored_asins SET scraper_source=%s WHERE id=%s", (source, mon_id))
+        conn.commit(); cur.close(); conn.close()
+    except Exception: pass
+
+
+def _mon_bulk_set_source(mon_ids, source):
+    if not mon_ids: return 0
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE monitored_asins SET scraper_source=%s WHERE id = ANY(%s)",
+                    (source, list(mon_ids)))
+        cnt = cur.rowcount
+        conn.commit(); cur.close(); conn.close()
+        return cnt
+    except Exception: return 0
+
+
+def _get_existing_review_ids(asin, domain, limit=500):
+    """Повертає список review_id що вже є в БД — для Bright Data dedup."""
+    try:
+        conn = _scr_get_conn(); cur = conn.cursor()
+        cur.execute("""
+            SELECT review_id FROM amazon_reviews
+            WHERE asin=%s AND domain=%s AND review_id IS NOT NULL
+            ORDER BY created_at DESC LIMIT %s
+        """, (asin, domain, limit))
+        ids = [r[0] for r in cur.fetchall() if r[0]]
+        cur.close(); conn.close()
+        return ids
+    except Exception:
+        return []
 
 
 def _mon_toggle(mon_id, active):
@@ -6224,8 +6391,6 @@ def _mon_worker(monitored, max_per_star, log_q, progress_q, stop_event, apify_to
         log_q.put(f"❌ DB error: {e}"); progress_q.put({"done": True}); return
 
     apify_token = apify_token or os.getenv("APIFY_TOKEN", "")
-    endpoint = ("https://api.apify.com/v2/acts/junglee~amazon-reviews-scraper"
-                f"/run-sync-get-dataset-items?token={apify_token}")
 
     log_q.put(f"🚀 Моніторинг: {len(monitored)} ASIN · старт {datetime.now().strftime('%H:%M:%S')}")
     log_q.put("=" * 50)
@@ -6234,43 +6399,69 @@ def _mon_worker(monitored, max_per_star, log_q, progress_q, stop_event, apify_to
     for idx, m in enumerate(monitored):
         if stop_event.is_set(): break
         mon_id, asin, domain, stars_str = m[0], m[1], m[2], m[3]
+        # scraper_source — останній елемент tuple (індекс 13 після _mon_list)
+        source = m[13] if len(m) > 13 else 'apify'
         try:
             stars = [int(s.strip()) for s in stars_str.split(",") if s.strip().isdigit()]
         except Exception:
             stars = [1, 2, 3, 4]
 
         flag = DOMAIN_FLAGS.get(domain, "🌍")
-        url = f"https://www.amazon.{domain}/dp/{asin}"
         log_q.put(f"\n{flag} [{idx+1}/{len(monitored)}] {asin} ({domain}) · зірки: {stars}")
 
         asin_new = 0
-        for star_num in stars:
-            if stop_event.is_set(): break
-            star_text = STARS_MAP.get(star_num)
-            if not star_text: continue
-            pct = int((idx * len(stars) + stars.index(star_num) + 1) / (len(monitored) * len(stars)) * 100)
-            progress_q.put({"pct": pct, "label": f"{asin} · {star_num}★"})
-            payload = {
-                "productUrls": [{"url": url}],
-                "filterByRatings": [star_text],
-                "maxReviews": max_per_star,
-                "sort": "recent",
-            }
+        pct = int((idx + 1) / len(monitored) * 100)
+        progress_q.put({"pct": pct, "label": f"{asin} · {source}"})
+
+        if source == 'brightdata':
+            # ─── BRIGHT DATA шлях: один запит на ASIN, з dedup ───
+            log_q.put(f"  🟣 Source: Bright Data (dedup через review_ids)")
+            existing_ids = _get_existing_review_ids(asin, domain, limit=500)
+            log_q.put(f"  🧹 Передаємо {len(existing_ids)} існуючих ID для dedup")
             try:
-                res = requests.post(endpoint, json=payload, timeout=360)
-                if res.status_code in (200, 201):
-                    data = res.json()
-                    if data:
-                        ins = _scr_save(data, asin, domain)
-                        asin_new += ins
-                        log_q.put(f"  ✅ {star_num}★: {len(data)} got, {ins} NEW")
-                    else:
-                        log_q.put(f"  ⚠️ {star_num}★: порожньо")
+                reviews = _bd_scrape(asin, domain, existing_ids,
+                                     log_fn=lambda m: log_q.put(f"  {m}"))
+                # фільтруємо по зірках на своєму боці
+                filtered = [r for r in reviews if r.get("ratingScore", 0) in stars]
+                if filtered:
+                    ins = _scr_save(filtered, asin, domain)
+                    asin_new += ins
+                    log_q.put(f"  ✅ BD: {len(reviews)} отримано, {len(filtered)} потрібних зірок, {ins} NEW")
                 else:
-                    log_q.put(f"  ❌ {star_num}★: HTTP {res.status_code}")
+                    log_q.put(f"  ⚠️ BD: {len(reviews)} отримано, але 0 у потрібних зірках")
             except Exception as e:
-                log_q.put(f"  ❌ {star_num}★: {e}")
-            time.sleep(2)
+                log_q.put(f"  ❌ BD error: {e}")
+        else:
+            # ─── APIFY шлях: запит на КОЖНУ зірку ───
+            actor = _apify_actor_for(domain)
+            endpoint = _apify_endpoint(domain, apify_token)
+            url = f"https://www.amazon.{domain}/dp/{asin}"
+            log_q.put(f"  🟡 Source: Apify / {actor}")
+            for star_num in stars:
+                if stop_event.is_set(): break
+                star_text = STARS_MAP.get(star_num)
+                if not star_text: continue
+                payload = {
+                    "productUrls": [{"url": url}],
+                    "filterByRatings": [star_text],
+                    "maxReviews": max_per_star,
+                    "sort": "recent",
+                }
+                try:
+                    res = requests.post(endpoint, json=payload, timeout=360)
+                    if res.status_code in (200, 201):
+                        data = res.json()
+                        if data:
+                            ins = _scr_save(data, asin, domain)
+                            asin_new += ins
+                            log_q.put(f"  ✅ {star_num}★: {len(data)} got, {ins} NEW")
+                        else:
+                            log_q.put(f"  ⚠️ {star_num}★: порожньо")
+                    else:
+                        log_q.put(f"  ❌ {star_num}★: HTTP {res.status_code}")
+                except Exception as e:
+                    log_q.put(f"  ❌ {star_num}★: {e}")
+                time.sleep(2)
 
         _mon_update_check(mon_id, asin_new)
         total_new += asin_new
@@ -6288,10 +6479,7 @@ def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, ap
         log_q.put(f"❌ DB error: {e}"); progress_q.put({"done": True}); return
 
     apify_token = apify_token or os.getenv("APIFY_TOKEN", "")
-    endpoint = (
-        "https://api.apify.com/v2/acts/junglee~amazon-reviews-scraper"
-        f"/run-sync-get-dataset-items?token={apify_token}"
-    )
+    # endpoint береться per-domain всередині циклу (різні актори для US/EU)
     cycle = 0
     while not stop_event.is_set():
         cycle += 1
@@ -6310,8 +6498,11 @@ def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, ap
                 url = "https://" + url
             domain, asin = _scr_parse_url(url)
             flag = DOMAIN_FLAGS.get(domain, "🌍")
+            actor = _apify_actor_for(domain)
+            endpoint = _apify_endpoint(domain, apify_token)
             log_q.put(f"\n{'='*50}")
             log_q.put(f"{flag}  {asin}  ·  amazon.{domain}  (цикл #{cycle})")
+            log_q.put(f"  🎭 Actor: {actor}")
             log_q.put(f"{'='*50}")
 
             url_new = 0
@@ -8448,6 +8639,13 @@ def show_scraper_manager():
                     key="mon_stars",
                     help="1-4★ = всі незадоволені. 5★ не критичні → зазвичай пропускають."
                 )
+                mon_source = st.selectbox(
+                    "🔌 Джерело даних:",
+                    options=['apify', 'brightdata'],
+                    format_func=lambda x: "🟡 Apify (стабільно)" if x == 'apify' else "🟣 Bright Data (дешевше, з dedup)",
+                    key="mon_source_new",
+                    help="Apify = надійно, ~$0.06/scan. Bright Data = дешевше з dedup, ~$0.002/scan при повторних запусках."
+                )
                 mon_note = st.text_input("📝 Нотатка (опц.):", key="mon_note", placeholder="merino socks, US")
             if st.button("➕ Додати до моніторингу", type="primary", use_container_width=True, key="btn_mon_add"):
                 lines = [l.strip() for l in (mon_urls_txt or "").splitlines() if l.strip()]
@@ -8461,10 +8659,10 @@ def show_scraper_manager():
                     if asin and asin != "UNKNOWN":
                         stars_str = ",".join(map(str, sorted(mon_stars))) if mon_stars else "1,2,3,4"
                         user_email = st.session_state.get("user", {}).get("email", "")
-                        if _mon_add(asin, domain, stars_str, mon_note, user_email):
+                        if _mon_add(asin, domain, stars_str, mon_note, user_email, source=mon_source):
                             added += 1
                 if added > 0:
-                    st.success(f"✅ Додано {added} ASIN до моніторингу")
+                    st.success(f"✅ Додано {added} ASIN через {mon_source}")
                     st.rerun()
                 else:
                     st.error("Не додано жодного ASIN (перевір формат)")
@@ -8521,21 +8719,61 @@ def show_scraper_manager():
                         st.rerun()
 
             st.markdown("---")
+
+            # ── Статистика по джерелах + bulk actions ──
+            _apify_cnt = sum(1 for m in monitored if (m[13] if len(m) > 13 else 'apify') == 'apify')
+            _bd_cnt    = sum(1 for m in monitored if (m[13] if len(m) > 13 else 'apify') == 'brightdata')
+
+            _bs1, _bs2 = st.columns([2, 3])
+            with _bs1:
+                st.markdown(
+                    f'<div style="background:#0f172a;border-radius:8px;padding:10px 14px;font-size:0.85rem;color:#e2e8f0">'
+                    f'📊 Розподіл: 🟡 Apify: <b>{_apify_cnt}</b> · 🟣 Bright Data: <b>{_bd_cnt}</b>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            with _bs2:
+                with st.expander("⚡ Масово перевести на інше джерело", expanded=False):
+                    _bulk_opts = {
+                        f"{m[1]} ({m[2]}) · {(m[13] if len(m) > 13 else 'apify')}": m[0]
+                        for m in monitored
+                    }
+                    _sel_bulk = st.multiselect(
+                        "Виберіть ASIN:", list(_bulk_opts.keys()),
+                        key="bulk_select", placeholder="ASIN для масового перемикання"
+                    )
+                    _bulk_target = st.radio(
+                        "Перевести на:",
+                        ['apify', 'brightdata'],
+                        horizontal=True,
+                        format_func=lambda x: "🟡 Apify" if x == 'apify' else "🟣 Bright Data",
+                        key="bulk_target_source"
+                    )
+                    if st.button("⚡ Виконати", disabled=not _sel_bulk, key="btn_bulk_src"):
+                        ids = [_bulk_opts[k] for k in _sel_bulk]
+                        n = _mon_bulk_set_source(ids, _bulk_target)
+                        st.success(f"✅ Переведено {n} ASIN на {_bulk_target}")
+                        st.rerun()
+
             st.markdown("#### 📋 Список моніторингу")
+            st.caption("🔌 колонка Джерело — міняй dropdown'ом, зберігається одразу")
 
             for m in monitored:
-                mon_id, asin, domain, stars, is_active, last_chk, last_new, added_at, added_by, note, total, n7, n1 = m
+                mon_id, asin, domain, stars, is_active, last_chk, last_new, added_at, added_by, note, total, n7, n1 = m[:13]
+                source = m[13] if len(m) > 13 else 'apify'
                 flag = DOMAIN_FLAGS.get(domain, "🌍")
                 last_chk_str = last_chk.strftime("%d.%m %H:%M") if last_chk else "ніколи"
                 added_str = added_at.strftime("%d.%m.%Y") if added_at else ""
 
-                row_c1, row_c2, row_c3, row_c4, row_c5, row_c6 = st.columns([2, 1, 1, 2, 1, 1])
+                row_c1, row_c2, row_c3, row_c4, row_c5, row_c6, row_c7 = st.columns([2, 1, 1, 1.5, 1.2, 0.6, 0.6])
                 with row_c1:
                     _color = "#22c55e" if is_active else "#94a3b8"
+                    _src_badge = '🟡' if source == 'apify' else '🟣'
                     st.markdown(
                         f'<div style="border-left:3px solid {_color};padding-left:8px">'
                         f'<a href="https://www.amazon.{domain}/dp/{asin}" target="_blank" '
-                        f'style="color:#5B9BD5;text-decoration:none;font-weight:600">{flag} {asin}</a>'
+                        f'style="color:#5B9BD5;text-decoration:none;font-weight:600">{flag} {asin}</a> '
+                        f'<span style="font-size:0.78rem">{_src_badge}</span>'
                         f'<div style="font-size:0.72rem;color:#64748b">⭐ {stars} · {note or "—"}</div>'
                         f'</div>',
                         unsafe_allow_html=True
@@ -8547,16 +8785,29 @@ def show_scraper_manager():
                     _n7_c = "#22c55e" if n7 > 0 else "#64748b"
                     st.markdown(f'<div style="text-align:center"><div style="font-size:1.1rem;font-weight:800;color:{_n7_c}">{n7}</div><div style="font-size:0.65rem;color:#64748b">за 7д</div></div>', unsafe_allow_html=True)
                 with row_c4:
-                    st.caption(f"📅 додано {added_str}")
-                    st.caption(f"🕐 перевірка: {last_chk_str}")
+                    st.caption(f"📅 {added_str}")
+                    st.caption(f"🕐 {last_chk_str}")
                 with row_c5:
+                    # Per-row source dropdown
+                    _sel_src = st.selectbox(
+                        "Джерело",
+                        options=['apify', 'brightdata'],
+                        index=0 if source == 'apify' else 1,
+                        key=f"mon_src_{mon_id}",
+                        label_visibility="collapsed",
+                        format_func=lambda x: "🟡 Apify" if x == 'apify' else "🟣 Bright Data",
+                    )
+                    if _sel_src != source:
+                        _mon_set_source(mon_id, _sel_src)
+                        st.rerun()
+                with row_c6:
                     if is_active:
                         if st.button("⏸", key=f"mon_pause_{mon_id}", help="Пауза"):
                             _mon_toggle(mon_id, False); st.rerun()
                     else:
                         if st.button("▶", key=f"mon_resume_{mon_id}", help="Відновити"):
                             _mon_toggle(mon_id, True); st.rerun()
-                with row_c6:
+                with row_c7:
                     if st.button("🗑", key=f"mon_del_{mon_id}", help="Видалити"):
                         _mon_delete(mon_id); st.rerun()
                 st.divider()
