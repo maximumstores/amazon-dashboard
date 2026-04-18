@@ -8085,6 +8085,7 @@ if 'report_choice' not in st.session_state:
 
 lang_option = st.sidebar.selectbox("🌍 Language", ["UA 🇺🇦","EN 🇺🇸","RU 🌍"], index=0)
 lang = "UA" if "UA" in lang_option else "EN" if "EN" in lang_option else "RU"
+st.session_state["lang"] = lang   # для auth.py і інших модулів
 t    = translations[lang]
 
 if st.sidebar.button(t["update_btn"], width="stretch"):
