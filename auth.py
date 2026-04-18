@@ -153,6 +153,10 @@ def can_view(report: str) -> bool:
     if effective_role("bi") == "admin":
         return True
     perms = st.session_state.get("permissions", set())
+    # Дефолт: якщо явних обмежень нема → viewer бачить ВСЕ.
+    # Адмін у Кабінеті знімає галочки щоб обмежити доступ.
+    if not perms:
+        return True
     return report in perms
 
 
@@ -204,10 +208,12 @@ def show_login():
                     user = verify_login(email, password)
                     if user:
                         st.session_state.user = user
-                        st.session_state.permissions = (
-                            set(ALL_REPORTS) if effective_role("bi") == "admin"
-                            else get_user_permissions(user["id"])
-                        )
+                        if effective_role("bi") == "admin":
+                            st.session_state.permissions = set(ALL_REPORTS)
+                        else:
+                            _uperms = get_user_permissions(user["id"])
+                            # Дефолт: viewer без явних обмежень → бачить ВСЕ звіти
+                            st.session_state.permissions = _uperms if _uperms else set(ALL_REPORTS)
                         st.rerun()
                     else:
                         st.error("❌ Невірний email або пароль")
@@ -382,8 +388,38 @@ def _load_cross_app_stats():
     return listing_by_email, perms_by_uid
 
 
+def _show_viewer_cabinet():
+    """Полегшений кабінет для viewer — бачить тільки себе, без управління іншими."""
+    u = st.session_state.get("user") or {}
+    st.markdown("## ⚙️ Мій кабінет")
+    st.caption("Перегляд власного профілю та доступних звітів.")
+
+    with st.container(border=True):
+        c1, c2 = st.columns([2, 3])
+        with c1:
+            st.markdown(f"**👤 {u.get('name','—')}**")
+            st.caption(u.get("email",""))
+            st.markdown(f"Роль BI: `{effective_role('bi').upper()}`")
+        with c2:
+            my_perms = get_user_permissions(u.get("id", 0))
+            if not my_perms:
+                st.success("✅ Доступ до ВСІХ звітів merino-bi (немає обмежень)")
+            else:
+                st.markdown(f"**📊 Доступних звітів: {len(my_perms)} / {len(ALL_REPORTS)}**")
+                for rep in ALL_REPORTS:
+                    icon = "✅" if rep in my_perms else "🚫"
+                    st.markdown(f'<span style="color:#64748b;font-size:0.85rem">{icon} {rep}</span>', unsafe_allow_html=True)
+
+    st.info("💬 Щоб отримати доступ до додаткових звітів — звернись до адміна.")
+
+
 def show_admin_panel():
-    """Кабінет merino-bi: фільтр BI/всі, бейджі, per-app ролі, статистика."""
+    """Кабінет merino-bi: admin → управління юзерами; viewer → лише власний профіль."""
+    # Для viewer — полегшена версія (бачить лише себе)
+    if effective_role("bi") != "admin":
+        _show_viewer_cabinet()
+        return
+
     st.markdown("## ⚙️ Кабінет — merino-bi")
     st.caption("Ролі тут впливають ТІЛЬКИ на merino-bi. У listing-analyze свій кабінет. «Як глобальна» = NULL, наслідує колонку role.")
 
@@ -485,21 +521,21 @@ def show_admin_panel():
                 _pills = []
                 if eff_bi == "admin":
                     _pills.append(
-                        '<span style="background:#0f172a;border-left:3px solid #fbbf24;border-radius:4px;padding:3px 8px;font-size:0.72rem">'
+                        '<span style="background:#0f172a;color:#e2e8f0;border-left:3px solid #fbbf24;border-radius:4px;padding:3px 8px;font-size:0.72rem">'
                         '📊 Звіти BI: <b style="color:#fbbf24">всі (admin)</b></span>'
                     )
                 elif _perms_cnt:
                     _pills.append(
-                        f'<span style="background:#0f172a;border-left:3px solid #22c55e;border-radius:4px;padding:3px 8px;font-size:0.72rem">'
+                        f'<span style="background:#0f172a;color:#e2e8f0;border-left:3px solid #22c55e;border-radius:4px;padding:3px 8px;font-size:0.72rem">'
                         f'📊 Звіти BI: <b style="color:#22c55e">{_perms_cnt}</b> / {len(ALL_REPORTS)}</span>'
                     )
                 if _la_stats:
                     _d7 = _la_stats.get("d7", 0)
                     _c  = "#22c55e" if _d7 >= 3 else ("#f59e0b" if _d7 >= 1 else "#94a3b8")
                     _pills.append(
-                        f'<span style="background:#0f172a;border-left:3px solid {_c};border-radius:4px;padding:3px 8px;font-size:0.72rem">'
-                        f'🔵 Listing: <b>{_la_stats.get("total",0)}</b> аналізів '
-                        f'<span style="color:#64748b">· 7д {_d7} · 30д {_la_stats.get("d30",0)}</span></span>'
+                        f'<span style="background:#0f172a;color:#e2e8f0;border-left:3px solid {_c};border-radius:4px;padding:3px 8px;font-size:0.72rem">'
+                        f'🔵 Listing: <b style="color:#e2e8f0">{_la_stats.get("total",0)}</b> аналізів '
+                        f'<span style="color:#94a3b8">· 7д {_d7} · 30д {_la_stats.get("d30",0)}</span></span>'
                     )
                 if _pills:
                     st.markdown(
@@ -569,10 +605,16 @@ def show_admin_panel():
                         if eff_bi_new != "admin":
                             st.markdown("---")
                             st.markdown("**📊 Доступ до звітів (merino-bi):**")
+                            st.caption("💡 Дефолт: viewer бачить ВСЕ звіти. Зніми галочку щоб приховати конкретний.")
                             current_perms = load_user_perms(uid)
                             available = list(ALL_REPORTS)
                             if f"sel_{uid}" not in st.session_state:
-                                st.session_state[f"sel_{uid}"] = list(current_perms & set(available))
+                                # Якщо в БД є записи — показуємо їх.
+                                # Якщо БД порожня — ставимо ВСІ як дефолт (viewer-all).
+                                st.session_state[f"sel_{uid}"] = (
+                                    list(current_perms & set(available))
+                                    if current_perms else list(available)
+                                )
                             ca, cb = st.columns([1, 4])
                             with ca:
                                 if st.button("✅ Всі", key=f"btn_all_{uid}", width="stretch"):
@@ -650,3 +692,4 @@ def show_admin_panel():
 
 # Alias для listing-analyze (якщо імпортує під цим іменем)
 show_listing_admin_panel = show_admin_panel
+
