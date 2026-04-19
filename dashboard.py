@@ -6311,9 +6311,10 @@ def _bd_scrape(asin, domain, existing_review_ids=None, log_fn=print, max_wait_se
 # ── Routing акторів по доменах (економимо) ──
 # US (com): xmiso — $0.42/1000 відгуків
 # EU/UK/CA: web_wanderer — $6/1000
-APIFY_ACTOR_US       = os.getenv("APIFY_ACTOR_US",       "xmiso~amazon-reviews-scraper")
-APIFY_ACTOR_EU       = os.getenv("APIFY_ACTOR_EU",       "web_wanderer~amazon-reviews-scraper")
-APIFY_ACTOR_FALLBACK = os.getenv("APIFY_ACTOR_FALLBACK", "junglee~amazon-reviews-scraper")
+# Fallback: junglee (працює стабільно). Читаємо через _secret → підтримує ENV + Streamlit secrets.
+APIFY_ACTOR_US       = _secret("APIFY_ACTOR_US",       "junglee~amazon-reviews-scraper")
+APIFY_ACTOR_EU       = _secret("APIFY_ACTOR_EU",       "junglee~amazon-reviews-scraper")
+APIFY_ACTOR_FALLBACK = _secret("APIFY_ACTOR_FALLBACK", "junglee~amazon-reviews-scraper")
 _US_DOMAINS = {"com"}
 _EU_DOMAINS = {"co.uk","de","fr","it","es","nl","pl","se","ca","com.au","com.mx","co.jp"}
 
