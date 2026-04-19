@@ -4368,10 +4368,138 @@ def show_reviews(t=None):
 
                 _ai_result = st.session_state.get(f"new_ai_result_{_nperiod[:5]}", "")
                 if _ai_result:
-                    st.markdown(
-                        f'<div style="background:#0f172a;border:1px solid #334155;border-radius:10px;padding:14px 18px;color:#e2e8f0;font-size:0.88rem;line-height:1.7;white-space:pre-wrap">{_ai_result}</div>',
-                        unsafe_allow_html=True
-                    )
+                    # McKinsey-style парсинг AI відповіді на секції
+                    import re as _re_ai
+                    _sections_cfg = [
+                        # (маркер_у_тексті, icon, title, accent_color, bg_gradient)
+                        ("ТРЕНД",              "🔥", "Тренд",              "#f59e0b", "linear-gradient(135deg,#1f1a0b,#2b1d0d)"),
+                        ("КРИТИЧНІ ПРОБЛЕМИ",  "⚠️", "Критичні проблеми",   "#ef4444", "linear-gradient(135deg,#1f0f0f,#2b1a1a)"),
+                        ("ПРОБЛЕМНІ ASIN",     "📦", "Проблемні ASIN",     "#a855f7", "linear-gradient(135deg,#180f1f,#261b2b)"),
+                        ("ПОЗИТИВ",            "✅", "Що хвалять",          "#22c55e", "linear-gradient(135deg,#0a1f14,#112b1e)"),
+                        ("ДІЇ",                "🎯", "План дій",            "#3b82f6", "linear-gradient(135deg,#0b1425,#152036)"),
+                    ]
+                    # Розбиваємо текст на блоки: кожен маркер — початок нової секції
+                    _parsed = {}
+                    _clean_txt = _ai_result.replace("**", "")  # прибираємо жирний маркдаун
+                    # Знаходимо позиції всіх маркерів
+                    _markers = []
+                    for _key, _ico, _tit, _clr, _bg in _sections_cfg:
+                        _m = _re_ai.search(rf"[🔥⚠️📦✅🎯]?\s*{_key}:?", _clean_txt)
+                        if _m:
+                            _markers.append((_m.start(), _key))
+                    _markers.sort(key=lambda x: x[0])
+                    for i, (_pos, _key) in enumerate(_markers):
+                        _end = _markers[i+1][0] if i+1 < len(_markers) else len(_clean_txt)
+                        # Обрізаємо сам маркер
+                        _block_start = _clean_txt.find(":", _pos)
+                        _content = _clean_txt[_block_start+1:_end].strip() if _block_start > -1 else _clean_txt[_pos:_end].strip()
+                        _parsed[_key] = _content
+
+                    # Якщо вдалось розпарсити хоча б 2 секції — рендеримо в карточках
+                    if len(_parsed) >= 2:
+                        # Шапка з загальною статистикою періоду
+                        _total_new_ai = len(_df_disp)
+                        _neg_pct_ai = (len(_df_disp_neg)/_total_new_ai*100) if _total_new_ai else 0
+                        _asin_cnt_ai = _df_disp['asin'].nunique()
+                        _avg_ai = _df_disp['rating'].mean() if _total_new_ai else 0
+
+                        st.markdown(f"""
+<div style="background:linear-gradient(135deg,#0f172a,#1e293b);border:1px solid #334155;
+            border-radius:12px;padding:18px 24px;margin-bottom:14px">
+  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;align-items:center">
+    <div>
+      <div style="font-size:10px;color:#64748b;letter-spacing:0.15em;font-weight:700;text-transform:uppercase">
+        EXECUTIVE SUMMARY · {('24 години' if _nperiod.startswith('📅') else '7 днів')}
+      </div>
+      <div style="font-size:1.2rem;font-weight:700;color:#f1f5f9;margin-top:4px">
+        🧠 AI-розбір нових відгуків
+      </div>
+    </div>
+    <div style="display:flex;gap:18px;flex-wrap:wrap">
+      <div style="text-align:center">
+        <div style="font-size:1.5rem;font-weight:800;color:#e2e8f0;line-height:1">{_total_new_ai}</div>
+        <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">нових</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:1.5rem;font-weight:800;color:{'#ef4444' if _neg_pct_ai>=30 else '#f59e0b' if _neg_pct_ai>=10 else '#22c55e'};line-height:1">{_neg_pct_ai:.0f}%</div>
+        <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">проблемних</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:1.5rem;font-weight:800;color:#3b82f6;line-height:1">{_asin_cnt_ai}</div>
+        <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">asin</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:1.5rem;font-weight:800;color:#fbbf24;line-height:1">{_avg_ai:.2f}★</div>
+        <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">середнє</div>
+      </div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+                        # Grid: 2 колонки для читабельності
+                        _left_keys  = ["ТРЕНД", "ПРОБЛЕМНІ ASIN", "ПОЗИТИВ"]
+                        _right_keys = ["КРИТИЧНІ ПРОБЛЕМИ", "ДІЇ"]
+                        _cards_l, _cards_r = st.columns(2)
+
+                        def _render_card(_col, _key):
+                            if _key not in _parsed: return
+                            _cfg = next((c for c in _sections_cfg if c[0] == _key), None)
+                            if not _cfg: return
+                            _, _ico, _tit, _clr, _bg = _cfg
+                            _content = _parsed[_key]
+                            # Обробка буллетів:  1. text  /  • text  /  -text
+                            _lines = [l.strip() for l in _content.split("\n") if l.strip()]
+                            _html_lines = []
+                            for _l in _lines:
+                                # Нумерований: "1. текст" або "1) текст"
+                                _num_m = _re_ai.match(r"^(\d+)[\.\)]\s*(.+)$", _l)
+                                _bul_m = _re_ai.match(r"^[•●◆▪*-]\s*(.+)$", _l)
+                                if _num_m:
+                                    _n, _txt = _num_m.group(1), _num_m.group(2)
+                                    _html_lines.append(
+                                        f'<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'
+                                        f'<div style="background:{_clr}22;color:{_clr};border:1px solid {_clr};'
+                                        f'border-radius:4px;padding:0 6px;font-size:0.7rem;font-weight:800;min-width:20px;text-align:center">{_n}</div>'
+                                        f'<div style="flex:1;font-size:0.88rem;color:#e2e8f0;line-height:1.55">{_txt}</div>'
+                                        f'</div>'
+                                    )
+                                elif _bul_m:
+                                    _txt = _bul_m.group(1)
+                                    _html_lines.append(
+                                        f'<div style="display:flex;gap:10px;margin-bottom:6px;align-items:flex-start">'
+                                        f'<div style="color:{_clr};font-weight:800">▸</div>'
+                                        f'<div style="flex:1;font-size:0.88rem;color:#e2e8f0;line-height:1.55">{_txt}</div>'
+                                        f'</div>'
+                                    )
+                                else:
+                                    _html_lines.append(
+                                        f'<div style="font-size:0.88rem;color:#e2e8f0;line-height:1.6;margin-bottom:4px">{_l}</div>'
+                                    )
+                            _card_body = "".join(_html_lines)
+                            _col.markdown(f"""
+<div style="background:{_bg};border:1px solid {_clr}40;border-left:4px solid {_clr};
+            border-radius:10px;padding:14px 18px;margin-bottom:12px">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid {_clr}33">
+    <span style="font-size:1.2rem">{_ico}</span>
+    <span style="font-size:0.7rem;letter-spacing:0.12em;font-weight:800;color:{_clr};text-transform:uppercase">{_tit}</span>
+  </div>
+  <div>{_card_body}</div>
+</div>
+""", unsafe_allow_html=True)
+
+                        with _cards_l:
+                            for _k in _left_keys:
+                                _render_card(_cards_l, _k)
+                        with _cards_r:
+                            for _k in _right_keys:
+                                _render_card(_cards_r, _k)
+                    else:
+                        # Якщо не розпарсили — показуємо як було (raw text)
+                        st.markdown(
+                            f'<div style="background:#0f172a;border:1px solid #334155;border-radius:10px;padding:14px 18px;color:#e2e8f0;font-size:0.88rem;line-height:1.7;white-space:pre-wrap">{_ai_result}</div>',
+                            unsafe_allow_html=True
+                        )
 
                 # ── Таблиця нових відгуків з фільтрами ──
                 st.markdown("#### 📋 Таблиця нових відгуків")
