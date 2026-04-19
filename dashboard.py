@@ -6247,18 +6247,17 @@ def _bd_scrape(asin, domain, existing_review_ids=None, log_fn=print, max_wait_se
                     rev.get("url") or "")
             if not rurl and rid:
                 rurl = f"https://www.amazon.{domain}/review/{rid}"
-            _title_v = (rev.get("title") or rev.get("review_title") or rev.get("reviewTitle")
-                        or rev.get("review_headline") or rev.get("headline") or
-                        rev.get("review_title_text") or "")
-            _text_v  = (rev.get("text") or rev.get("review_text") or rev.get("body")
+            _title_v = (rev.get("review_header") or rev.get("title") or rev.get("review_title")
+                        or rev.get("reviewTitle") or rev.get("review_headline")
+                        or rev.get("headline") or rev.get("review_title_text") or "")
+            _text_v  = (rev.get("review_text") or rev.get("text") or rev.get("body")
                         or rev.get("reviewDescription") or rev.get("review_body")
                         or rev.get("content") or rev.get("review_content") or "")
-            _date_v  = (rev.get("date") or rev.get("review_date") or rev.get("reviewed_at")
-                        or rev.get("created_at") or rev.get("timestamp")
-                        or rev.get("date_posted") or rev.get("review_date_text") or "")
-            _author_v = (rev.get("author") or rev.get("reviewer_name")
-                         or rev.get("customer_name") or rev.get("author_name")
-                         or rev.get("reviewer") or "Amazon User")
+            _date_v  = (rev.get("review_posted_date") or rev.get("date") or rev.get("review_date")
+                        or rev.get("reviewed_at") or rev.get("created_at")
+                        or rev.get("timestamp") or rev.get("date_posted") or "")
+            _author_v = (rev.get("author_name") or rev.get("author") or rev.get("reviewer_name")
+                         or rev.get("customer_name") or rev.get("reviewer") or "Amazon User")
             _verified_v = bool(rev.get("verified") or rev.get("is_verified")
                                or rev.get("isVerified") or rev.get("verified_purchase")
                                or rev.get("is_verified_purchase") or False)
@@ -6499,9 +6498,13 @@ def _mon_update_check(mon_id, new_count):
     except Exception: pass
 
 
-def _scr_save(reviews, asin, domain):
+def _scr_save(reviews, asin, domain, log_fn=None):
     import hashlib
-    conn = _scr_get_conn(); cur = conn.cursor(); inserted = 0
+    conn = _scr_get_conn(); cur = conn.cursor()
+    inserted = 0
+    dup = 0
+    errs = 0
+    last_err = None
     for rev in reviews:
         url = rev.get("reviewUrl", "")
         # Пріоритет: review_id (BD) → останній сегмент URL → hash контенту
@@ -6534,7 +6537,6 @@ def _scr_save(reviews, asin, domain):
                 bool(rev.get("isVerified", False)),
                 rev.get("variant", ""),
                 rev.get("date", ""),
-                # Нові BD поля (для Apify будуть None/0)
                 rev.get("author_id") or None,
                 rev.get("author_link") or None,
                 rev.get("badge") or None,
@@ -6545,9 +6547,21 @@ def _scr_save(reviews, asin, domain):
                 rev.get("review_country") or None,
                 rev.get("source") or None,
             ))
-            if cur.rowcount > 0: inserted += 1
-        except Exception: pass
+            if cur.rowcount > 0:
+                inserted += 1
+            else:
+                dup += 1  # ON CONFLICT — дубль по review_id
+        except Exception as e:
+            errs += 1
+            last_err = str(e)[:200]
+            # Треба rollback бо інакше transaction abort і наступні insert'и зламаються
+            try: conn.rollback()
+            except: pass
     conn.commit(); cur.close(); conn.close()
+    if log_fn:
+        _summary = f"    📊 Save: +{inserted} NEW, {dup} дублі"
+        if errs > 0: _summary += f", ❌ {errs} помилок ({last_err})"
+        log_fn(_summary)
     return inserted
 
 
@@ -6647,7 +6661,7 @@ def _mon_worker(monitored, max_per_star, log_q, progress_q, stop_event, apify_to
                 # фільтруємо по зірках на своєму боці
                 filtered = [r for r in reviews if r.get("ratingScore", 0) in stars]
                 if filtered:
-                    ins = _scr_save(filtered, asin, domain)
+                    ins = _scr_save(filtered, asin, domain, log_fn=lambda m: log_q.put(m))
                     asin_new += ins
                     log_q.put(f"  ✅ BD: {len(reviews)} отримано, {len(filtered)} потрібних зірок, {ins} NEW")
                 else:
