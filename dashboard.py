@@ -4533,7 +4533,9 @@ def show_reviews(t=None):
                 _df_tbl = _df_disp.copy()
                 if _sel_asins:
                     _df_tbl = _df_tbl[_df_tbl['asin'].isin(_sel_asins)]
-                if _sel_stars_tbl:
+                # Якщо вибрані всі 5 зірок (дефолт) — НЕ фільтруємо по рейтингу,
+                # щоб показати і рядки з rating=0/NULL (BD не завжди повертає рейтинг).
+                if _sel_stars_tbl and len(_sel_stars_tbl) < 5:
                     _df_tbl = _df_tbl[_df_tbl['rating'].isin(_sel_stars_tbl)]
 
                 # ── Групування по ASIN (акордеон) vs плоска таблиця ──
