@@ -4523,10 +4523,11 @@ def show_reviews(t=None):
                     _sel_asins = [_asin_key_map[l] for l in _sel_asins_lbl]
                 with _tf2:
                     _sel_stars_tbl = st.multiselect(
-                        "⭐ Зірки:",
+                        "⭐ Зірки (пусто = всі):",
                         [1, 2, 3, 4, 5],
-                        default=[1, 2, 3, 4, 5],
+                        default=[],
                         key=f"new_tbl_stars_{_nperiod[:5]}",
+                        placeholder="Всі зірки (+ без рейтингу)",
                     )
 
                 # Застосовуємо фільтри
