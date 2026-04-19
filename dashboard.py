@@ -6405,7 +6405,14 @@ def _mon_list():
         conn = _scr_get_conn(); cur = conn.cursor()
         cur.execute("""
             SELECT m.id, m.asin, m.domain, m.stars_to_monitor, m.is_active,
-                   m.last_check, m.last_new_count, m.added_at, m.added_by, m.note,
+                   -- last_check = найпізніше з 2 джерел: натискання "Перевірити зараз"
+                   -- АБО реальний момент коли остання рецензія потрапила в БД
+                   GREATEST(
+                       m.last_check,
+                       (SELECT MAX(r.created_at) FROM amazon_reviews r
+                        WHERE r.asin = m.asin AND r.domain = m.domain)
+                   ) AS last_check,
+                   m.last_new_count, m.added_at, m.added_by, m.note,
                    (SELECT COUNT(*) FROM amazon_reviews r WHERE r.asin = m.asin AND r.domain = m.domain) AS total_reviews,
                    (SELECT COUNT(*) FROM amazon_reviews r WHERE r.asin = m.asin AND r.domain = m.domain
                      AND r.created_at > NOW() - INTERVAL '7 days') AS new_7d,
