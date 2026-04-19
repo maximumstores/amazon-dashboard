@@ -6710,18 +6710,21 @@ def _mon_worker(monitored, max_per_star, log_q, progress_q, stop_event, apify_to
     progress_q.put({"pct": 100, "label": f"Готово: +{total_new} нових", "done": True, "total": 1})
 
 
-def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, apify_token):
+def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, apify_token, stars=None):
     try:
         _scr_ensure_table()
     except Exception as e:
         log_q.put(f"❌ DB error: {e}"); progress_q.put({"done": True}); return
 
     apify_token = apify_token or os.getenv("APIFY_TOKEN", "")
+    # Які зірки збирати (дефолт — всі). Apify робить окремий запит на кожну.
+    _stars_to_scrape = stars if stars else [1, 2, 3, 4, 5]
+    log_q.put(f"⭐ Збираємо зірки: {_stars_to_scrape}")
     # endpoint береться per-domain всередині циклу (різні актори для US/EU)
     cycle = 0
     while not stop_event.is_set():
         cycle += 1
-        total_steps = len(urls) * 5
+        total_steps = len(urls) * len(_stars_to_scrape)
         step = 0
         cycle_total = 0
 
@@ -6744,7 +6747,9 @@ def _scr_worker(urls, max_per_star, log_q, progress_q, loop_mode, stop_event, ap
             log_q.put(f"{'='*50}")
 
             url_new = 0
-            for star_num, star_text in STARS_MAP.items():
+            for star_num in _stars_to_scrape:
+                star_text = STARS_MAP.get(star_num)
+                if not star_text: continue
                 if stop_event.is_set(): break
                 step += 1
                 pct = int(step / total_steps * 100)
@@ -9147,6 +9152,7 @@ def show_scraper_manager():
                             target=_scr_worker,
                             args=(raw_lines, max_per_star, lq, pq,
                                   loop_mode, stop_ev, APIFY_TOKEN_DEFAULT),
+                            kwargs={"stars": sorted(single_stars) if single_stars else [1,2,3,4,5]},
                             daemon=True
                         ).start()
                     st.rerun()
