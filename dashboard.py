@@ -6362,6 +6362,8 @@ def _scr_ensure_table():
         ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS variant_name    TEXT;
         ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS review_country  VARCHAR(10);
         ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS source          VARCHAR(20);
+        -- Розширюємо review_country: BD повертає "United States", "United Kingdom" тощо
+        ALTER TABLE amazon_reviews ALTER COLUMN review_country TYPE VARCHAR(64);
         -- One-time backfill: всі старі записи без source вважаємо Apify (BD додали нещодавно)
         UPDATE amazon_reviews SET source = 'apify' WHERE source IS NULL;
         -- Окрема таблиця для snapshot розподілу рейтингу продукту
