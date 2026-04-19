@@ -6362,6 +6362,8 @@ def _scr_ensure_table():
         ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS variant_name    TEXT;
         ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS review_country  VARCHAR(10);
         ALTER TABLE amazon_reviews ADD COLUMN IF NOT EXISTS source          VARCHAR(20);
+        -- One-time backfill: всі старі записи без source вважаємо Apify (BD додали нещодавно)
+        UPDATE amazon_reviews SET source = 'apify' WHERE source IS NULL;
         -- Окрема таблиця для snapshot розподілу рейтингу продукту
         CREATE TABLE IF NOT EXISTS amazon_product_ratings (
             id SERIAL PRIMARY KEY,
@@ -6499,7 +6501,9 @@ def _mon_update_check(mon_id, new_count):
     except Exception: pass
 
 
-def _scr_save(reviews, asin, domain, log_fn=None):
+def _scr_save(reviews, asin, domain, log_fn=None, default_source='apify'):
+    """Зберігає відгуки. default_source — вказуємо який сервіс зібрав
+    (Apify за замовчуванням, BD явно виставляє 'brightdata' у converter)."""
     import hashlib
     conn = _scr_get_conn(); cur = conn.cursor()
     inserted = 0
@@ -6546,7 +6550,7 @@ def _scr_save(reviews, asin, domain, log_fn=None):
                 rev.get("variant_asin") or None,
                 rev.get("variant_name") or None,
                 rev.get("review_country") or None,
-                rev.get("source") or None,
+                rev.get("source") or default_source,
             ))
             if cur.rowcount > 0:
                 inserted += 1
