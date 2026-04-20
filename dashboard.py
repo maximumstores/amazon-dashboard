@@ -5615,31 +5615,60 @@ def show_orders(t=None):
         child_count=('asin', 'nunique'),
     ).reset_index()
 
-    # ── Traffic: беремо НЕЗАЛЕЖНО від orders.
-    # Це критично — child ASIN може мати traffic БЕЗ orders (dead SKU, OOS тощо),
-    # але цей traffic все одно має зараховуватись parent-у.
-    # Логіка: per day → MAX по children (бо сесії перекриваються: 1 покупець = N children);
-    #         per period → SUM по днях (різні дні = різні сесії)
-    if not df_traffic.empty:
+    # ── Traffic parent-level: пробуємо взяти готові PARENT/CHILD granularity з SP-API.
+    # В Amazon sales_traffic report зазвичай є окремі рядки для parent-a де sessions
+    # вже дедубльовані (унікальні покупці per parent). Якщо їх нема — fallback на MAX.
+    parent_traffic_raw = pd.DataFrame()
+    try:
+        with engine.connect() as conn:
+            parent_traffic_raw = pd.read_sql(text("""
+                SELECT
+                    report_date::date                          AS date,
+                    parent_asin                                AS parent_key,
+                    SUM(NULLIF(page_views,'')::numeric)        AS impressions,
+                    SUM(NULLIF(sessions,'')::numeric)          AS sessions
+                FROM spapi.sales_traffic
+                WHERE report_date::date BETWEEN :d1 AND :d2
+                  AND parent_asin IS NOT NULL AND parent_asin != ''
+                  AND granularity IN ('PARENT', 'CHILD', 'parent', 'child',
+                                      'Parent ASIN', 'Child ASIN')
+                GROUP BY 1, 2
+            """), conn, params={"d1": d1, "d2": d2})
+    except Exception:
+        parent_traffic_raw = pd.DataFrame()
+
+    if not parent_traffic_raw.empty:
+        # ✅ Маємо справжні parent-level sessions з SP-API
+        parent_traffic_raw['date'] = pd.to_datetime(parent_traffic_raw['date'])
+        if gran == "Тиждень":
+            parent_traffic_raw['period'] = parent_traffic_raw['date'].dt.to_period('W').apply(lambda p: p.start_time)
+        elif gran == "Місяць":
+            parent_traffic_raw['period'] = parent_traffic_raw['date'].dt.to_period('M').apply(lambda p: p.start_time)
+        else:
+            parent_traffic_raw['period'] = parent_traffic_raw['date']
+        parent_traffic = parent_traffic_raw.groupby(['period', 'parent_key']).agg(
+            sessions=('sessions', 'sum'),
+            impressions=('impressions', 'sum'),
+        ).reset_index()
+    elif not df_traffic.empty:
+        # ⚠️ Fallback: агрегуємо з child-рядків
+        # Per day → MAX по children (1 покупець = N children візитів);
+        # Per period → SUM по днях (різні дні = різні сесії)
         _tr = df_traffic.copy()
-        # fallback для parent_asin: якщо пусто → беремо сам child
         _tr['parent_key'] = _tr['parent_asin'].where(
             _tr['parent_asin'].fillna('') != '', _tr['asin']
         )
-        # Крок 1: per-day MAX по children (в межах одного дня)
         _tr_daily = _tr.groupby(['date', 'parent_key']).agg(
             sessions=('sessions', 'max'),
             impressions=('impressions', 'max'),
         ).reset_index()
         _tr_daily['date'] = pd.to_datetime(_tr_daily['date'])
-        # Крок 2: приводимо до period-gran (day/week/month)
         if gran == "Тиждень":
             _tr_daily['period'] = _tr_daily['date'].dt.to_period('W').apply(lambda p: p.start_time)
         elif gran == "Місяць":
             _tr_daily['period'] = _tr_daily['date'].dt.to_period('M').apply(lambda p: p.start_time)
         else:
             _tr_daily['period'] = _tr_daily['date']
-        # Крок 3: SUM по днях в межах period
         parent_traffic = _tr_daily.groupby(['period', 'parent_key']).agg(
             sessions=('sessions', 'sum'),
             impressions=('impressions', 'sum'),
@@ -5707,8 +5736,8 @@ def show_orders(t=None):
             units=('units', 'sum'),
             revenue=('revenue', 'sum'),
             orders_cnt=('orders_cnt', 'sum'),
-            impressions=('impressions', 'max'),   # MAX per parent
-            sessions=('sessions', 'max'),         # MAX per parent
+            impressions=('impressions', 'sum'),   # SUM across days/periods
+            sessions=('sessions', 'sum'),         # SUM across days/periods
             child_count=('child_count', 'max'),
             periods=('period', 'nunique'),
         ).reset_index()
@@ -9771,5 +9800,6 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
