@@ -9373,6 +9373,88 @@ def _agent_settlements_payload() -> str:
     return "\n".join(lines)
 
 
+def _agent_inventory_payload() -> str:
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(text("SELECT * FROM fba_inventory"), conn)
+    except Exception as e:
+        return f"ERROR: {e}"
+    if df.empty:
+        return "fba_inventory порожня"
+
+    # Динамічно знаходимо колонки (як у show_inventory_unified)
+    col_map = {}
+    for c in df.columns:
+        lc = c.lower().replace(' ', '_').replace('-', '_')
+        if lc in ('sku', 'seller_sku'):                       col_map.setdefault('sku', c)
+        elif lc == 'asin':                                    col_map.setdefault('asin', c)
+        elif lc in ('available', 'afn_fulfillable_quantity'): col_map.setdefault('avail', c)
+        elif lc in ('price', 'your_price'):                   col_map.setdefault('price', c)
+        elif lc in ('velocity', 'sales_velocity'):            col_map.setdefault('vel', c)
+        elif lc in ('days_of_supply', 'days_supply'):         col_map.setdefault('dos', c)
+        elif lc in ('inbound_quantity', 'inbound'):           col_map.setdefault('inb', c)
+        elif lc in ('product_name', 'title', 'name'):         col_map.setdefault('name', c)
+
+    avail = col_map.get('avail'); price = col_map.get('price')
+    vel   = col_map.get('vel');   dos   = col_map.get('dos')
+    inb   = col_map.get('inb');   sku   = col_map.get('sku'); asin = col_map.get('asin')
+
+    for c in [avail, price, vel, dos, inb]:
+        if c: df[c] = pd.to_numeric(df[c].replace('', None), errors='coerce').fillna(0)
+
+    if not dos and vel and avail:
+        df['_dos'] = (df[avail] / df[vel].replace(0, float('nan'))).round(0).fillna(0)
+        dos = '_dos'
+    if avail and price:
+        df['_value'] = df[avail] * df[price]
+
+    total_sku = len(df)
+    total_value = float(df['_value'].sum()) if '_value' in df.columns else 0
+    oos_cnt = int((df[avail] == 0).sum()) if avail else 0
+    low30 = int(((df[dos] > 0) & (df[dos] < 30)).sum()) if dos else 0
+    low14 = int(((df[dos] > 0) & (df[dos] < 14)).sum()) if dos else 0
+    overstock_180 = int((df[dos] > 180).sum()) if dos else 0
+    inbound_cnt = int((df[inb] > 0).sum()) if inb else 0
+
+    # Топ 8 критичних SKU за $-заморозкою при низькому DOS
+    top_lines = []
+    if dos and '_value' in df.columns:
+        crit = df[(df[dos] > 0) & (df[dos] < 30)].sort_values('_value', ascending=False).head(8)
+        for _, r in crit.iterrows():
+            _s = r.get(sku, '') if sku else ''
+            _a = r.get(asin, '') if asin else ''
+            top_lines.append(f"  - {_s} / {_a}: {int(r[dos])}d cover · ${float(r['_value']):,.0f} frozen")
+
+    # Топ 5 frozen (оверстокнуті - багато грошей без руху)
+    frozen_lines = []
+    if dos and '_value' in df.columns:
+        frz = df[df[dos] > 180].sort_values('_value', ascending=False).head(5)
+        for _, r in frz.iterrows():
+            _s = r.get(sku, '') if sku else ''
+            _a = r.get(asin, '') if asin else ''
+            top_lines_extra = f"{int(r[dos])}d" if r[dos] < 9999 else ">1y"
+            frozen_lines.append(f"  - {_s} / {_a}: {top_lines_extra} · ${float(r['_value']):,.0f} frozen")
+
+    lines = [
+        f"Total SKUs: {total_sku}",
+        f"Inventory $ value: ${total_value:,.0f}",
+        f"OOS (stock-out): {oos_cnt}",
+        f"Low stock (<30d cover): {low30}  · (<14d): {low14}",
+        f"Overstock (>180d cover): {overstock_180}",
+        f"SKUs з inbound: {inbound_cnt}",
+    ]
+    if top_lines:
+        lines.append("")
+        lines.append("TOP 8 критичних (LOW STOCK + $ заморозка):")
+        lines.extend(top_lines)
+    if frozen_lines:
+        lines.append("")
+        lines.append("TOP 5 FROZEN ($ в оверстоку):")
+        lines.extend(frozen_lines)
+    return "\n".join(lines)
+
+
 def _agent_reviews_payload() -> str:
     engine = get_engine()
     # review_date це TEXT з можливими порожніми значеннями → через created_at
@@ -9453,6 +9535,9 @@ def agent_settlements(force=False):
 
 def agent_reviews_meta(force=False):
     return run_agent("reviews", _AGENT_PROMPT_TMPL.format(area="Відгуки (Reviews)", data=_agent_reviews_payload()), force)
+
+def agent_inventory(force=False):
+    return run_agent("inventory", _AGENT_PROMPT_TMPL.format(area="Склад (Inventory)", data=_agent_inventory_payload()), force)
 
 
 def agent_meta(sub_results: dict, force=False) -> str:
@@ -9583,6 +9668,7 @@ def show_ai_dashboard():
         ("returns",     "🔙 Повернення",               agent_returns),
         ("settlements", "💰 Фінанси",                  agent_settlements),
         ("reviews",     "⭐ Відгуки",                   agent_reviews_meta),
+        ("inventory",   "📦 Склад",                    agent_inventory),
     ]
 
     sub_results = {}
@@ -10446,6 +10532,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
