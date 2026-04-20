@@ -9033,6 +9033,535 @@ ML ПРОГНОЗ на {forecast_days} днів:
         "Коли очікується пік продажів?",
     ], "forecast")
 
+# ============================================
+# 🧠 AI AGENTS DASHBOARD
+# ============================================
+def ensure_ai_agents_table():
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS ai_agent_runs (
+                    id          SERIAL PRIMARY KEY,
+                    agent_key   TEXT NOT NULL,
+                    run_date    DATE NOT NULL,
+                    payload_md5 TEXT,
+                    result_text TEXT,
+                    created_at  TIMESTAMP DEFAULT NOW(),
+                    UNIQUE (agent_key, run_date)
+                )
+            """))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _gemini_key():
+    k = os.environ.get("GEMINI_API_KEY", "")
+    if not k and hasattr(st, "secrets"):
+        k = st.secrets.get("GEMINI_API_KEY", "")
+    return k
+
+
+def _call_gemini(prompt: str) -> str:
+    if not GEMINI_OK:
+        return "⚠️ google-generativeai не встановлено"
+    key = _gemini_key()
+    if not key:
+        return "⚠️ GEMINI_API_KEY не задано"
+    try:
+        genai.configure(api_key=key)
+        model_name = os.environ.get("GEMINI_MODEL", "") or (
+            st.secrets.get("GEMINI_MODEL", "gemini-1.5-flash") if hasattr(st, "secrets") else "gemini-1.5-flash"
+        )
+        model = genai.GenerativeModel(model_name)
+        resp = model.generate_content(prompt)
+        return resp.text or ""
+    except Exception as e:
+        return f"❌ Помилка Gemini: {e}"
+
+
+def run_agent(agent_key: str, prompt: str, force_refresh: bool = False) -> str:
+    """Кеш за (agent_key, today). force_refresh перезаписує кеш."""
+    ensure_ai_agents_table()
+    today = dt.date.today()
+    engine = get_engine()
+    if not force_refresh:
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(text("""
+                    SELECT result_text FROM ai_agent_runs
+                    WHERE agent_key=:k AND run_date=:d
+                """), {"k": agent_key, "d": today}).fetchone()
+            if row and row[0]:
+                return row[0]
+        except Exception:
+            pass
+
+    result = _call_gemini(prompt)
+    try:
+        import hashlib as _h
+        md5 = _h.md5(prompt.encode("utf-8")).hexdigest()
+        with engine.connect() as conn:
+            conn.execute(text("""
+                INSERT INTO ai_agent_runs (agent_key, run_date, payload_md5, result_text)
+                VALUES (:k, :d, :m, :r)
+                ON CONFLICT (agent_key, run_date)
+                DO UPDATE SET result_text=EXCLUDED.result_text, payload_md5=EXCLUDED.payload_md5, created_at=NOW()
+            """), {"k": agent_key, "d": today, "m": md5, "r": result})
+            conn.commit()
+    except Exception:
+        pass
+    return result
+
+
+# ── PAYLOAD BUILDERS: читаємо агреговані метрики з БД ──
+def _agent_orders_payload() -> str:
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            cur = pd.read_sql(text("""
+                SELECT COUNT(DISTINCT amazon_order_id) AS orders_cnt,
+                       COALESCE(SUM(quantity),0)       AS units,
+                       COALESCE(SUM(item_price::numeric),0) AS revenue
+                FROM orders
+                WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND order_status NOT IN ('Canceled')
+            """), conn).iloc[0]
+            prev = pd.read_sql(text("""
+                SELECT COUNT(DISTINCT amazon_order_id) AS orders_cnt,
+                       COALESCE(SUM(quantity),0)       AS units,
+                       COALESCE(SUM(item_price::numeric),0) AS revenue
+                FROM orders
+                WHERE SUBSTRING(purchase_date,1,10)::date BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
+                  AND order_status NOT IN ('Canceled')
+            """), conn).iloc[0]
+            top = pd.read_sql(text("""
+                SELECT asin,
+                       COALESCE(SUM(item_price::numeric),0) AS rev,
+                       COALESCE(SUM(quantity),0)            AS units
+                FROM orders
+                WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND order_status NOT IN ('Canceled')
+                  AND asin IS NOT NULL
+                GROUP BY asin
+                ORDER BY rev DESC
+                LIMIT 8
+            """), conn)
+    except Exception as e:
+        return f"ERROR: {e}"
+
+    def _d(a, b):
+        return ((float(a) - float(b)) / float(b) * 100.0) if float(b) else 0.0
+
+    lines = [
+        f"Period: last 30d vs prev 30d",
+        f"Revenue: ${float(cur['revenue']):,.0f} (prev ${float(prev['revenue']):,.0f}, Δ {_d(cur['revenue'], prev['revenue']):+.1f}%)",
+        f"Orders: {int(cur['orders_cnt'])} (prev {int(prev['orders_cnt'])}, Δ {_d(cur['orders_cnt'], prev['orders_cnt']):+.1f}%)",
+        f"Units: {int(cur['units'])} (prev {int(prev['units'])}, Δ {_d(cur['units'], prev['units']):+.1f}%)",
+        "",
+        "TOP 8 ASIN (last 30d):",
+    ]
+    for _, r in top.iterrows():
+        lines.append(f"  - {r['asin']}: ${float(r['rev']):,.0f} · {int(r['units'])} units")
+    return "\n".join(lines)
+
+
+def _agent_traffic_payload() -> str:
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            cur = pd.read_sql(text("""
+                SELECT COALESCE(SUM(sessions::numeric),0)    AS sessions,
+                       COALESCE(SUM(page_views::numeric),0)   AS page_views,
+                       COALESCE(SUM(units_ordered::numeric),0) AS units
+                FROM spapi.sales_traffic
+                WHERE report_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND COALESCE(granularity,'CHILD') IN ('CHILD','SKU')
+            """), conn).iloc[0]
+            prev = pd.read_sql(text("""
+                SELECT COALESCE(SUM(sessions::numeric),0)    AS sessions,
+                       COALESCE(SUM(page_views::numeric),0)   AS page_views,
+                       COALESCE(SUM(units_ordered::numeric),0) AS units
+                FROM spapi.sales_traffic
+                WHERE report_date::date BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
+                  AND COALESCE(granularity,'CHILD') IN ('CHILD','SKU')
+            """), conn).iloc[0]
+            top = pd.read_sql(text("""
+                SELECT asin,
+                       SUM(sessions::numeric)       AS sessions,
+                       SUM(units_ordered::numeric)  AS units,
+                       CASE WHEN SUM(sessions::numeric) > 0
+                            THEN SUM(units_ordered::numeric)/SUM(sessions::numeric)*100
+                            ELSE 0 END AS cvr
+                FROM spapi.sales_traffic
+                WHERE report_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND COALESCE(granularity,'CHILD') IN ('CHILD','SKU')
+                  AND asin IS NOT NULL
+                GROUP BY asin
+                HAVING SUM(sessions::numeric) > 50
+                ORDER BY sessions DESC
+                LIMIT 8
+            """), conn)
+    except Exception as e:
+        return f"ERROR: {e}"
+
+    def _d(a, b):
+        return ((float(a) - float(b)) / float(b) * 100.0) if float(b) else 0.0
+
+    cvr_cur = (float(cur['units']) / float(cur['sessions']) * 100) if float(cur['sessions']) else 0
+    cvr_prev = (float(prev['units']) / float(prev['sessions']) * 100) if float(prev['sessions']) else 0
+
+    lines = [
+        f"Period: last 30d vs prev 30d",
+        f"Sessions: {int(cur['sessions']):,} (prev {int(prev['sessions']):,}, Δ {_d(cur['sessions'], prev['sessions']):+.1f}%)",
+        f"Page views: {int(cur['page_views']):,} (Δ {_d(cur['page_views'], prev['page_views']):+.1f}%)",
+        f"CVR: {cvr_cur:.2f}% (prev {cvr_prev:.2f}%, Δ {cvr_cur - cvr_prev:+.2f} pp)",
+        "",
+        "TOP 8 ASIN by sessions:",
+    ]
+    for _, r in top.iterrows():
+        lines.append(f"  - {r['asin']}: {int(r['sessions']):,} sess · CVR {float(r['cvr']):.2f}%")
+    return "\n".join(lines)
+
+
+def _agent_returns_payload() -> str:
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            cur_r = pd.read_sql(text("""
+                SELECT COUNT(*) AS n FROM fba_returns
+                WHERE return_date::date >= CURRENT_DATE - INTERVAL '30 days'
+            """), conn).iloc[0]['n']
+            prev_r = pd.read_sql(text("""
+                SELECT COUNT(*) AS n FROM fba_returns
+                WHERE return_date::date BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
+            """), conn).iloc[0]['n']
+            top = pd.read_sql(text("""
+                SELECT asin, COUNT(*) AS returns
+                FROM fba_returns
+                WHERE return_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND asin IS NOT NULL
+                GROUP BY asin
+                ORDER BY returns DESC
+                LIMIT 8
+            """), conn)
+            reasons = pd.read_sql(text("""
+                SELECT COALESCE(reason, detailed_disposition, 'unknown') AS reason, COUNT(*) AS n
+                FROM fba_returns
+                WHERE return_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY 1 ORDER BY n DESC LIMIT 6
+            """), conn)
+    except Exception as e:
+        return f"ERROR: {e}"
+
+    lines = [
+        f"Returns last 30d: {int(cur_r)} (prev 30d: {int(prev_r)})",
+        "",
+        "TOP 8 ASIN з поверненнями (30d):",
+    ]
+    for _, r in top.iterrows():
+        lines.append(f"  - {r['asin']}: {int(r['returns'])} returns")
+    lines.append("")
+    lines.append("TOP причини повернень:")
+    for _, r in reasons.iterrows():
+        lines.append(f"  - {r['reason']}: {int(r['n'])}")
+    return "\n".join(lines)
+
+
+def _agent_settlements_payload() -> str:
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            cols = pd.read_sql(text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name='settlements'
+            """), conn)['column_name'].tolist()
+            amt_cols = [c for c in cols if 'amount' in c.lower() or 'net' in c.lower() or 'fee' in c.lower()]
+            if not amt_cols:
+                return "ERROR: settlements не має amount/fee колонок"
+            main_col = next((c for c in amt_cols if c.lower() in ('amount', 'net_amount', 'total')), amt_cols[0])
+            cur = pd.read_sql(text(f"""
+                SELECT COUNT(*) AS n, COALESCE(SUM("{main_col}"::numeric),0) AS total
+                FROM settlements
+                WHERE posted_date::date >= CURRENT_DATE - INTERVAL '30 days'
+            """), conn).iloc[0]
+            prev = pd.read_sql(text(f"""
+                SELECT COUNT(*) AS n, COALESCE(SUM("{main_col}"::numeric),0) AS total
+                FROM settlements
+                WHERE posted_date::date BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
+            """), conn).iloc[0]
+
+            type_col = next((c for c in cols if c.lower() in ('amount_type', 'transaction_type')), None)
+            types_txt = ""
+            if type_col:
+                types = pd.read_sql(text(f"""
+                    SELECT "{type_col}" AS t, COALESCE(SUM("{main_col}"::numeric),0) AS total
+                    FROM settlements
+                    WHERE posted_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                      AND "{type_col}" IS NOT NULL
+                    GROUP BY 1 ORDER BY total DESC LIMIT 8
+                """), conn)
+                types_txt = "\n".join([f"  - {r['t']}: ${float(r['total']):,.0f}" for _, r in types.iterrows()])
+    except Exception as e:
+        return f"ERROR: {e}"
+
+    def _d(a, b):
+        return ((float(a) - float(b)) / float(b) * 100.0) if float(b) else 0.0
+
+    lines = [
+        f"Settlements last 30d: ${float(cur['total']):,.0f} ({int(cur['n'])} tx)",
+        f"Settlements prev 30d: ${float(prev['total']):,.0f} ({int(prev['n'])} tx)",
+        f"Δ: {_d(cur['total'], prev['total']):+.1f}%",
+    ]
+    if types_txt:
+        lines.append("")
+        lines.append("TOP 8 типів транзакцій:")
+        lines.append(types_txt)
+    return "\n".join(lines)
+
+
+def _agent_reviews_payload() -> str:
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            cur = pd.read_sql(text("""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE rating <= 2) AS negative,
+                       AVG(rating::numeric)               AS avg_rating
+                FROM amazon_reviews
+                WHERE review_date::date >= CURRENT_DATE - INTERVAL '30 days'
+            """), conn).iloc[0]
+            top_neg = pd.read_sql(text("""
+                SELECT asin, COUNT(*) AS n, AVG(rating::numeric) AS avg_r
+                FROM amazon_reviews
+                WHERE review_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND rating <= 2
+                GROUP BY asin
+                ORDER BY n DESC
+                LIMIT 6
+            """), conn)
+            samples = pd.read_sql(text("""
+                SELECT asin, rating, COALESCE(title,'') AS title, COALESCE(body,'') AS body
+                FROM amazon_reviews
+                WHERE review_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND rating <= 2
+                ORDER BY review_date DESC
+                LIMIT 10
+            """), conn)
+    except Exception as e:
+        return f"ERROR: {e}"
+
+    lines = [
+        f"Reviews last 30d: {int(cur['total'])} total, {int(cur['negative'])} negative (≤2★), avg {float(cur['avg_rating'] or 0):.2f}★",
+        "",
+        "TOP ASIN з негативом:",
+    ]
+    for _, r in top_neg.iterrows():
+        lines.append(f"  - {r['asin']}: {int(r['n'])} neg · avg {float(r['avg_r']):.2f}★")
+    lines.append("")
+    lines.append("Приклади негативних відгуків:")
+    for _, r in samples.iterrows():
+        snippet = (r['title'] or r['body'] or '')[:160].replace("\n", " ")
+        lines.append(f"  - {r['asin']} ({int(r['rating'])}★): {snippet}")
+    return "\n".join(lines)
+
+
+# ── AGENT RUNNERS ──
+_AGENT_PROMPT_TMPL = """Ти — senior бізнес-аналітик Amazon FBA. Область: {area}.
+
+МЕТРИКИ:
+{data}
+
+Дай стислий аналіз у ТОЧНОМУ форматі (не додавай інших секцій):
+🔥 ТРЕНД: [1-2 речення про загальну картину і динаміку]
+⚠️ КРИТИЧНІ ПРОБЛЕМИ: [1-3 найгірших факти з цифрами; якщо нічого критичного — напиши "немає"]
+📦 ДЕТАЛІ: [топ ASIN / типи / причини — нумерований список, до 5 пунктів]
+✅ ПОЗИТИВ: [1-2 речення що йде добре; якщо нічого — "—"]
+🎯 ДІЇ: [3 конкретні кроки що зробити; нумерований список]
+
+Пиши по суті, без води. Мова: українська. Без markdown жирного тексту."""
+
+
+def agent_orders(force=False):
+    return run_agent("orders", _AGENT_PROMPT_TMPL.format(area="Продажі (Orders)", data=_agent_orders_payload()), force)
+
+def agent_traffic(force=False):
+    return run_agent("traffic", _AGENT_PROMPT_TMPL.format(area="Трафік (Sessions/CVR)", data=_agent_traffic_payload()), force)
+
+def agent_returns(force=False):
+    return run_agent("returns", _AGENT_PROMPT_TMPL.format(area="Повернення (Returns)", data=_agent_returns_payload()), force)
+
+def agent_settlements(force=False):
+    return run_agent("settlements", _AGENT_PROMPT_TMPL.format(area="Фінанси (Settlements)", data=_agent_settlements_payload()), force)
+
+def agent_reviews_meta(force=False):
+    return run_agent("reviews", _AGENT_PROMPT_TMPL.format(area="Відгуки (Reviews)", data=_agent_reviews_payload()), force)
+
+
+def agent_meta(sub_results: dict, force=False) -> str:
+    """Головний агент: агрегує висновки 5 підагентів і ранжує пріоритети."""
+    blocks = []
+    for k, v in sub_results.items():
+        blocks.append(f"=== {k.upper()} ===\n{v}\n")
+    combined = "\n".join(blocks)
+    prompt = f"""Ти — CEO radar Amazon FBA бізнесу. Нижче — висновки 5 спеціалізованих агентів.
+
+{combined}
+
+Синтезуй усе в BOARD-LEVEL звіт у ТОЧНОМУ форматі:
+🎯 ВЕРДИКТ: [1 речення — загальний стан бізнесу зараз: 🔴 critical / 🟡 watch / 🟢 ok + коротке обґрунтування]
+🚨 ТОП-3 ПРІОРИТЕТИ: [3 найкритичніші проблеми прямо зараз — нумерований список з цифрами і ASIN]
+💡 ТОП-3 МОЖЛИВОСТІ: [3 точки росту / де виграємо — нумерований список]
+🔁 ЩО МОНІТОРИТИ ЗАВТРА: [2-3 конкретні метрики/ASIN на контролі]
+
+Пиши коротко, по суті. Мова: українська. Без markdown жирного тексту."""
+    return run_agent("meta", prompt, force)
+
+
+# ── RENDERER ──
+_AGENT_CARDS_CFG = [
+    # (section_marker, icon, title, color, bg_gradient)
+    ("ТРЕНД",             "🔥", "Тренд",              "#f59e0b", "linear-gradient(135deg,#1f1a0b,#2b1d0d)"),
+    ("КРИТИЧНІ ПРОБЛЕМИ", "⚠️", "Критичні проблеми",  "#ef4444", "linear-gradient(135deg,#1f0f0f,#2b1a1a)"),
+    ("ДЕТАЛІ",            "📦", "Деталі",             "#a855f7", "linear-gradient(135deg,#180f1f,#261b2b)"),
+    ("ПОЗИТИВ",           "✅", "Що йде добре",       "#22c55e", "linear-gradient(135deg,#0a1f14,#112b1e)"),
+    ("ДІЇ",               "🎯", "План дій",           "#3b82f6", "linear-gradient(135deg,#0b1425,#152036)"),
+]
+
+_META_CARDS_CFG = [
+    ("ВЕРДИКТ",               "🎯", "Вердикт",           "#eab308", "linear-gradient(135deg,#1a1708,#2a2310)"),
+    ("ТОП-3 ПРІОРИТЕТИ",      "🚨", "Топ-3 пріоритети",  "#ef4444", "linear-gradient(135deg,#1f0f0f,#2b1a1a)"),
+    ("ТОП-3 МОЖЛИВОСТІ",      "💡", "Топ-3 можливості",  "#22c55e", "linear-gradient(135deg,#0a1f14,#112b1e)"),
+    ("ЩО МОНІТОРИТИ ЗАВТРА",  "🔁", "Моніторити завтра", "#3b82f6", "linear-gradient(135deg,#0b1425,#152036)"),
+]
+
+
+def _parse_ai_sections(raw: str, cfg):
+    import re as _re_ai
+    clean = (raw or "").replace("**", "")
+    markers = []
+    for key, *_ in cfg:
+        m = _re_ai.search(rf"[🔥⚠️📦✅🎯🚨💡🔁]?\s*{_re_ai.escape(key)}:?", clean)
+        if m:
+            markers.append((m.start(), key))
+    markers.sort(key=lambda x: x[0])
+    parsed = {}
+    for i, (pos, key) in enumerate(markers):
+        end = markers[i + 1][0] if i + 1 < len(markers) else len(clean)
+        colon = clean.find(":", pos)
+        content = clean[colon + 1:end].strip() if colon > -1 else clean[pos:end].strip()
+        parsed[key] = content
+    return parsed
+
+
+def _render_ai_cards(raw: str, cfg, columns: int = 2):
+    import re as _re_ai
+    parsed = _parse_ai_sections(raw, cfg)
+    if not parsed:
+        st.markdown(raw or "_(порожньо)_")
+        return
+    cols = st.columns(columns)
+    for idx, tpl in enumerate(cfg):
+        key, ico, title, clr, bg = tpl
+        if key not in parsed:
+            continue
+        content = parsed[key]
+        lines = [l.strip() for l in content.split("\n") if l.strip()]
+        html_lines = []
+        for line in lines:
+            num_m = _re_ai.match(r"^(\d+)[\.\)]\s*(.+)$", line)
+            bul_m = _re_ai.match(r"^[•●◆▪*\-–]\s*(.+)$", line)
+            if num_m:
+                n, txt = num_m.group(1), num_m.group(2)
+                html_lines.append(
+                    f'<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'
+                    f'<div style="background:{clr}22;color:{clr};border:1px solid {clr};'
+                    f'border-radius:4px;padding:0 6px;font-size:0.7rem;font-weight:800;min-width:20px;text-align:center">{n}</div>'
+                    f'<div style="flex:1;font-size:0.88rem;color:#e2e8f0;line-height:1.55">{txt}</div>'
+                    f'</div>'
+                )
+            elif bul_m:
+                html_lines.append(
+                    f'<div style="display:flex;gap:10px;margin-bottom:6px;align-items:flex-start">'
+                    f'<div style="color:{clr};font-weight:800">▸</div>'
+                    f'<div style="flex:1;font-size:0.88rem;color:#e2e8f0;line-height:1.55">{bul_m.group(1)}</div>'
+                    f'</div>'
+                )
+            else:
+                html_lines.append(
+                    f'<div style="font-size:0.88rem;color:#e2e8f0;line-height:1.6;margin-bottom:4px">{line}</div>'
+                )
+        body = "".join(html_lines) or f'<div style="color:#94a3b8;font-size:0.85rem">—</div>'
+        card_html = (
+            f'<div style="background:{bg};border:1px solid {clr}55;border-radius:12px;padding:16px 20px;margin-bottom:14px">'
+            f'  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'
+            f'    <div style="font-size:1.2rem">{ico}</div>'
+            f'    <div style="font-size:0.72rem;color:{clr};letter-spacing:0.12em;font-weight:800;text-transform:uppercase">{title}</div>'
+            f'  </div>'
+            f'  {body}'
+            f'</div>'
+        )
+        with cols[idx % columns]:
+            st.markdown(card_html, unsafe_allow_html=True)
+
+
+def show_ai_dashboard():
+    st.markdown("## 🧠 AI Дашборд")
+    st.caption("Щоденний огляд: 5 спеціалізованих агентів + головний синтез. Кеш оновлюється раз на день.")
+
+    if not _gemini_key():
+        st.error("⚠️ GEMINI_API_KEY не задано в Streamlit Secrets")
+        return
+
+    c1, c2, c3 = st.columns([1, 1, 4])
+    with c1:
+        force = st.button("🔄 Перерахувати сьогодні", key="ai_dash_refresh")
+    with c2:
+        only_meta = st.checkbox("Тільки синтез", value=False, key="ai_dash_only_meta",
+                                help="Використати вчорашні висновки агентів замість перерахунку")
+
+    agents_cfg = [
+        ("orders",      "🛒 Продажі (Orders)",        agent_orders),
+        ("traffic",     "📈 Трафік (Sessions/CVR)",   agent_traffic),
+        ("returns",     "🔙 Повернення",               agent_returns),
+        ("settlements", "💰 Фінанси",                  agent_settlements),
+        ("reviews",     "⭐ Відгуки",                   agent_reviews_meta),
+    ]
+
+    sub_results = {}
+    progress = st.progress(0.0, text="Запускаю агентів...")
+    for i, (key, label, fn) in enumerate(agents_cfg):
+        progress.progress((i) / (len(agents_cfg) + 1), text=f"Агент: {label}")
+        try:
+            sub_results[key] = fn(force=force and not only_meta)
+        except Exception as e:
+            sub_results[key] = f"❌ {e}"
+    progress.progress(1.0, text="Синтез...")
+    meta = agent_meta(sub_results, force=force)
+    progress.empty()
+
+    # ── META CARD (головний звіт) ──
+    st.markdown("### 🧭 Головний синтез")
+    _render_ai_cards(meta, _META_CARDS_CFG, columns=2)
+
+    st.markdown("---")
+    st.markdown("### 🤖 Детальні висновки агентів")
+
+    # ── SUB-AGENT TABS ──
+    tab_labels = [lbl for _, lbl, _ in agents_cfg]
+    tabs = st.tabs(tab_labels)
+    for tab, (key, label, _) in zip(tabs, agents_cfg):
+        with tab:
+            raw = sub_results.get(key, "")
+            if raw.startswith(("⚠️", "❌", "ERROR")):
+                st.error(raw)
+                continue
+            _render_ai_cards(raw, _AGENT_CARDS_CFG, columns=2)
+            with st.expander("📄 Сирий текст + payload"):
+                st.text(raw)
+
+
 def show_scraper_manager():
     _scr_init()
     _scr_flush()
@@ -9758,6 +10287,7 @@ NAV_I18N = {
     "⭐ Amazon Reviews":               {"UA": "⭐ Відгуки",             "EN": "⭐ Reviews",          "RU": "⭐ Отзывы"},
     "📊 Brand Analytics":              {"UA": "📊 Brand Analytics",    "EN": "📊 Brand Analytics",  "RU": "📊 Brand Analytics"},
     "── AI Агенти ──":                 {"UA": "── AI Агенти ──",       "EN": "── AI Agents ──",     "RU": "── AI Агенты ──"},
+    "🧠 AI Дашборд":                   {"UA": "🧠 AI Дашборд",          "EN": "🧠 AI Dashboard",     "RU": "🧠 AI Дашборд"},
     "📦 Restock Agent":                {"UA": "📦 Restock Agent",      "EN": "📦 Restock Agent",    "RU": "📦 Restock Agent"},
     "📈 Прогноз (Forecast)":           {"UA": "📈 Прогноз",            "EN": "📈 Forecast",         "RU": "📈 Прогноз"},
     "📊 ETL Status":                   {"UA": "📊 Статус ETL",         "EN": "📊 ETL Status",       "RU": "📊 Статус ETL"},
@@ -9783,6 +10313,7 @@ main_nav = [
     "⭐ Amazon Reviews",
     "📊 Brand Analytics",
     "── AI Агенти ──",
+    "🧠 AI Дашборд",
     "📦 Restock Agent",
     "📈 Прогноз (Forecast)",
 ]
@@ -9846,6 +10377,7 @@ elif report_choice == "📝 Листинги (Listings)":      show_listings()
 elif report_choice == "💲 Pricing / BuyBox":         show_pricing()
 elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "📋 Податки (Tax)":            show_tax(t)
+elif report_choice == "🧠 AI Дашборд":               show_ai_dashboard()
 elif report_choice == "📦 Restock Agent":            show_restock_agent(t)
 elif report_choice == "📈 Прогноз (Forecast)":       show_forecast(t)
 elif report_choice == "📊 Brand Analytics":          show_sqp(t)
@@ -9858,6 +10390,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
