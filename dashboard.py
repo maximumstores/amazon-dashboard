@@ -9118,30 +9118,40 @@ def run_agent(agent_key: str, prompt: str, force_refresh: bool = False) -> str:
 # ── PAYLOAD BUILDERS: читаємо агреговані метрики з БД ──
 def _agent_orders_payload() -> str:
     engine = get_engine()
+    # Числові колонки — TEXT → regex guard для безпечного касту
+    price_expr = "CASE WHEN item_price ~ '^[0-9.]+$' THEN item_price::numeric ELSE 0 END"
+    qty_expr   = "CASE WHEN quantity::text ~ '^[0-9]+$' THEN quantity::numeric ELSE 0 END"
+    date_expr  = "SUBSTRING(purchase_date,1,10)::date"
     try:
         with engine.connect() as conn:
-            cur = pd.read_sql(text("""
+            cur = pd.read_sql(text(f"""
                 SELECT COUNT(DISTINCT amazon_order_id) AS orders_cnt,
-                       COALESCE(SUM(quantity),0)       AS units,
-                       COALESCE(SUM(item_price::numeric),0) AS revenue
+                       COALESCE(SUM({qty_expr}),0)     AS units,
+                       COALESCE(SUM({price_expr}),0)   AS revenue
                 FROM orders
-                WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE purchase_date IS NOT NULL
+                  AND purchase_date <> ''
+                  AND {date_expr} >= CURRENT_DATE - INTERVAL '30 days'
                   AND order_status NOT IN ('Canceled')
             """), conn).iloc[0]
-            prev = pd.read_sql(text("""
+            prev = pd.read_sql(text(f"""
                 SELECT COUNT(DISTINCT amazon_order_id) AS orders_cnt,
-                       COALESCE(SUM(quantity),0)       AS units,
-                       COALESCE(SUM(item_price::numeric),0) AS revenue
+                       COALESCE(SUM({qty_expr}),0)     AS units,
+                       COALESCE(SUM({price_expr}),0)   AS revenue
                 FROM orders
-                WHERE SUBSTRING(purchase_date,1,10)::date BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
+                WHERE purchase_date IS NOT NULL
+                  AND purchase_date <> ''
+                  AND {date_expr} BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
                   AND order_status NOT IN ('Canceled')
             """), conn).iloc[0]
-            top = pd.read_sql(text("""
+            top = pd.read_sql(text(f"""
                 SELECT asin,
-                       COALESCE(SUM(item_price::numeric),0) AS rev,
-                       COALESCE(SUM(quantity),0)            AS units
+                       COALESCE(SUM({price_expr}),0) AS rev,
+                       COALESCE(SUM({qty_expr}),0)   AS units
                 FROM orders
-                WHERE SUBSTRING(purchase_date,1,10)::date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE purchase_date IS NOT NULL
+                  AND purchase_date <> ''
+                  AND {date_expr} >= CURRENT_DATE - INTERVAL '30 days'
                   AND order_status NOT IN ('Canceled')
                   AND asin IS NOT NULL
                 GROUP BY asin
@@ -9171,35 +9181,38 @@ def _agent_traffic_payload() -> str:
     engine = get_engine()
     try:
         with engine.connect() as conn:
-            cur = pd.read_sql(text("""
-                SELECT COALESCE(SUM(sessions::numeric),0)    AS sessions,
-                       COALESCE(SUM(page_views::numeric),0)   AS page_views,
-                       COALESCE(SUM(units_ordered::numeric),0) AS units
+            # report_date може бути TEXT/DATE з порожніми рядками;
+            # числові колонки TEXT → CAST AS FLOAT; ASIN = child_asin
+            _rd  = "CASE WHEN report_date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN report_date::text::date END"
+            _ses = "COALESCE(NULLIF(sessions,'')::float, 0)"
+            _pv  = "COALESCE(NULLIF(page_views,'')::float, 0)"
+            _uo  = "COALESCE(NULLIF(units_ordered,'')::float, 0)"
+            cur = pd.read_sql(text(f"""
+                SELECT COALESCE(SUM({_ses}),0)    AS sessions,
+                       COALESCE(SUM({_pv}),0)     AS page_views,
+                       COALESCE(SUM({_uo}),0)     AS units
                 FROM spapi.sales_traffic
-                WHERE report_date::date >= CURRENT_DATE - INTERVAL '30 days'
-                  AND COALESCE(granularity,'CHILD') IN ('CHILD','SKU')
+                WHERE {_rd} >= CURRENT_DATE - INTERVAL '30 days'
             """), conn).iloc[0]
-            prev = pd.read_sql(text("""
-                SELECT COALESCE(SUM(sessions::numeric),0)    AS sessions,
-                       COALESCE(SUM(page_views::numeric),0)   AS page_views,
-                       COALESCE(SUM(units_ordered::numeric),0) AS units
+            prev = pd.read_sql(text(f"""
+                SELECT COALESCE(SUM({_ses}),0)    AS sessions,
+                       COALESCE(SUM({_pv}),0)     AS page_views,
+                       COALESCE(SUM({_uo}),0)     AS units
                 FROM spapi.sales_traffic
-                WHERE report_date::date BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
-                  AND COALESCE(granularity,'CHILD') IN ('CHILD','SKU')
+                WHERE {_rd} BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
             """), conn).iloc[0]
-            top = pd.read_sql(text("""
-                SELECT asin,
-                       SUM(sessions::numeric)       AS sessions,
-                       SUM(units_ordered::numeric)  AS units,
-                       CASE WHEN SUM(sessions::numeric) > 0
-                            THEN SUM(units_ordered::numeric)/SUM(sessions::numeric)*100
+            top = pd.read_sql(text(f"""
+                SELECT child_asin AS asin,
+                       SUM({_ses})   AS sessions,
+                       SUM({_uo})    AS units,
+                       CASE WHEN SUM({_ses}) > 0
+                            THEN SUM({_uo})/SUM({_ses})*100
                             ELSE 0 END AS cvr
                 FROM spapi.sales_traffic
-                WHERE report_date::date >= CURRENT_DATE - INTERVAL '30 days'
-                  AND COALESCE(granularity,'CHILD') IN ('CHILD','SKU')
-                  AND asin IS NOT NULL
-                GROUP BY asin
-                HAVING SUM(sessions::numeric) > 50
+                WHERE {_rd} >= CURRENT_DATE - INTERVAL '30 days'
+                  AND child_asin IS NOT NULL AND child_asin <> ''
+                GROUP BY child_asin
+                HAVING SUM({_ses}) > 50
                 ORDER BY sessions DESC
                 LIMIT 8
             """), conn)
@@ -9229,27 +9242,38 @@ def _agent_returns_payload() -> str:
     engine = get_engine()
     try:
         with engine.connect() as conn:
-            cur_r = pd.read_sql(text("""
+            _rd = "CASE WHEN return_date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN return_date::text::date END"
+            cur_r = pd.read_sql(text(f"""
                 SELECT COUNT(*) AS n FROM fba_returns
-                WHERE return_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE {_rd} >= CURRENT_DATE - INTERVAL '30 days'
             """), conn).iloc[0]['n']
-            prev_r = pd.read_sql(text("""
+            prev_r = pd.read_sql(text(f"""
                 SELECT COUNT(*) AS n FROM fba_returns
-                WHERE return_date::date BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
+                WHERE {_rd} BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
             """), conn).iloc[0]['n']
-            top = pd.read_sql(text("""
+            top = pd.read_sql(text(f"""
                 SELECT asin, COUNT(*) AS returns
                 FROM fba_returns
-                WHERE return_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE {_rd} >= CURRENT_DATE - INTERVAL '30 days'
                   AND asin IS NOT NULL
                 GROUP BY asin
                 ORDER BY returns DESC
                 LIMIT 8
             """), conn)
-            reasons = pd.read_sql(text("""
-                SELECT COALESCE(reason, detailed_disposition, 'unknown') AS reason, COUNT(*) AS n
+            # reason може існувати або ні — дивимось колонки
+            _rcols = pd.read_sql(text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name='fba_returns'
+            """), conn)['column_name'].tolist()
+            _reason_parts = []
+            for _c in ('reason', 'detailed_disposition'):
+                if _c in _rcols:
+                    _reason_parts.append(f'"{_c}"')
+            _reason_expr = f"COALESCE({', '.join(_reason_parts)}, 'unknown')" if _reason_parts else "'unknown'"
+            reasons = pd.read_sql(text(f"""
+                SELECT {_reason_expr} AS reason, COUNT(*) AS n
                 FROM fba_returns
-                WHERE return_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE {_rd} >= CURRENT_DATE - INTERVAL '30 days'
                 GROUP BY 1 ORDER BY n DESC LIMIT 6
             """), conn)
     except Exception as e:
@@ -9281,24 +9305,28 @@ def _agent_settlements_payload() -> str:
             if not amt_cols:
                 return "ERROR: settlements не має amount/fee колонок"
             main_col = next((c for c in amt_cols if c.lower() in ('amount', 'net_amount', 'total')), amt_cols[0])
+            # posted_date може бути з сміттям → regex guard (приймаємо лише YYYY-MM-DD...)
+            _pd = "CASE WHEN posted_date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN posted_date::text::date END"
+            # amount теж може бути TEXT з порожніми/неспоможними значеннями
+            _amt = f"CASE WHEN \"{main_col}\"::text ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN \"{main_col}\"::numeric ELSE 0 END"
             cur = pd.read_sql(text(f"""
-                SELECT COUNT(*) AS n, COALESCE(SUM("{main_col}"::numeric),0) AS total
+                SELECT COUNT(*) AS n, COALESCE(SUM({_amt}),0) AS total
                 FROM settlements
-                WHERE posted_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE {_pd} >= CURRENT_DATE - INTERVAL '30 days'
             """), conn).iloc[0]
             prev = pd.read_sql(text(f"""
-                SELECT COUNT(*) AS n, COALESCE(SUM("{main_col}"::numeric),0) AS total
+                SELECT COUNT(*) AS n, COALESCE(SUM({_amt}),0) AS total
                 FROM settlements
-                WHERE posted_date::date BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
+                WHERE {_pd} BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
             """), conn).iloc[0]
 
             type_col = next((c for c in cols if c.lower() in ('amount_type', 'transaction_type')), None)
             types_txt = ""
             if type_col:
                 types = pd.read_sql(text(f"""
-                    SELECT "{type_col}" AS t, COALESCE(SUM("{main_col}"::numeric),0) AS total
+                    SELECT "{type_col}" AS t, COALESCE(SUM({_amt}),0) AS total
                     FROM settlements
-                    WHERE posted_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                    WHERE {_pd} >= CURRENT_DATE - INTERVAL '30 days'
                       AND "{type_col}" IS NOT NULL
                     GROUP BY 1 ORDER BY total DESC LIMIT 8
                 """), conn)
@@ -9323,30 +9351,34 @@ def _agent_settlements_payload() -> str:
 
 def _agent_reviews_payload() -> str:
     engine = get_engine()
+    # review_date це TEXT з можливими порожніми значеннями → через created_at
+    date_expr = "COALESCE(NULLIF(review_date,'')::date, created_at::date)"
     try:
         with engine.connect() as conn:
-            cur = pd.read_sql(text("""
+            cur = pd.read_sql(text(f"""
                 SELECT COUNT(*) AS total,
-                       COUNT(*) FILTER (WHERE rating <= 2) AS negative,
+                       COUNT(*) FILTER (WHERE rating::numeric <= 2) AS negative,
                        AVG(rating::numeric)               AS avg_rating
                 FROM amazon_reviews
-                WHERE review_date::date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE {date_expr} >= CURRENT_DATE - INTERVAL '30 days'
+                  AND rating IS NOT NULL
             """), conn).iloc[0]
-            top_neg = pd.read_sql(text("""
+            top_neg = pd.read_sql(text(f"""
                 SELECT asin, COUNT(*) AS n, AVG(rating::numeric) AS avg_r
                 FROM amazon_reviews
-                WHERE review_date::date >= CURRENT_DATE - INTERVAL '30 days'
-                  AND rating <= 2
+                WHERE {date_expr} >= CURRENT_DATE - INTERVAL '30 days'
+                  AND rating::numeric <= 2
+                  AND asin IS NOT NULL
                 GROUP BY asin
                 ORDER BY n DESC
                 LIMIT 6
             """), conn)
-            samples = pd.read_sql(text("""
+            samples = pd.read_sql(text(f"""
                 SELECT asin, rating, COALESCE(title,'') AS title, COALESCE(body,'') AS body
                 FROM amazon_reviews
-                WHERE review_date::date >= CURRENT_DATE - INTERVAL '30 days'
-                  AND rating <= 2
-                ORDER BY review_date DESC
+                WHERE {date_expr} >= CURRENT_DATE - INTERVAL '30 days'
+                  AND rating::numeric <= 2
+                ORDER BY {date_expr} DESC NULLS LAST
                 LIMIT 10
             """), conn)
     except Exception as e:
