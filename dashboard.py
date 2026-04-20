@@ -5800,28 +5800,9 @@ def show_orders(t=None):
         period_labels = [pd.Timestamp(p).strftime(date_fmt) for p in all_periods]
         period_map = dict(zip(period_labels, all_periods))
 
-        # ── Inline preset (як у sidebar) + конкретний день/тиждень/місяць ──
-        _pc1, _pc2, _pc3 = st.columns([2, 2, 2])
-        with _pc1:
-            _inline_preset_keys = list(PERIOD_PRESETS.keys())
-            _inline_preset_labels = [PERIOD_PRESETS[k]["label"] for k in _inline_preset_keys]
-            # Підхоплюємо поточний вибір з sidebar для початкового стану
-            _sidebar_preset = st.session_state.get("ord_v2_preset", "📅 Last 30 days, by day")
-            try:
-                _inline_default_idx = _inline_preset_labels.index(_sidebar_preset)
-            except ValueError:
-                _inline_default_idx = 1
-            _inline_preset = st.selectbox(
-                "📅 Період",
-                _inline_preset_labels,
-                index=_inline_default_idx,
-                key="ord_v2_preset_inline",
-                help="Той самий вибір що в sidebar — продубльовано тут для зручності",
-            )
-            # Якщо змінили inline → синхронізуємо sidebar key (на наступний rerun)
-            if _inline_preset != _sidebar_preset:
-                st.session_state["ord_v2_preset"] = _inline_preset
-                st.rerun()
+        # Період вибирається в sidebar (inline-версія видалена — Streamlit не дозволяє
+        # синхронізувати session_state між двома widget keys)
+        _pc2, _pc3 = st.columns([3, 3])
         with _pc2:
             sel_period_drill = st.selectbox(
                 f"📅 Оберіть {detail_gran.lower()}:",
