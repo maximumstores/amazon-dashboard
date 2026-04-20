@@ -9374,7 +9374,7 @@ def _agent_reviews_payload() -> str:
                 LIMIT 6
             """), conn)
             samples = pd.read_sql(text(f"""
-                SELECT asin, rating, COALESCE(title,'') AS title, COALESCE(body,'') AS body
+                SELECT asin, rating, COALESCE(title,'') AS title, COALESCE(content,'') AS body
                 FROM amazon_reviews
                 WHERE {date_expr} >= CURRENT_DATE - INTERVAL '30 days'
                   AND rating::numeric <= 2
@@ -10422,6 +10422,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
