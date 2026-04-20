@@ -5022,18 +5022,13 @@ def show_orders(t=None):
         min_date = dt.date(2024, 1, 1)
         max_date = dt.date.today()
 
-    date_range = st.sidebar.date_input(
-        "📅 Період:",
-        value=(max(min_date, max_date - dt.timedelta(days=30)), max_date),
-        min_value=min_date, max_value=max_date, key="ord_v2_date"
+    # Sellerboard-style: один dropdown з пресетами (Last 30 days, 3 months, 12 months...)
+    d1, d2, gran_key, gran = period_selector(
+        "ord_v2", min_date=min_date, max_date=max_date, default="last_30_days"
     )
-    if len(date_range) != 2:
-        st.warning("Оберіть діапазон дат"); return
-    d1, d2 = str(date_range[0]), str(date_range[1])
 
     search_asin = st.sidebar.text_input("🔍 ASIN", "", key="ord_v2_asin")
     search_sku  = st.sidebar.text_input("🔍 SKU", "", key="ord_v2_sku")
-    gran = st.sidebar.selectbox("📊 Гранулярність:", ["День", "Тиждень"], key="ord_v2_gran")
 
     st.markdown("### 🛒 Продажі (Orders)")
 
@@ -5280,8 +5275,9 @@ def show_orders(t=None):
     daily['impressions'] = daily['impressions'].fillna(0)
     daily['cvr'] = (daily['units'] / daily['sessions'].replace(0, float('nan')) * 100).fillna(0).round(2)
 
-    if gran == "Тиждень":
-        daily = daily.set_index('date').resample('W').agg({
+    if gran in ("Тиждень", "Місяць"):
+        _resample_rule = "W" if gran == "Тиждень" else "MS"
+        daily = daily.set_index('date').resample(_resample_rule).agg({
             'units': 'sum', 'revenue': 'sum', 'orders_cnt': 'sum',
             'impressions': 'sum', 'sessions': 'sum'
         }).reset_index()
@@ -5610,20 +5606,59 @@ def show_orders(t=None):
         df_work['parent_asin'] != '', df_work['asin']
     )
 
-    # ── Агрегація по (period, parent) ──
-    # ВАЖЛИВО: sessions/impressions в S&T report перекриваються між child-ами
-    # (один покупець дивиться 5 розмірів = 5 child отримують session)
-    # Для parent-level беремо MAX (≈ реальні sessions parent-а), не SUM
-    parent_agg = df_work.groupby(['period', 'parent_key']).agg(
+    # ── Агрегація orders (units/revenue/orders) по (period, parent) ──
+    parent_agg_ord = df_work.groupby(['period', 'parent_key']).agg(
         units=('units', 'sum'),
         revenue=('revenue', 'sum'),
         orders_cnt=('orders_cnt', 'sum'),
-        impressions=('impressions', 'max'),   # MAX! не SUM
-        sessions=('sessions', 'max'),         # MAX! не SUM
         offer=('offer', lambda x: ' '.join(sorted(set(v for v in x if v)))),
         child_count=('asin', 'nunique'),
     ).reset_index()
+
+    # ── Traffic: беремо НЕЗАЛЕЖНО від orders.
+    # Це критично — child ASIN може мати traffic БЕЗ orders (dead SKU, OOS тощо),
+    # але цей traffic все одно має зараховуватись parent-у.
+    # Логіка: per day → MAX по children (бо сесії перекриваються: 1 покупець = N children);
+    #         per period → SUM по днях (різні дні = різні сесії)
+    if not df_traffic.empty:
+        _tr = df_traffic.copy()
+        # fallback для parent_asin: якщо пусто → беремо сам child
+        _tr['parent_key'] = _tr['parent_asin'].where(
+            _tr['parent_asin'].fillna('') != '', _tr['asin']
+        )
+        # Крок 1: per-day MAX по children (в межах одного дня)
+        _tr_daily = _tr.groupby(['date', 'parent_key']).agg(
+            sessions=('sessions', 'max'),
+            impressions=('impressions', 'max'),
+        ).reset_index()
+        _tr_daily['date'] = pd.to_datetime(_tr_daily['date'])
+        # Крок 2: приводимо до period-gran (day/week/month)
+        if gran == "Тиждень":
+            _tr_daily['period'] = _tr_daily['date'].dt.to_period('W').apply(lambda p: p.start_time)
+        elif gran == "Місяць":
+            _tr_daily['period'] = _tr_daily['date'].dt.to_period('M').apply(lambda p: p.start_time)
+        else:
+            _tr_daily['period'] = _tr_daily['date']
+        # Крок 3: SUM по днях в межах period
+        parent_traffic = _tr_daily.groupby(['period', 'parent_key']).agg(
+            sessions=('sessions', 'sum'),
+            impressions=('impressions', 'sum'),
+        ).reset_index()
+    else:
+        parent_traffic = pd.DataFrame(columns=['period','parent_key','sessions','impressions'])
+
+    # OUTER merge: щоб parent-и що мають тільки traffic (без orders) теж показувались,
+    # і parent-и з orders (без traffic) — теж показувались
+    parent_agg = parent_agg_ord.merge(parent_traffic, on=['period','parent_key'], how='outer')
+    # Заповнюємо NaN
+    for _c, _d in [('units',0),('revenue',0),('orders_cnt',0),('sessions',0),('impressions',0),('child_count',0)]:
+        if _c in parent_agg.columns:
+            parent_agg[_c] = parent_agg[_c].fillna(_d)
+    parent_agg['offer'] = parent_agg.get('offer', '').fillna('')
+
     parent_agg['cvr'] = (parent_agg['units'] / parent_agg['sessions'].replace(0, float('nan')) * 100).fillna(0).round(2)
+    # CVR cap — нереалістичні значення понад 100% (не повинні, але захист від даних-дрифтів)
+    parent_agg.loc[parent_agg['cvr'] > 100, 'cvr'] = 100
     parent_agg = parent_agg.sort_values(['period', 'revenue'], ascending=[False, False])
 
     # ── Search фільтр ──
@@ -6085,8 +6120,9 @@ function toggleParent_{idx}(row) {{
         daily_comp['aov']            = (daily_comp['revenue'] / daily_comp['orders']).round(2)
         daily_comp['units_per_order'] = (daily_comp['units']   / daily_comp['orders']).round(3)
 
-        if gran == "Тиждень":
-            daily_comp = daily_comp.set_index('date').resample('W').agg({
+        if gran in ("Тиждень", "Місяць"):
+            _resample_rule_c = "W" if gran == "Тиждень" else "MS"
+            daily_comp = daily_comp.set_index('date').resample(_resample_rule_c).agg({
                 'orders': 'sum', 'units': 'sum', 'revenue': 'sum'
             }).reset_index()
             daily_comp['aov']            = (daily_comp['revenue'] / daily_comp['orders']).round(2)
@@ -9475,6 +9511,67 @@ def nav_to(page: str, *, asin: str = None, **filters):
 #   def _load_returns(asin=None): ...
 # 600 сек = 10 хв. Ctrl+клік по "🔄 Оновити дані" — очистить всі кеші.
 cached_query = lambda ttl=300: st.cache_data(ttl=ttl, show_spinner=False)
+
+
+# ── Preset-селектор періоду + гранулярності (як у Sellerboard) ──────────────
+PERIOD_PRESETS = {
+    "last_7_days":      {"label": "📅 Last 7 days, by day",        "days": 7,   "gran": "day"},
+    "last_30_days":     {"label": "📅 Last 30 days, by day",       "days": 30,  "gran": "day"},
+    "last_3_months":    {"label": "📅 Last 3 months, by week",     "days": 90,  "gran": "week"},
+    "last_6_months":    {"label": "📅 Last 6 months, by week",     "days": 180, "gran": "week"},
+    "last_12_months":   {"label": "📅 Last 12 months, by month",   "days": 365, "gran": "month"},
+    "custom":           {"label": "🛠 Custom range",                "days": 30,  "gran": "day"},
+}
+
+def period_selector(key_prefix: str, min_date=None, max_date=None, default="last_30_days", label="📅 Період"):
+    """Sellerboard-style селектор періоду + гранулярності одним dropdown.
+    Повертає (d1_str, d2_str, gran_key, gran_ua_label).
+      gran_key: 'day' | 'week' | 'month'
+      gran_ua_label: 'День' | 'Тиждень' | 'Місяць'
+    """
+    if max_date is None:
+        max_date = dt.date.today()
+    if min_date is None:
+        min_date = max_date - dt.timedelta(days=365*2)
+
+    _preset_keys = list(PERIOD_PRESETS.keys())
+    _preset_labels = [PERIOD_PRESETS[k]["label"] for k in _preset_keys]
+    _default_idx = _preset_keys.index(default) if default in _preset_keys else 1
+
+    sel_lbl = st.sidebar.selectbox(
+        label,
+        _preset_labels,
+        index=_default_idx,
+        key=f"{key_prefix}_preset",
+    )
+    sel_key = _preset_keys[_preset_labels.index(sel_lbl)]
+    cfg = PERIOD_PRESETS[sel_key]
+
+    if sel_key == "custom":
+        # Віддаємо date_input для точного діапазону + окремий вибір гранулярності
+        _dr = st.sidebar.date_input(
+            "Діапазон:",
+            value=(max(min_date, max_date - dt.timedelta(days=30)), max_date),
+            min_value=min_date, max_value=max_date,
+            key=f"{key_prefix}_custom_range",
+        )
+        if isinstance(_dr, tuple) and len(_dr) == 2:
+            _d1, _d2 = _dr
+        else:
+            _d1 = _d2 = max_date
+        gran_ua = st.sidebar.radio(
+            "Гранулярність:", ["День", "Тиждень", "Місяць"],
+            horizontal=True, key=f"{key_prefix}_custom_gran"
+        )
+        _gran_map = {"День": "day", "Тиждень": "week", "Місяць": "month"}
+        gran_key = _gran_map[gran_ua]
+    else:
+        _d2 = max_date
+        _d1 = max(min_date, max_date - dt.timedelta(days=cfg["days"]))
+        gran_key = cfg["gran"]
+        gran_ua = {"day": "День", "week": "Тиждень", "month": "Місяць"}[gran_key]
+
+    return str(_d1), str(_d2), gran_key, gran_ua
 
 # 📅 Дата і 🏪 Магазин — для інвентарних сторінок
 selected_date  = st.sidebar.selectbox(t["date_label"], dates, key="sel_date") if dates else None
