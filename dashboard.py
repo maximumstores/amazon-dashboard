@@ -5771,8 +5771,29 @@ def show_orders(t=None):
         period_labels = [pd.Timestamp(p).strftime(date_fmt) for p in all_periods]
         period_map = dict(zip(period_labels, all_periods))
 
-        _pc1, _pc2 = st.columns([2, 3])
+        # ── Inline preset (як у sidebar) + конкретний день/тиждень/місяць ──
+        _pc1, _pc2, _pc3 = st.columns([2, 2, 2])
         with _pc1:
+            _inline_preset_keys = list(PERIOD_PRESETS.keys())
+            _inline_preset_labels = [PERIOD_PRESETS[k]["label"] for k in _inline_preset_keys]
+            # Підхоплюємо поточний вибір з sidebar для початкового стану
+            _sidebar_preset = st.session_state.get("ord_v2_preset", "📅 Last 30 days, by day")
+            try:
+                _inline_default_idx = _inline_preset_labels.index(_sidebar_preset)
+            except ValueError:
+                _inline_default_idx = 1
+            _inline_preset = st.selectbox(
+                "📅 Період",
+                _inline_preset_labels,
+                index=_inline_default_idx,
+                key="ord_v2_preset_inline",
+                help="Той самий вибір що в sidebar — продубльовано тут для зручності",
+            )
+            # Якщо змінили inline → синхронізуємо sidebar key (на наступний rerun)
+            if _inline_preset != _sidebar_preset:
+                st.session_state["ord_v2_preset"] = _inline_preset
+                st.rerun()
+        with _pc2:
             sel_period_drill = st.selectbox(
                 f"📅 Оберіть {detail_gran.lower()}:",
                 options=["🔄 Всі періоди разом"] + period_labels,
@@ -5837,6 +5858,7 @@ def show_orders(t=None):
 .cvr-high { color:#4CAF50; font-weight:600; }
 .cvr-mid  { color:#FFC107; }
 .cvr-low  { color:#F44336; }
+.cvr-na   { color:#666; font-style:italic; cursor:help; }
 .offer-badge { background:#2b2b1a; border:1px solid #4a4a2d; border-radius:4px;
                padding:2px 6px; font-size:11px; color:#FFC107; margin-left:6px; }
 .ph-table tfoot { position:sticky; bottom:0; z-index:10; }
@@ -5871,7 +5893,19 @@ def show_orders(t=None):
             p_cvr   = float(prow.get('cvr', 0) or 0)
             p_offer = prow.get('offer', '') if period_filter else ''
 
-            cvr_cls = 'cvr-high' if p_cvr >= 5 else ('cvr-mid' if p_cvr >= 1 else 'cvr-low')
+            # Якщо sessions=0 — немає traffic даних для цього parent (delisted/old SKU)
+            # → показуємо «—» замість брехливих 0.00%
+            _has_traffic = p_sess > 0
+            if _has_traffic:
+                cvr_cls = 'cvr-high' if p_cvr >= 5 else ('cvr-mid' if p_cvr >= 1 else 'cvr-low')
+                cvr_txt = f"{p_cvr:.2f}%"
+                impr_txt = _fmt_int(p_impr)
+                sess_txt = _fmt_int(p_sess)
+            else:
+                cvr_cls = 'cvr-na'
+                cvr_txt = '<span title="Немає traffic даних для цього ASIN">—</span>'
+                impr_txt = '<span style="color:#666">—</span>'
+                sess_txt = '<span style="color:#666">—</span>'
             offer_html = f"<span class='offer-badge'>{p_offer}</span>" if p_offer else ""
 
             # Parent row
@@ -5881,9 +5915,9 @@ def show_orders(t=None):
   <td>{_fmt_int(p_units)}</td>
   <td>{_fmt_money(p_rev)}</td>
   <td>{_fmt_int(p_ord)}</td>
-  <td>{_fmt_int(p_impr)}</td>
-  <td>{_fmt_int(p_sess)}</td>
-  <td class='{cvr_cls}'>{p_cvr:.2f}%</td>
+  <td>{impr_txt}</td>
+  <td>{sess_txt}</td>
+  <td class='{cvr_cls}'>{cvr_txt}</td>
 </tr>
 """)
 
@@ -5907,7 +5941,17 @@ def show_orders(t=None):
 
                 for _, crow in child_grouped.iterrows():
                     c_cvr = float(crow['cvr'] or 0)
-                    c_cvr_cls = 'cvr-high' if c_cvr >= 5 else ('cvr-mid' if c_cvr >= 1 else 'cvr-low')
+                    _c_sess = int(crow['sessions'] or 0)
+                    if _c_sess > 0:
+                        c_cvr_cls = 'cvr-high' if c_cvr >= 5 else ('cvr-mid' if c_cvr >= 1 else 'cvr-low')
+                        _c_cvr_txt  = f"{c_cvr:.2f}%"
+                        _c_impr_txt = _fmt_int(crow['impressions'])
+                        _c_sess_txt = _fmt_int(crow['sessions'])
+                    else:
+                        c_cvr_cls = 'cvr-na'
+                        _c_cvr_txt  = '<span title="Немає traffic даних">—</span>'
+                        _c_impr_txt = '<span style="color:#666">—</span>'
+                        _c_sess_txt = '<span style="color:#666">—</span>'
                     c_offer_html = f"<span class='offer-badge'>{crow['offer']}</span>" if crow.get('offer') else ""
 
                     html_parts.append(f"""
@@ -5916,9 +5960,9 @@ def show_orders(t=None):
   <td>{_fmt_int(crow['units'])}</td>
   <td>${float(crow['revenue']):,.2f}</td>
   <td>{_fmt_int(crow['orders_cnt'])}</td>
-  <td>{_fmt_int(crow['impressions'])}</td>
-  <td>{_fmt_int(crow['sessions'])}</td>
-  <td class='{c_cvr_cls}'>{c_cvr:.2f}%</td>
+  <td>{_c_impr_txt}</td>
+  <td>{_c_sess_txt}</td>
+  <td class='{c_cvr_cls}'>{_c_cvr_txt}</td>
 </tr>
 """)
 
@@ -5961,7 +6005,11 @@ function toggleParent_{idx}(row) {{
         # Рендер — фіксована висота 750px (wrapper скролить всередині)
         st.components.v1.html("".join(html_parts), height=750, scrolling=False)
 
-        st.caption(f"Показано {min(max_parents, len(parents_to_render))} parent ASIN. Клік на рядок → розгорне child SKU.")
+        st.caption(
+            f"Показано {min(max_parents, len(parents_to_render))} parent ASIN. "
+            "Клік на рядок → розгорне child SKU. "
+            "**—** = немає traffic даних (delisted SKU або не покривається sales_traffic звітом)."
+        )
 
         # CSV з усіма даними
         st.download_button(
@@ -9723,4 +9771,5 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
