@@ -5024,15 +5024,15 @@ def show_orders(t=None):
 
     st.markdown("### 🛒 Продажі (Orders)")
 
-    # Inline: Period + ASIN + SKU в одному рядку вгорі сторінки (як Sellerboard)
-    _hdr_c1, _hdr_c2, _hdr_c3 = st.columns([3, 2, 2])
-    d1, d2, gran_key, gran = period_selector(
-        "ord_v2", min_date=min_date, max_date=max_date,
-        default="last_30_days", container=_hdr_c1,
-    )
-    with _hdr_c2:
+    # Period обчислюється тут (з session_state) — широгет буде відрендерений
+    # пізніше біля таблиці (period_widget), тому d1/d2 вже доступні для запиту.
+    d1, d2, gran_key, gran = period_compute("ord_v2", max_date=max_date, default="last_30_days")
+
+    # ASIN / SKU пошук — inline рядком
+    _hdr_c1, _hdr_c2 = st.columns([1, 1])
+    with _hdr_c1:
         search_asin = st.text_input("🔍 ASIN", "", key="ord_v2_asin")
-    with _hdr_c3:
+    with _hdr_c2:
         search_sku  = st.text_input("🔍 SKU", "", key="ord_v2_sku")
 
     # ══════════════════════════════════════════════════════
@@ -5803,9 +5803,13 @@ def show_orders(t=None):
         period_labels = [pd.Timestamp(p).strftime(date_fmt) for p in all_periods]
         period_map = dict(zip(period_labels, all_periods))
 
-        # Період вибирається в sidebar (inline-версія видалена — Streamlit не дозволяє
-        # синхронізувати session_state між двома widget keys)
-        _pc2, _pc3 = st.columns([3, 3])
+        # Period widget поряд з "Оберіть день" (значення вже використані вище через period_compute)
+        _pc1, _pc2 = st.columns([1, 1])
+        with _pc1:
+            period_widget(
+                "ord_v2", min_date=min_date, max_date=max_date,
+                default="last_30_days", container=_pc1,
+            )
         with _pc2:
             sel_period_drill = st.selectbox(
                 f"📅 Оберіть {detail_gran.lower()}:",
@@ -9583,6 +9587,72 @@ PERIOD_PRESETS = {
     "last_12_months":   {"label": "📅 Last 12 months, by month",   "days": 365, "gran": "month"},
     "custom":           {"label": "🛠 Custom range",                "days": 30,  "gran": "day"},
 }
+
+def period_compute(key_prefix: str, max_date=None, default="last_30_days"):
+    """Читає session_state і повертає (d1, d2, gran_key, gran_ua) БЕЗ рендеру widget-ів.
+    Використовується ДО рендеру: щоб можна було завантажити дані, а potім
+    показати widget внизу сторінки."""
+    if max_date is None:
+        max_date = dt.date.today()
+    _preset_keys = list(PERIOD_PRESETS.keys())
+    _key_to_label = {k: PERIOD_PRESETS[k]["label"] for k in _preset_keys}
+    _label_to_key = {v: k for k, v in _key_to_label.items()}
+
+    _current_label = st.session_state.get(f"{key_prefix}_preset", _key_to_label[default])
+    sel_key = _label_to_key.get(_current_label, default)
+    cfg = PERIOD_PRESETS[sel_key]
+
+    if sel_key == "custom":
+        _dr = st.session_state.get(f"{key_prefix}_custom_range")
+        if isinstance(_dr, (tuple, list)) and len(_dr) == 2:
+            _d1, _d2 = _dr
+        else:
+            _d1 = max_date - dt.timedelta(days=30)
+            _d2 = max_date
+        gran_ua = st.session_state.get(f"{key_prefix}_custom_gran", "День")
+        _gran_map = {"День": "day", "Тиждень": "week", "Місяць": "month"}
+        gran_key = _gran_map.get(gran_ua, "day")
+    else:
+        _d2 = max_date
+        _d1 = max_date - dt.timedelta(days=cfg["days"])
+        gran_key = cfg["gran"]
+        gran_ua = {"day": "День", "week": "Тиждень", "month": "Місяць"}[gran_key]
+
+    return str(_d1), str(_d2), gran_key, gran_ua
+
+
+def period_widget(key_prefix: str, min_date=None, max_date=None,
+                  default="last_30_days", label="📅 Період", container=None):
+    """Рендерить widget селектора. Значення читаються в `period_compute`
+    через session_state — можна викликати ПІСЛЯ завантаження даних,
+    де завгодно на сторінці."""
+    if container is None:
+        container = st
+    if max_date is None:
+        max_date = dt.date.today()
+    if min_date is None:
+        min_date = max_date - dt.timedelta(days=365*2)
+
+    _preset_keys = list(PERIOD_PRESETS.keys())
+    _preset_labels = [PERIOD_PRESETS[k]["label"] for k in _preset_keys]
+    _default_idx = _preset_keys.index(default) if default in _preset_keys else 1
+
+    sel_lbl = container.selectbox(label, _preset_labels,
+                                  index=_default_idx, key=f"{key_prefix}_preset")
+    sel_key = _preset_keys[_preset_labels.index(sel_lbl)]
+
+    if sel_key == "custom":
+        container.date_input(
+            "Діапазон:",
+            value=(max(min_date, max_date - dt.timedelta(days=30)), max_date),
+            min_value=min_date, max_value=max_date,
+            key=f"{key_prefix}_custom_range",
+        )
+        container.radio(
+            "Гранулярність:", ["День", "Тиждень", "Місяць"],
+            horizontal=True, key=f"{key_prefix}_custom_gran"
+        )
+
 
 def period_selector(key_prefix: str, min_date=None, max_date=None,
                     default="last_30_days", label="📅 Період",
