@@ -5022,15 +5022,18 @@ def show_orders(t=None):
         min_date = dt.date(2024, 1, 1)
         max_date = dt.date.today()
 
-    # Sellerboard-style: один dropdown з пресетами (Last 30 days, 3 months, 12 months...)
-    d1, d2, gran_key, gran = period_selector(
-        "ord_v2", min_date=min_date, max_date=max_date, default="last_30_days"
-    )
-
-    search_asin = st.sidebar.text_input("🔍 ASIN", "", key="ord_v2_asin")
-    search_sku  = st.sidebar.text_input("🔍 SKU", "", key="ord_v2_sku")
-
     st.markdown("### 🛒 Продажі (Orders)")
+
+    # Inline: Period + ASIN + SKU в одному рядку вгорі сторінки (як Sellerboard)
+    _hdr_c1, _hdr_c2, _hdr_c3 = st.columns([3, 2, 2])
+    d1, d2, gran_key, gran = period_selector(
+        "ord_v2", min_date=min_date, max_date=max_date,
+        default="last_30_days", container=_hdr_c1,
+    )
+    with _hdr_c2:
+        search_asin = st.text_input("🔍 ASIN", "", key="ord_v2_asin")
+    with _hdr_c3:
+        search_sku  = st.text_input("🔍 SKU", "", key="ord_v2_sku")
 
     # ══════════════════════════════════════════════════════
     # 2. ЗАВАНТАЖЕННЯ ДАНИХ
@@ -9581,12 +9584,17 @@ PERIOD_PRESETS = {
     "custom":           {"label": "🛠 Custom range",                "days": 30,  "gran": "day"},
 }
 
-def period_selector(key_prefix: str, min_date=None, max_date=None, default="last_30_days", label="📅 Період"):
+def period_selector(key_prefix: str, min_date=None, max_date=None,
+                    default="last_30_days", label="📅 Період",
+                    container=None):
     """Sellerboard-style селектор періоду + гранулярності одним dropdown.
+    container: де рендерити віджет (st / st.sidebar / st.column тощо). Дефолт = st.sidebar.
     Повертає (d1_str, d2_str, gran_key, gran_ua_label).
       gran_key: 'day' | 'week' | 'month'
       gran_ua_label: 'День' | 'Тиждень' | 'Місяць'
     """
+    if container is None:
+        container = st.sidebar
     if max_date is None:
         max_date = dt.date.today()
     if min_date is None:
@@ -9596,7 +9604,7 @@ def period_selector(key_prefix: str, min_date=None, max_date=None, default="last
     _preset_labels = [PERIOD_PRESETS[k]["label"] for k in _preset_keys]
     _default_idx = _preset_keys.index(default) if default in _preset_keys else 1
 
-    sel_lbl = st.sidebar.selectbox(
+    sel_lbl = container.selectbox(
         label,
         _preset_labels,
         index=_default_idx,
@@ -9606,8 +9614,7 @@ def period_selector(key_prefix: str, min_date=None, max_date=None, default="last
     cfg = PERIOD_PRESETS[sel_key]
 
     if sel_key == "custom":
-        # Віддаємо date_input для точного діапазону + окремий вибір гранулярності
-        _dr = st.sidebar.date_input(
+        _dr = container.date_input(
             "Діапазон:",
             value=(max(min_date, max_date - dt.timedelta(days=30)), max_date),
             min_value=min_date, max_value=max_date,
@@ -9617,7 +9624,7 @@ def period_selector(key_prefix: str, min_date=None, max_date=None, default="last
             _d1, _d2 = _dr
         else:
             _d1 = _d2 = max_date
-        gran_ua = st.sidebar.radio(
+        gran_ua = container.radio(
             "Гранулярність:", ["День", "Тиждень", "Місяць"],
             horizontal=True, key=f"{key_prefix}_custom_gran"
         )
