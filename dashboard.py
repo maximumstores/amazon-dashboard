@@ -9086,6 +9086,21 @@ def run_agent(agent_key: str, prompt: str, force_refresh: bool = False) -> str:
     ensure_ai_agents_table()
     today = dt.date.today()
     engine = get_engine()
+    # Одноразова чистка отруєного кешу (старі помилкові результати)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("""
+                DELETE FROM ai_agent_runs
+                WHERE result_text LIKE '%psycopg2%'
+                   OR result_text LIKE '%UndefinedColumn%'
+                   OR result_text LIKE '%InvalidDatetimeFormat%'
+                   OR result_text LIKE '❌%'
+                   OR result_text LIKE '⚠️%'
+                   OR result_text LIKE 'ERROR%'
+            """))
+            conn.commit()
+    except Exception:
+        pass
     if not force_refresh:
         try:
             with engine.connect() as conn:
@@ -9099,19 +9114,28 @@ def run_agent(agent_key: str, prompt: str, force_refresh: bool = False) -> str:
             pass
 
     result = _call_gemini(prompt)
-    try:
-        import hashlib as _h
-        md5 = _h.md5(prompt.encode("utf-8")).hexdigest()
-        with engine.connect() as conn:
-            conn.execute(text("""
-                INSERT INTO ai_agent_runs (agent_key, run_date, payload_md5, result_text)
-                VALUES (:k, :d, :m, :r)
-                ON CONFLICT (agent_key, run_date)
-                DO UPDATE SET result_text=EXCLUDED.result_text, payload_md5=EXCLUDED.payload_md5, created_at=NOW()
-            """), {"k": agent_key, "d": today, "m": md5, "r": result})
-            conn.commit()
-    except Exception:
-        pass
+    # Не кешуємо помилки / порожні результати — щоб вони автоматично перезапускались
+    _is_error = (
+        not result
+        or result.startswith(("⚠️", "❌", "ERROR"))
+        or "psycopg2" in result
+        or "UndefinedColumn" in result
+        or "InvalidDatetimeFormat" in result
+    )
+    if not _is_error:
+        try:
+            import hashlib as _h
+            md5 = _h.md5(prompt.encode("utf-8")).hexdigest()
+            with engine.connect() as conn:
+                conn.execute(text("""
+                    INSERT INTO ai_agent_runs (agent_key, run_date, payload_md5, result_text)
+                    VALUES (:k, :d, :m, :r)
+                    ON CONFLICT (agent_key, run_date)
+                    DO UPDATE SET result_text=EXCLUDED.result_text, payload_md5=EXCLUDED.payload_md5, created_at=NOW()
+                """), {"k": agent_key, "d": today, "m": md5, "r": result})
+                conn.commit()
+        except Exception:
+            pass
     return result
 
 
@@ -10422,7 +10446,6 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
-
 
 
 
