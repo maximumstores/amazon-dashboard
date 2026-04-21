@@ -33,6 +33,7 @@ ALL_REPORTS = [
     "⭐ Amazon Reviews",
     "📊 Brand Analytics",
     # AI Agents
+    "🧠 AI Дашборд",
     "📦 Restock Agent",
     "📈 Прогноз (Forecast)",
     # Tools
@@ -533,6 +534,35 @@ def show_admin_panel():
 
     # ── Список ──────────────────────────────────────────────────────────
     with tab_users:
+        # ── Bulk-дія: скинути обмеження всім viewers (щоб бачили всі звіти) ──
+        with st.expander("🛠 Bulk дії"):
+            st.caption(
+                "Скинути обмеження всім viewers → вони побачать УСІ звіти "
+                "(дефолтна поведінка для нових юзерів). Корисно коли додали нові звіти і "
+                "треба швидко дати до них доступ усім існуючим viewers."
+            )
+            col_bulk1, col_bulk2 = st.columns([2, 1])
+            with col_bulk2:
+                _confirm = st.checkbox("✅ Підтверджую", key="bulk_reset_confirm")
+            with col_bulk1:
+                if st.button("🔓 Дати всім viewers доступ до всіх звітів",
+                             disabled=not _confirm, key="bulk_reset_viewers"):
+                    try:
+                        conn = get_conn(); cur = conn.cursor()
+                        cur.execute("""
+                            DELETE FROM user_permissions
+                            WHERE user_id IN (
+                                SELECT id FROM users
+                                WHERE COALESCE(bi_role, role) = 'viewer'
+                            )
+                        """)
+                        _n = cur.rowcount
+                        conn.commit(); cur.close(); conn.close()
+                        st.success(f"✅ Скинуто обмеження: {_n} записів видалено. Усі viewers тепер бачать всі звіти.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Помилка: {e}")
+
         users = load_all_users()
         if not users:
             st.info(_t("no_users"))
@@ -790,4 +820,3 @@ def show_admin_panel():
 
 # Alias для listing-analyze (якщо імпортує під цим іменем)
 show_listing_admin_panel = show_admin_panel
-
