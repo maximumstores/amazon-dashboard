@@ -23,8 +23,10 @@ except ImportError:
 try:
     from tender_tab import show_tender_tab
     TENDER_OK = True
-except ImportError:
+    TENDER_ERR = None
+except Exception as _e:
     TENDER_OK = False
+    TENDER_ERR = f"{type(_e).__name__}: {_e}"
 
 load_dotenv()
 
@@ -8220,7 +8222,12 @@ def show_fba_operations():
         if TENDER_OK:
             show_tender_tab()
         else:
-            st.error("Модуль tender_tab.py не знайдено в корені проекту.")
+            st.error(f"❌ tender_tab недоступний: {TENDER_ERR}")
+            st.info(
+                "Типові причини:\n"
+                "- `tender_tab.py` не запушений на GitHub (перевір що він поруч з `dashboard.py`)\n"
+                "- `openpyxl` відсутній у `requirements.txt`"
+            )
 
 
     # ── AI ──
