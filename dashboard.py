@@ -20,6 +20,12 @@ try:
 except ImportError:
     GEMINI_OK = False
 
+try:
+    from tender_tab import show_tender_tab
+    TENDER_OK = True
+except ImportError:
+    TENDER_OK = False
+
 load_dotenv()
 
 def ensure_ai_chat_table():
@@ -7830,7 +7836,7 @@ def show_fba_operations():
     st.markdown("---")
 
     # ── Таби ──
-    tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance", "🏥 Inventory Health"]) 
+    tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance", "🏥 Inventory Health", "📋 Tender"])
 
     # ── TAB 0: Shipments ──
     with tabs[0]:
@@ -8208,6 +8214,13 @@ def show_fba_operations():
                     sku_all.to_csv(index=False).encode(), "velocity_30d.csv", "text/csv")
             else:
                 st.warning("Немає даних orders за 90 днів")
+
+    # ── TAB 5: Tender (логістика — Excel для перевізників) ──
+    with tabs[5]:
+        if TENDER_OK:
+            show_tender_tab()
+        else:
+            st.error("Модуль tender_tab.py не знайдено в корені проекту.")
 
 
     # ── AI ──
