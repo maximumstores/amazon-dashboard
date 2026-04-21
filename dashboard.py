@@ -5893,8 +5893,8 @@ def show_orders(t=None):
     <th>Revenue</th>
     <th>Orders</th>
     <th>Impr</th>
-    <th>Sessions</th>
-    <th>CVR</th>
+    <th title="Parent sessions беруться з Amazon SP-API granularity=PARENT (дедубльовані — один покупець з N варіантами = 1 сесія). Для children — granularity=SKU (не дедубльовані, сесії на варіант). Тому parent CVR вищий за середнє по children.">Sessions <span style="color:#5B9BD5;cursor:help">ⓘ</span></th>
+    <th title="Parent CVR (SP-API PARENT granularity) математично не співпадає з сумою children CVR через Amazon-дедубляцію сесій на рівні parent. Обидва числа 'правильні' в термінах Amazon Seller Central.">CVR <span style="color:#5B9BD5;cursor:help">ⓘ</span></th>
   </tr>
 </thead>
 <tbody>
@@ -5915,9 +5915,15 @@ def show_orders(t=None):
             _has_traffic = p_sess > 0
             if _has_traffic:
                 cvr_cls = 'cvr-high' if p_cvr >= 5 else ('cvr-mid' if p_cvr >= 1 else 'cvr-low')
-                cvr_txt = f"{p_cvr:.2f}%"
+                # Tooltip на parent CVR: пояснення чому не співпадає з сумою children
+                _cvr_tip = (
+                    f"Parent CVR = {p_units:,} units / {p_sess:,} sessions (Amazon дедубл.). "
+                    f"Children використовують SKU-granularity де сесії не дедублюються, "
+                    f"тому їх CVR нижчий і математично не сумується до parent."
+                )
+                cvr_txt = f'<span title="{_cvr_tip}">{p_cvr:.2f}%</span>'
                 impr_txt = _fmt_int(p_impr)
-                sess_txt = _fmt_int(p_sess)
+                sess_txt = f'<span title="Дедубльовані сесії (granularity=PARENT)">{_fmt_int(p_sess)}</span>'
             else:
                 cvr_cls = 'cvr-na'
                 cvr_txt = '<span title="Немає traffic даних для цього ASIN">—</span>'
@@ -9139,6 +9145,37 @@ def run_agent(agent_key: str, prompt: str, force_refresh: bool = False) -> str:
     return result
 
 
+# ── SCHEMA HELPERS ──
+_SCHEMA_CACHE = {}
+
+def _table_cols(table: str, schema: str = 'public') -> set:
+    """Повертає множину реальних колонок таблиці (з кешем на сесію)."""
+    key = f"{schema}.{table}"
+    if key in _SCHEMA_CACHE:
+        return _SCHEMA_CACHE[key]
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name=:t AND table_schema=:s
+            """), {"t": table, "s": schema}).fetchall()
+        cols = {r[0] for r in rows}
+    except Exception:
+        cols = set()
+    _SCHEMA_CACHE[key] = cols
+    return cols
+
+
+def safe_column(table: str, candidates, schema: str = 'public', default=None):
+    """Повертає першу існуючу колонку з кандидатів. default якщо жодна не знайдена."""
+    cols = _table_cols(table, schema)
+    for c in candidates:
+        if c in cols:
+            return c
+    return default
+
+
 # ── PAYLOAD BUILDERS: читаємо агреговані метрики з БД ──
 def _agent_orders_payload() -> str:
     engine = get_engine()
@@ -9457,7 +9494,10 @@ def _agent_inventory_payload() -> str:
 
 def _agent_reviews_payload() -> str:
     engine = get_engine()
-    # review_date це TEXT з можливими порожніми значеннями → через created_at
+    # Автодетект колонок — схема могла змінитись
+    body_col  = safe_column("amazon_reviews", ["body", "review_body", "review_text", "content", "review_content", "text"], default="''")
+    title_col = safe_column("amazon_reviews", ["title", "review_title", "review_header", "subject"], default="''")
+    # review_date це TEXT з можливими порожніми значеннями → фолбек через created_at
     date_expr = "COALESCE(NULLIF(review_date,'')::date, created_at::date)"
     try:
         with engine.connect() as conn:
@@ -9480,7 +9520,9 @@ def _agent_reviews_payload() -> str:
                 LIMIT 6
             """), conn)
             samples = pd.read_sql(text(f"""
-                SELECT asin, rating, COALESCE(title,'') AS title, COALESCE(content,'') AS body
+                SELECT asin, rating,
+                       COALESCE({title_col},'') AS title,
+                       COALESCE({body_col},'')  AS body
                 FROM amazon_reviews
                 WHERE {date_expr} >= CURRENT_DATE - INTERVAL '30 days'
                   AND rating::numeric <= 2
