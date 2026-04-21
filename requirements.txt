@@ -13,4 +13,4 @@ pyarrow
 requests
 matplotlib
 fastapi
-uvicorn
+uvicorn 
