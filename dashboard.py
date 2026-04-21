@@ -9512,6 +9512,172 @@ def _agent_inventory_payload() -> str:
     return "\n".join(lines)
 
 
+def ensure_tender_quotes_table():
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS tender_quotes (
+                    id              SERIAL PRIMARY KEY,
+                    fba_id          TEXT NOT NULL,
+                    destination_fc  TEXT,
+                    carrier         TEXT NOT NULL,
+                    service_type    TEXT,
+                    cost_usd        NUMERIC,
+                    transit_days    INTEGER,
+                    pickup_date     DATE,
+                    delivery_date   DATE,
+                    quote_expires   TIMESTAMP,
+                    container_type  TEXT,
+                    notes           TEXT,
+                    source          TEXT DEFAULT 'manual',
+                    created_at      TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _agent_tender_payload() -> str:
+    ensure_tender_quotes_table()
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            # Шипменти які зараз у тендер-пулі
+            ships = pd.read_sql(text("""
+                SELECT COALESCE(NULLIF(shipment_confirmation_id,''), shipment_id) AS fba_id,
+                       destination_fc, status, ship_to_city, ship_to_state, ship_to_country,
+                       delivery_window_start::text AS dw_start,
+                       delivery_window_end::text   AS dw_end
+                FROM public.fba_inbound_shipments_v2
+                WHERE shipment_id != ''
+                  AND status IN ('READY_TO_SHIP', 'WORKING', 'RECEIVING')
+                ORDER BY delivery_window_start NULLS LAST
+                LIMIT 50
+            """), conn)
+            quotes = pd.read_sql(text("""
+                SELECT fba_id, carrier, service_type,
+                       cost_usd, transit_days,
+                       quote_expires, pickup_date, delivery_date,
+                       container_type, notes, created_at
+                FROM tender_quotes
+                ORDER BY created_at DESC
+                LIMIT 500
+            """), conn)
+    except Exception as e:
+        return f"ERROR: {e}"
+
+    if ships.empty:
+        return "Немає активних shipments у тендер-пулі (READY_TO_SHIP / WORKING / RECEIVING)."
+
+    total_ships = len(ships)
+    # Покриття quotes по shipments
+    if quotes.empty:
+        lines = [
+            f"SHIPMENTS у пулі: {total_ships}",
+            f"QUOTES отримано: 0",
+            "",
+            "⚠️ Жодного quote ще не зібрано. Додай вручну через Tender-таб або запусти email parser.",
+            "",
+            "SHIPMENTS БЕЗ QUOTES (top 10):",
+        ]
+        for _, s in ships.head(10).iterrows():
+            lines.append(f"  - {s['fba_id']} → {s['destination_fc']} ({s['ship_to_city']}, {s['ship_to_state']})")
+        return "\n".join(lines)
+
+    # Матриця: скільки quotes per fba_id
+    cov = quotes.groupby('fba_id').size().reset_index(name='n_quotes')
+    ships_with_cov = ships.merge(cov, on='fba_id', how='left').fillna({'n_quotes': 0})
+    ships_with_cov['n_quotes'] = ships_with_cov['n_quotes'].astype(int)
+
+    covered = int((ships_with_cov['n_quotes'] > 0).sum())
+    monopoly = int((ships_with_cov['n_quotes'] == 1).sum())   # тільки 1 quote → ризик монополії
+    no_quote = int((ships_with_cov['n_quotes'] == 0).sum())
+    competitive = int((ships_with_cov['n_quotes'] >= 3).sum())  # 3+ quotes → конкуренція
+
+    # Quotes що скоро expires (< 24 год)
+    now = pd.Timestamp.utcnow()
+    expiring = pd.DataFrame()
+    if 'quote_expires' in quotes.columns:
+        _q = quotes.copy()
+        _q['quote_expires'] = pd.to_datetime(_q['quote_expires'], errors='coerce')
+        expiring = _q[(_q['quote_expires'].notna()) &
+                      (_q['quote_expires'] > now) &
+                      (_q['quote_expires'] < now + pd.Timedelta(hours=24))]
+
+    # Найдешевші + найдорожчі per FBA
+    cheapest_lines = []
+    outlier_lines = []
+    best_per_fba = quotes.loc[quotes.groupby('fba_id')['cost_usd'].idxmin()]
+    for _, q in best_per_fba.head(8).iterrows():
+        cheapest_lines.append(
+            f"  - {q['fba_id']}: {q['carrier']} ({q.get('service_type','')}) · ${float(q['cost_usd']):,.0f} · {int(q['transit_days'] or 0)}d"
+        )
+
+    # Price spread per FBA (найгірший vs найкращий) — виявляє outliers
+    spread = quotes.groupby('fba_id')['cost_usd'].agg(['min', 'max', 'count']).reset_index()
+    spread = spread[spread['count'] >= 2].copy()
+    if not spread.empty:
+        spread['spread_pct'] = ((spread['max'] - spread['min']) / spread['min'] * 100).round(1)
+        biggest = spread.sort_values('spread_pct', ascending=False).head(5)
+        for _, r in biggest.iterrows():
+            outlier_lines.append(
+                f"  - {r['fba_id']}: ${float(r['min']):,.0f} → ${float(r['max']):,.0f} (spread {float(r['spread_pct']):.0f}% · {int(r['count'])} quotes)"
+            )
+
+    # Carrier-level summary
+    carrier_stats = quotes.groupby('carrier').agg(
+        n_quotes=('carrier', 'size'),
+        avg_cost=('cost_usd', 'mean'),
+        avg_transit=('transit_days', 'mean'),
+    ).sort_values('n_quotes', ascending=False).reset_index()
+
+    lines = [
+        f"SHIPMENTS у пулі: {total_ships}",
+        f"QUOTES отримано: {len(quotes)} · {quotes['carrier'].nunique()} перевізників",
+        "",
+        f"ПОКРИТТЯ:",
+        f"  - ✅ Конкурентні (≥3 quotes): {competitive}",
+        f"  - ⚠️  Monopoly ризик (1 quote):  {monopoly}",
+        f"  - ❌ Без quotes:                 {no_quote}",
+    ]
+    if len(expiring):
+        lines.append("")
+        lines.append(f"🕐 QUOTES EXPIRE < 24 год: {len(expiring)}")
+        for _, q in expiring.head(5).iterrows():
+            _hrs = (pd.to_datetime(q['quote_expires']) - now).total_seconds() / 3600
+            lines.append(f"  - {q['fba_id']} · {q['carrier']} · ${float(q['cost_usd'] or 0):,.0f} · через {_hrs:.1f}h")
+
+    if cheapest_lines:
+        lines.append("")
+        lines.append("НАЙДЕШЕВШІ per FBA:")
+        lines.extend(cheapest_lines)
+
+    if outlier_lines:
+        lines.append("")
+        lines.append("ТОП SPREAD (різниця max/min) — переплачуємо?:")
+        lines.extend(outlier_lines)
+
+    if not carrier_stats.empty:
+        lines.append("")
+        lines.append("CARRIER STATS:")
+        for _, c in carrier_stats.head(6).iterrows():
+            _avg = float(c['avg_cost'] or 0)
+            _tr  = float(c['avg_transit'] or 0)
+            lines.append(f"  - {c['carrier']}: {int(c['n_quotes'])} quotes · avg ${_avg:,.0f} · {_tr:.1f}d")
+
+    # Список FBA без quotes — потрібна дія
+    no_quote_ships = ships_with_cov[ships_with_cov['n_quotes'] == 0].head(8)
+    if not no_quote_ships.empty:
+        lines.append("")
+        lines.append("SHIPMENTS БЕЗ QUOTES (треба запросити):")
+        for _, s in no_quote_ships.iterrows():
+            lines.append(f"  - {s['fba_id']} → {s['destination_fc']} ({s['ship_to_city']})")
+
+    return "\n".join(lines)
+
+
 def _agent_reviews_payload() -> str:
     engine = get_engine()
     # Автодетект колонок — схема могла змінитись
@@ -9600,6 +9766,23 @@ def agent_reviews_meta(force=False):
 
 def agent_inventory(force=False):
     return run_agent("inventory", _AGENT_PROMPT_TMPL.format(area="Склад (Inventory)", data=_agent_inventory_payload()), force)
+
+def agent_tender(force=False):
+    # Кастомний промпт для тендеру — фокус на покритті, monopoly-ризику, expiring quotes
+    _tender_prompt = """Ти — senior логіст Amazon FBA. Аналізуєш тендер-матрицю quotes від перевізників.
+
+МАТРИЦЯ ТЕНДЕРУ:
+{data}
+
+Дай стислий аналіз у ТОЧНОМУ форматі:
+🔥 ТРЕНД: [загальна картина тендеру: покриття quotes, скільки shipments у пулі, достатньо конкуренції чи ні]
+⚠️ КРИТИЧНІ ПРОБЛЕМИ: [expiring quotes, FBA без quotes взагалі, monopoly-ризики — топ 3]
+📦 ДЕТАЛІ: [найбільші price spread — де переплачуємо; підозрілі outliers — нумерований список до 5 пунктів]
+✅ ПОЗИТИВ: [де конкуренція здорова і ціна ок]
+🎯 ДІЇ: [3 конкретні кроки: які quotes прийняти, у кого ще запросити, що expires зараз]
+
+Мова: українська. Без markdown жирного тексту.""".format(data=_agent_tender_payload())
+    return run_agent("tender", _tender_prompt, force)
 
 
 def agent_meta(sub_results: dict, force=False) -> str:
@@ -9731,6 +9914,7 @@ def show_ai_dashboard():
         ("settlements", "💰 Фінанси",                  agent_settlements),
         ("reviews",     "⭐ Відгуки",                   agent_reviews_meta),
         ("inventory",   "📦 Склад",                    agent_inventory),
+        ("tender",      "🚚 Тендер",                   agent_tender),
     ]
 
     sub_results = {}
@@ -10594,7 +10778,6 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
-
 
 
 
