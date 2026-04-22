@@ -28,6 +28,14 @@ except Exception as _e:
     TENDER_OK = False
     TENDER_ERR = f"{type(_e).__name__}: {_e}"
 
+try:
+    from customer_feedback_page import show_customer_feedback
+    CF_OK = True
+    CF_ERR = None
+except Exception as _e:
+    CF_OK = False
+    CF_ERR = f"{type(_e).__name__}: {_e}"
+
 load_dotenv()
 
 def ensure_ai_chat_table():
@@ -10673,6 +10681,7 @@ NAV_I18N = {
     "📦 FBA Operations":               {"UA": "📦 FBA Операції",       "EN": "📦 FBA Operations",   "RU": "📦 FBA Операции"},
     "📋 Податки (Tax)":                {"UA": "📋 Податки",            "EN": "📋 Tax",              "RU": "📋 Налоги"},
     "⭐ Amazon Reviews":               {"UA": "⭐ Відгуки",             "EN": "⭐ Reviews",          "RU": "⭐ Отзывы"},
+    "📣 Customer Feedback":            {"UA": "📣 Customer Feedback",  "EN": "📣 Customer Feedback","RU": "📣 Customer Feedback"},
     "📊 Brand Analytics":              {"UA": "📊 Brand Analytics",    "EN": "📊 Brand Analytics",  "RU": "📊 Brand Analytics"},
     "── AI Агенти ──":                 {"UA": "── AI Агенти ──",       "EN": "── AI Agents ──",     "RU": "── AI Агенты ──"},
     "🧠 AI Дашборд":                   {"UA": "🧠 AI Дашборд",          "EN": "🧠 AI Dashboard",     "RU": "🧠 AI Дашборд"},
@@ -10699,6 +10708,7 @@ main_nav = [
     "📦 FBA Operations",
     "📋 Податки (Tax)",
     "⭐ Amazon Reviews",
+    "📣 Customer Feedback",
     "📊 Brand Analytics",
     "── AI Агенти ──",
     "🧠 AI Дашборд",
@@ -10770,6 +10780,9 @@ elif report_choice == "📦 Restock Agent":            show_restock_agent(t)
 elif report_choice == "📈 Прогноз (Forecast)":       show_forecast(t)
 elif report_choice == "📊 Brand Analytics":          show_sqp(t)
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
+elif report_choice == "📣 Customer Feedback":
+    if CF_OK: show_customer_feedback()
+    else:     st.error(f"❌ customer_feedback_page недоступний: {CF_ERR}")
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 elif report_choice in ("⚙️ Кабінет", "👑 User Management"): show_admin_panel()
