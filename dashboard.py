@@ -4616,16 +4616,21 @@ def show_reviews(t=None):
                     )
                 with _ff2:
                     _heights_known = _df_disp['_fit_height_cm'].dropna()
-                    if len(_heights_known) > 0:
-                        _h_min, _h_max = int(_heights_known.min()), int(_heights_known.max())
-                        _sel_h_range = st.slider(
-                            "📏 Зріст (см)", _h_min, _h_max, (_h_min, _h_max),
-                            key=f"new_tbl_fit_h_{_nperiod[:5]}",
-                            help=f"Витягнуто з {len(_heights_known)} відгуків"
-                        )
-                    else:
-                        _sel_h_range = None
+                    _sel_h_range = None
+                    if len(_heights_known) == 0:
                         st.caption("📏 Зріст: не знайдено у відгуках")
+                    else:
+                        _h_min, _h_max = int(_heights_known.min()), int(_heights_known.max())
+                        if _h_min == _h_max:
+                            # Streamlit slider вимагає min < max
+                            st.caption(f"📏 Зріст: знайдено {len(_heights_known)} відгуків — всі з {_h_min}cm")
+                            _sel_h_range = (_h_min, _h_max)
+                        else:
+                            _sel_h_range = st.slider(
+                                "📏 Зріст (см)", _h_min, _h_max, (_h_min, _h_max),
+                                key=f"new_tbl_fit_h_{_nperiod[:5]}",
+                                help=f"Витягнуто з {len(_heights_known)} відгуків"
+                            )
                 with _ff3:
                     _sel_verdicts = st.multiselect(
                         "🔍 Fit verdict:",
@@ -4646,11 +4651,14 @@ def show_reviews(t=None):
                 # Fit filters
                 if _sel_sizes:
                     _df_tbl = _df_tbl[_df_tbl['_fit_size'].isin(_sel_sizes)]
-                if _sel_h_range is not None and _sel_h_range != (int(_df_disp['_fit_height_cm'].dropna().min()) if len(_df_disp['_fit_height_cm'].dropna()) else 0,
-                                                                int(_df_disp['_fit_height_cm'].dropna().max()) if len(_df_disp['_fit_height_cm'].dropna()) else 0):
-                    _df_tbl = _df_tbl[
-                        _df_tbl['_fit_height_cm'].between(_sel_h_range[0], _sel_h_range[1])
-                    ]
+                # Фільтр по зросту — лише якщо user звузив діапазон (інакше відсікаємо всіх NaN)
+                if _sel_h_range is not None:
+                    _h_all = _df_disp['_fit_height_cm'].dropna()
+                    _full_range = (int(_h_all.min()), int(_h_all.max())) if len(_h_all) else (0, 0)
+                    if _sel_h_range != _full_range:
+                        _df_tbl = _df_tbl[
+                            _df_tbl['_fit_height_cm'].between(_sel_h_range[0], _sel_h_range[1])
+                        ]
                 if _sel_verdicts:
                     _df_tbl = _df_tbl[_df_tbl['_fit_verdicts'].apply(
                         lambda lst: isinstance(lst, list) and any(v in lst for v in _sel_verdicts)
