@@ -1,0 +1,31 @@
+name: Daily Reviews Monitor
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install deps
+        run: pip install --quiet psycopg2-binary requests
+
+      - name: Run daily monitor
+        env:
+          DATABASE_URL:          ${{ secrets.DATABASE_URL }}
+          APIFY_TOKEN:           ${{ secrets.APIFY_TOKEN }}
+          BRIGHTDATA_TOKEN:      ${{ secrets.BRIGHTDATA_TOKEN }}
+          BRIGHTDATA_DATASET_ID: ${{ secrets.BRIGHTDATA_DATASET_ID }}
+        run: python daily_monitor.py
