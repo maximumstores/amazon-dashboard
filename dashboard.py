@@ -4558,16 +4558,34 @@ def show_reviews(t=None):
                 def _extract_fit(row):
                     """Повертає (size, height_cm, verdicts-list) з рядка відгуку."""
                     _attrs = str(row.get('product_attributes') or '') + ' ' + str(row.get('variant_name') or '')
-                    _txt = (str(row.get('content') or '') + ' ' + str(row.get('title') or '')).lower()
+                    _title = str(row.get('title') or '')
+                    _content = str(row.get('content') or '')
+                    _txt = (_content + ' ' + _title).lower()
 
-                    # Size — з attributes ("Size: Large") або з product_attributes JSON-like
+                    _norm = {'SMALL':'S','MEDIUM':'M','LARGE':'L','XLARGE':'XL','XXLARGE':'XXL','XXXLARGE':'XXXL',
+                             'XS':'XS','S':'S','M':'M','L':'L','XL':'XL','XXL':'XXL','XXXL':'XXXL'}
+
+                    # Size — спершу з структурованих полів (Apify)
                     size = None
                     _m = _re_fit.search(r'size[:\s]*(xx?-?s(?:mall)?|x?-?s(?:mall)?|m(?:edium)?|l(?:arge)?|x-?l(?:arge)?|xx-?l(?:arge)?|xxx-?l(?:arge)?)', _attrs, _re_fit.I)
                     if _m:
                         _s = _m.group(1).upper().replace('-', '').replace(' ', '')
-                        _norm = {'SMALL':'S','MEDIUM':'M','LARGE':'L','XLARGE':'XL','XXLARGE':'XXL','XXXLARGE':'XXXL',
-                                 'XS':'XS','S':'S','M':'M','L':'L','XL':'XL','XXL':'XXL','XXXL':'XXXL'}
                         size = _norm.get(_s, _s[:3])
+
+                    # Fallback — шукаємо у тексті (Bright Data часто не має structured size)
+                    if not size:
+                        _patterns = [
+                            r'\bordered\s+(?:an?\s+|the\s+)?(xs|small|medium|large|x-?l(?:arge)?|xx-?l(?:arge)?|xxx-?l(?:arge)?|[sml]|xl|xxl|xxxl)\b',
+                            r'\bsize\s+(?:is\s+)?(xs|small|medium|large|x-?l(?:arge)?|xx-?l(?:arge)?|xxx-?l(?:arge)?|[sml]|xl|xxl|xxxl)\b',
+                            r'\b(?:in\s+|got\s+|bought\s+|wearing\s+)(?:a\s+|the\s+)?(xs|small|medium|large|x-?l(?:arge)?|xx-?l(?:arge)?|xxx-?l(?:arge)?|xl|xxl|xxxl)(?:\s+size|\s+shirt|\s+one|\s+fit)\b',
+                            r'\b(xs|small|medium|large|x-?l(?:arge)?|xx-?l(?:arge)?|xxx-?l(?:arge)?|xl|xxl|xxxl)\s+(?:size|shirt|fits?|runs?)\b',
+                        ]
+                        for _p in _patterns:
+                            _m = _re_fit.search(_p, _txt, _re_fit.I)
+                            if _m:
+                                _s = _m.group(1).upper().replace('-', '').replace(' ', '')
+                                size = _norm.get(_s, _s[:3])
+                                break
 
                     # Height — cm або feet'inches"
                     height_cm = None
@@ -11112,6 +11130,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
