@@ -4552,6 +4552,89 @@ def show_reviews(t=None):
                         placeholder="Всі зірки (+ без рейтингу)",
                     )
 
+                # ── 👕 Fit Analyzer — витягаємо size/height/verdict на льоту ──
+                import re as _re_fit
+
+                def _extract_fit(row):
+                    """Повертає (size, height_cm, verdicts-list) з рядка відгуку."""
+                    _attrs = str(row.get('product_attributes') or '') + ' ' + str(row.get('variant_name') or '')
+                    _txt = (str(row.get('content') or '') + ' ' + str(row.get('title') or '')).lower()
+
+                    # Size — з attributes ("Size: Large") або з product_attributes JSON-like
+                    size = None
+                    _m = _re_fit.search(r'size[:\s]*(xx?-?s(?:mall)?|x?-?s(?:mall)?|m(?:edium)?|l(?:arge)?|x-?l(?:arge)?|xx-?l(?:arge)?|xxx-?l(?:arge)?)', _attrs, _re_fit.I)
+                    if _m:
+                        _s = _m.group(1).upper().replace('-', '').replace(' ', '')
+                        _norm = {'SMALL':'S','MEDIUM':'M','LARGE':'L','XLARGE':'XL','XXLARGE':'XXL','XXXLARGE':'XXXL',
+                                 'XS':'XS','S':'S','M':'M','L':'L','XL':'XL','XXL':'XXL','XXXL':'XXXL'}
+                        size = _norm.get(_s, _s[:3])
+
+                    # Height — cm або feet'inches"
+                    height_cm = None
+                    _m = _re_fit.search(r'(\d{3})\s*cm', _txt)
+                    if _m:
+                        height_cm = int(_m.group(1))
+                    else:
+                        _m = _re_fit.search(r"(\d)'\s*(\d{1,2})", _txt)  # 5'10, 6'0
+                        if _m:
+                            try:
+                                feet = int(_m.group(1)); inches = int(_m.group(2))
+                                if 4 <= feet <= 7 and 0 <= inches <= 12:
+                                    height_cm = int(round(feet*30.48 + inches*2.54))
+                            except: pass
+
+                    # Verdict — keyword match
+                    verdicts = []
+                    if _re_fit.search(r'too\s+tight|runs?\s+small|tight\s+fit|chest\s+is\s+so\s+tight|barely\s+raise|barely\s+fit|can[\'’]t\s+(wear|fit)|way\s+too\s+tight|very\s+tight', _txt):
+                        verdicts.append('too_tight')
+                    if _re_fit.search(r'too\s+loose|runs?\s+(large|big)|too\s+big|baggy|way\s+too\s+(large|big)|oversized', _txt):
+                        verdicts.append('too_loose')
+                    if _re_fit.search(r'too\s+long|runs?\s+long|extra\s+long|very\s+long\b', _txt):
+                        verdicts.append('too_long')
+                    if _re_fit.search(r'too\s+short|runs?\s+short|short\s+at\s+(the\s+)?(waist|torso|length)|run\s+short', _txt):
+                        verdicts.append('too_short')
+                    return size, height_cm, verdicts
+
+                # Рахуємо fit-мета для ВСЬОГО _df_disp (не тільки filtered — для UI фільтрів)
+                if '_fit_size' not in _df_disp.columns:
+                    _fit_rows = _df_disp.apply(_extract_fit, axis=1)
+                    _df_disp = _df_disp.copy()
+                    _df_disp['_fit_size']      = _fit_rows.apply(lambda t: t[0])
+                    _df_disp['_fit_height_cm'] = _fit_rows.apply(lambda t: t[1])
+                    _df_disp['_fit_verdicts']  = _fit_rows.apply(lambda t: t[2])
+
+                # Fit filters UI
+                _ff1, _ff2, _ff3 = st.columns([2, 2, 3])
+                with _ff1:
+                    _size_options = sorted([s for s in _df_disp['_fit_size'].dropna().unique() if s])
+                    _sel_sizes = st.multiselect(
+                        "👕 Size (пусто = всі):",
+                        _size_options,
+                        default=[],
+                        key=f"new_tbl_fit_size_{_nperiod[:5]}",
+                        placeholder=f"Всі {len(_size_options)} розміри",
+                    )
+                with _ff2:
+                    _heights_known = _df_disp['_fit_height_cm'].dropna()
+                    if len(_heights_known) > 0:
+                        _h_min, _h_max = int(_heights_known.min()), int(_heights_known.max())
+                        _sel_h_range = st.slider(
+                            "📏 Зріст (см)", _h_min, _h_max, (_h_min, _h_max),
+                            key=f"new_tbl_fit_h_{_nperiod[:5]}",
+                            help=f"Витягнуто з {len(_heights_known)} відгуків"
+                        )
+                    else:
+                        _sel_h_range = None
+                        st.caption("📏 Зріст: не знайдено у відгуках")
+                with _ff3:
+                    _sel_verdicts = st.multiselect(
+                        "🔍 Fit verdict:",
+                        ['too_tight', 'too_loose', 'too_long', 'too_short'],
+                        default=[],
+                        key=f"new_tbl_fit_v_{_nperiod[:5]}",
+                        placeholder="Всі verdicts",
+                    )
+
                 # Застосовуємо фільтри
                 _df_tbl = _df_disp.copy()
                 if _sel_asins:
@@ -4560,6 +4643,25 @@ def show_reviews(t=None):
                 # щоб показати і рядки з rating=0/NULL (BD не завжди повертає рейтинг).
                 if _sel_stars_tbl and len(_sel_stars_tbl) < 5:
                     _df_tbl = _df_tbl[_df_tbl['rating'].isin(_sel_stars_tbl)]
+                # Fit filters
+                if _sel_sizes:
+                    _df_tbl = _df_tbl[_df_tbl['_fit_size'].isin(_sel_sizes)]
+                if _sel_h_range is not None and _sel_h_range != (int(_df_disp['_fit_height_cm'].dropna().min()) if len(_df_disp['_fit_height_cm'].dropna()) else 0,
+                                                                int(_df_disp['_fit_height_cm'].dropna().max()) if len(_df_disp['_fit_height_cm'].dropna()) else 0):
+                    _df_tbl = _df_tbl[
+                        _df_tbl['_fit_height_cm'].between(_sel_h_range[0], _sel_h_range[1])
+                    ]
+                if _sel_verdicts:
+                    _df_tbl = _df_tbl[_df_tbl['_fit_verdicts'].apply(
+                        lambda lst: isinstance(lst, list) and any(v in lst for v in _sel_verdicts)
+                    )]
+
+                # Міні-статистика витягнутого
+                _fit_stats = []
+                _fit_stats.append(f"👕 {int((_df_disp['_fit_size'].notna()).sum())} з size")
+                _fit_stats.append(f"📏 {int(_df_disp['_fit_height_cm'].notna().sum())} з зростом")
+                _fit_stats.append(f"🔍 {int(_df_disp['_fit_verdicts'].apply(lambda v: bool(v)).sum())} з verdict")
+                st.caption("Fit extractor: " + " · ".join(_fit_stats))
 
                 # ── AI-кнопка: аналіз ВІДФІЛЬТРОВАНОГО набору ──
                 _ai_tbl_col1, _ai_tbl_col2 = st.columns([2, 5])
@@ -4632,9 +4734,22 @@ ASIN-фільтр: {_asins_sig} · Зірки: {_stars_sig} · Період: {_n
                         'created_at', 'review_date', 'rating', 'asin',
                         'variant_name', 'helpful_count', 'is_amazon_vine', 'badge',
                         'source', 'domain',
+                        '_fit_size', '_fit_height_cm', '_fit_verdicts',
                         'title', 'content', 'author', 'author_link', 'is_verified',
                     ] if c in _show.columns]
                     _disp = _show[_cols].copy()
+                    # Fit колонки
+                    if '_fit_height_cm' in _disp.columns:
+                        _disp['_fit_height_cm'] = _disp['_fit_height_cm'].apply(
+                            lambda v: f"{int(v)}cm" if pd.notna(v) else ''
+                        )
+                    if '_fit_verdicts' in _disp.columns:
+                        _verdict_ico = {'too_tight':'🔴T','too_loose':'🔵L','too_long':'⬆️','too_short':'⬇️'}
+                        _disp['_fit_verdicts'] = _disp['_fit_verdicts'].apply(
+                            lambda lst: ' '.join([_verdict_ico.get(v, v) for v in (lst or [])]) if lst else ''
+                        )
+                    if '_fit_size' in _disp.columns:
+                        _disp['_fit_size'] = _disp['_fit_size'].fillna('')
 
                     if 'created_at' in _disp.columns:
                         _disp['created_at'] = pd.to_datetime(_disp['created_at'], errors='coerce').dt.strftime('%d.%m %H:%M')
@@ -4664,6 +4779,9 @@ ASIN-фільтр: {_asins_sig} · Зірки: {_stars_sig} · Період: {_n
                         'is_amazon_vine':  '🍇 Vine',
                         'badge':           '🏷 Badge',
                         'source':          '🔌 Сервіс',
+                        '_fit_size':       '👕 Size',
+                        '_fit_height_cm':  '📏 H',
+                        '_fit_verdicts':   '🔍 Fit',
                         'title':           'Title',
                         'content':         'Content',
                         'author':          'Author',
@@ -10986,7 +11104,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
- 
+
 
 
 
