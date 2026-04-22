@@ -4555,6 +4555,55 @@ def show_reviews(t=None):
                 if _sel_stars_tbl and len(_sel_stars_tbl) < 5:
                     _df_tbl = _df_tbl[_df_tbl['rating'].isin(_sel_stars_tbl)]
 
+                # ── AI-кнопка: аналіз ВІДФІЛЬТРОВАНОГО набору ──
+                _ai_tbl_col1, _ai_tbl_col2 = st.columns([2, 5])
+                with _ai_tbl_col1:
+                    _ai_tbl_key  = f"tbl_ai_btn_{_nperiod[:5]}"
+                    _ai_tbl_out  = f"tbl_ai_out_{_nperiod[:5]}"
+                    _asins_sig   = ",".join(sorted(_sel_asins)) or "ALL"
+                    _stars_sig   = ",".join(map(str, sorted(_sel_stars_tbl))) or "ALL"
+                    _btn_label   = f"🧠 AI-аналіз ({len(_df_tbl)} відгуків)"
+                    if st.button(_btn_label, key=_ai_tbl_key, type="primary",
+                                 disabled=_df_tbl.empty):
+                        with st.spinner("Gemini аналізує відфільтровані відгуки..."):
+                            _ctx_lines = [f"{int(r['rating'])}★ · {r.get('asin','')} · {(r.get('title') or '')[:80]} :: {(r.get('content') or '')[:200]}"
+                                          for _, r in _df_tbl.head(40).iterrows()]
+                            _prompt = f"""Ти — Amazon FBA аналітик. Аналізуй ВІДФІЛЬТРОВАНІ відгуки:
+ASIN-фільтр: {_asins_sig} · Зірки: {_stars_sig} · Період: {_nperiod}
+Усього: {len(_df_tbl)}, показую перші 40.
+
+ВІДГУКИ:
+{chr(10).join(_ctx_lines)}
+
+Формат:
+🔥 ТРЕНД: [1-2 речення]
+⚠️ КРИТИЧНІ ПРОБЛЕМИ: [топ 3 повторюваних скарги]
+📦 ASIN/ВАРІАНТИ: [проблемні — з причинами]
+✅ ПОЗИТИВ: [що хвалять]
+🎯 ДІЇ: [3 кроки]
+
+Стисло. Мова: українська."""
+                            try:
+                                if GEMINI_OK:
+                                    _key = os.environ.get("GEMINI_API_KEY", "") or (st.secrets.get("GEMINI_API_KEY","") if hasattr(st,"secrets") else "")
+                                    if _key:
+                                        genai.configure(api_key=_key)
+                                        _m = genai.GenerativeModel(os.environ.get("GEMINI_MODEL","gemini-1.5-flash"))
+                                        st.session_state[_ai_tbl_out] = _m.generate_content(_prompt).text
+                                    else:
+                                        st.session_state[_ai_tbl_out] = "⚠️ GEMINI_API_KEY не задано"
+                                else:
+                                    st.session_state[_ai_tbl_out] = "⚠️ google-generativeai не встановлено"
+                            except Exception as _e:
+                                st.session_state[_ai_tbl_out] = f"❌ {_e}"
+                with _ai_tbl_col2:
+                    if st.session_state.get(_ai_tbl_out):
+                        st.caption(f"Аналіз для: ASIN={_asins_sig} · {_stars_sig}★")
+
+                if st.session_state.get(_ai_tbl_out):
+                    with st.expander("🧠 AI-висновок по відфільтрованим", expanded=True):
+                        st.markdown(st.session_state[_ai_tbl_out])
+
                 # ── Групування по ASIN (акордеон) vs плоска таблиця ──
                 _vmode = st.radio(
                     "Вигляд:",
@@ -10791,6 +10840,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
  
 
 
