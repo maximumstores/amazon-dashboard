@@ -4319,15 +4319,21 @@ def show_reviews(t=None):
             _df_disp_neg = _new_1d_neg if _nperiod.startswith("📅") else _new_7d_neg
 
             if _df_disp.empty:
-                st.info(f"Немає нових відгуків за {('24 години' if _nperiod.startswith('📅') else '7 днів')}. "
-                        "Запусти моніторинг у **🕷 Scraper Reviews → 📊 Моніторинг**.")
-            else:
+                _msg_lines = [
+                    f"Немає нових відгуків за {('24 години' if _nperiod.startswith('📅') else '7 днів')}."
+                ]
+                if _nperiod.startswith("📅") and len(_new_7d) > 0:
+                    _msg_lines.append(f"📆 За 7 днів є **{len(_new_7d)}** — переключи тумблер зверху.")
+                _msg_lines.append("🕷 Або запусти моніторинг у **Scraper Reviews → 📊 Моніторинг**.")
+                st.info("\n\n".join(_msg_lines))
+            # Далі ВСЕ рендериться завжди (таблиця, фільтри, AI) — навіть якщо пусто
+            if True:
                 _nk1, _nk2, _nk3, _nk4 = st.columns(4)
                 _nk1.metric("🆕 Нових всього", len(_df_disp))
                 _nk2.metric("🔴 Проблемних (1-3★)", len(_df_disp_neg),
-                            f"{len(_df_disp_neg)/len(_df_disp)*100:.0f}%")
-                _nk3.metric("📦 ASINів", _df_disp['asin'].nunique())
-                _nk4.metric("⭐ Середній", f"{_df_disp['rating'].mean():.2f}★")
+                            f"{len(_df_disp_neg)/max(len(_df_disp),1)*100:.0f}%" if not _df_disp.empty else "—")
+                _nk3.metric("📦 ASINів", _df_disp['asin'].nunique() if not _df_disp.empty else 0)
+                _nk4.metric("⭐ Середній", f"{_df_disp['rating'].mean():.2f}★" if not _df_disp.empty else "—")
 
                 # ── AI аналіз нових відгуків ──
                 _ai_col1, _ai_col2 = st.columns([3, 1])
