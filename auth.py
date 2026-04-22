@@ -31,6 +31,7 @@ ALL_REPORTS = [
     "📦 FBA Operations",
     "📋 Податки (Tax)",
     "⭐ Amazon Reviews",
+    "📣 Customer Feedback",
     "📊 Brand Analytics",
     # AI Agents
     "🧠 AI Дашборд",
@@ -820,3 +821,4 @@ def show_admin_panel():
 
 # Alias для listing-analyze (якщо імпортує під цим іменем)
 show_listing_admin_panel = show_admin_panel
+
