@@ -9575,6 +9575,127 @@ def _agent_inventory_payload() -> str:
     return "\n".join(lines)
 
 
+def _agent_customer_feedback_payload() -> str:
+    """Читає cf_* таблиці → будує compact звіт для Gemini."""
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            _snap_row = pd.read_sql(text("""
+                SELECT MAX(snapshot_date) AS s FROM cf_item_topics
+            """), conn).iloc[0]
+            snap = _snap_row['s']
+            if not snap:
+                return ("Немає даних у cf_item_topics. "
+                        "Запусти 17_customer_feedback_loader.py щоб наповнити.")
+            # Top negative по parent_star_impact (найгірші)
+            top_neg = pd.read_sql(text("""
+                SELECT DISTINCT ON (asin, topic)
+                       asin, item_name, topic,
+                       parent_star_impact,
+                       parent_occurrence_pct,
+                       bn_occurrence_pct
+                FROM cf_item_topics
+                WHERE snapshot_date = :s
+                  AND sentiment = 'negative'
+                  AND parent_star_impact IS NOT NULL
+                ORDER BY asin, topic, parent_star_impact ASC
+            """), conn, params={"s": snap})
+            top_neg = top_neg.sort_values('parent_star_impact').head(10)
+
+            # Top positive (креатив-хуки)
+            top_pos = pd.read_sql(text("""
+                SELECT DISTINCT ON (asin, topic)
+                       asin, item_name, topic,
+                       parent_star_impact,
+                       parent_occurrence_pct
+                FROM cf_item_topics
+                WHERE snapshot_date = :s
+                  AND sentiment = 'positive'
+                  AND parent_star_impact IS NOT NULL
+                ORDER BY asin, topic, parent_star_impact DESC
+            """), conn, params={"s": snap})
+            top_pos = top_pos.sort_values('parent_star_impact', ascending=False).head(8)
+
+            # Return reasons по категоріях
+            returns = pd.read_sql(text("""
+                SELECT node_name, topic, occurrence_pct
+                FROM cf_node_returns
+                WHERE snapshot_date = :s
+                ORDER BY occurrence_pct DESC
+                LIMIT 15
+            """), conn, params={"s": snap})
+
+            # Batch-аномалії: наш parent >> категорія (серпневий Gap/Hole кейс)
+            anomalies = pd.read_sql(text("""
+                SELECT asin, topic, period_start::text AS period,
+                       parent_occurrence_pct,
+                       bn_occurrence_pct
+                FROM cf_item_trends
+                WHERE snapshot_date = :s
+                  AND sentiment = 'negative'
+                  AND parent_occurrence_pct IS NOT NULL
+                  AND bn_occurrence_pct IS NOT NULL
+                  AND parent_occurrence_pct > bn_occurrence_pct * 2
+                  AND parent_occurrence_pct > 5
+                ORDER BY (parent_occurrence_pct - bn_occurrence_pct) DESC
+                LIMIT 8
+            """), conn, params={"s": snap})
+
+            # Крос-категорійні паттерни: які теми повертаються у 3+ категоріях
+            cross = pd.read_sql(text("""
+                SELECT topic,
+                       COUNT(DISTINCT node_name) AS nodes,
+                       AVG(occurrence_pct)       AS avg_pct
+                FROM cf_node_returns
+                WHERE snapshot_date = :s
+                GROUP BY topic
+                HAVING COUNT(DISTINCT node_name) >= 3
+                ORDER BY avg_pct DESC
+                LIMIT 5
+            """), conn, params={"s": snap})
+    except Exception as e:
+        return f"ERROR: {e}"
+
+    lines = [f"Snapshot: {snap}", ""]
+
+    if not top_neg.empty:
+        lines.append("🔴 ТОП НЕГАТИВНІ ТЕМИ по ASIN (найгірший star impact):")
+        for _, r in top_neg.iterrows():
+            _nm = (r['item_name'] or '')[:45]
+            _par = float(r['parent_occurrence_pct'] or 0)
+            _bn  = float(r['bn_occurrence_pct'] or 0)
+            lines.append(f"  - {r['asin']} [{_nm}] · {r['topic']}: ★{float(r['parent_star_impact']):+.2f} · parent {_par:.1f}% vs cat {_bn:.1f}%")
+
+    if not top_pos.empty:
+        lines.append("")
+        lines.append("✅ ТОП ПОЗИТИВНІ (креатив-хуки):")
+        for _, r in top_pos.iterrows():
+            lines.append(f"  - {r['asin']} · {r['topic']}: ★+{float(r['parent_star_impact']):.2f} · {float(r['parent_occurrence_pct'] or 0):.1f}% mentions")
+
+    if not cross.empty:
+        lines.append("")
+        lines.append("🔁 НАСКРІЗНІ ПРОБЛЕМИ (теми що в ≥3 категоріях):")
+        for _, r in cross.iterrows():
+            lines.append(f"  - {r['topic']}: {int(r['nodes'])} категорій · avg {float(r['avg_pct']):.1f}%")
+
+    if not returns.empty:
+        lines.append("")
+        lines.append("💰 ТОП ПРИЧИНИ ПОВЕРНЕНЬ (топ 15):")
+        for _, r in returns.head(10).iterrows():
+            lines.append(f"  - [{r['node_name']}] {r['topic']}: {float(r['occurrence_pct']):.1f}%")
+
+    if not anomalies.empty:
+        lines.append("")
+        lines.append("🚨 БАТЧ-АНОМАЛІЇ (наш >>> категорія = проблема конкретної партії):")
+        for _, r in anomalies.iterrows():
+            _par = float(r['parent_occurrence_pct'])
+            _bn  = max(float(r['bn_occurrence_pct']), 0.1)
+            _mult = _par / _bn
+            lines.append(f"  - {r['asin']} · {r['topic']} · {r['period'][:7]}: наш {_par:.1f}% vs cat {float(r['bn_occurrence_pct']):.1f}% (×{_mult:.1f})")
+
+    return "\n".join(lines)
+
+
 def ensure_tender_quotes_table():
     try:
         engine = get_engine()
@@ -9830,6 +9951,24 @@ def agent_reviews_meta(force=False):
 def agent_inventory(force=False):
     return run_agent("inventory", _AGENT_PROMPT_TMPL.format(area="Склад (Inventory)", data=_agent_inventory_payload()), force)
 
+def agent_customer_feedback(force=False):
+    # Кастомний промпт: фокус на креатив-хуки, батч-аномалії, sizing-проблеми
+    _cf_prompt = """Ти — senior Amazon business analyst. Аналізуєш SP-API Customer Feedback дані.
+
+ДАНІ:
+{data}
+
+Дай стислий board-level аналіз у ТОЧНОМУ форматі:
+🔥 ТРЕНД: [головна наскрізна проблема бізнесу — яка тема б'є усі товари + скільки %]
+⚠️ КРИТИЧНІ ПРОБЛЕМИ: [топ 3 за найгіршим star impact — ASIN, тема, цифри, чи це наша проблема чи всієї категорії]
+📦 ДЕТАЛІ (повернення + батчі): [топ причини повернень + батч-аномалії якщо є (конкретний місяць + ×множник) — нумерований список до 5]
+✅ ПОЗИТИВ (креатив-хуки): [топ 3 позитивні теми з найвищим star impact — ОБОВ'ЯЗКОВО підказка як використати в title/bullets/A+ креативі]
+🎯 ДІЇ: [3 конкретні кроки: де брати chargeback з постачальника, які креатив-hooks додати в лістинг, що ретельно перевірити]
+
+Мова: українська. Без markdown жирного. Пиши коротко, конкретно, з цифрами.""".format(data=_agent_customer_feedback_payload())
+    return run_agent("customer_feedback", _cf_prompt, force)
+
+
 def agent_tender(force=False):
     # Кастомний промпт для тендеру — фокус на покритті, monopoly-ризику, expiring quotes
     _tender_prompt = """Ти — senior логіст Amazon FBA. Аналізуєш тендер-матрицю quotes від перевізників.
@@ -9977,6 +10116,7 @@ def show_ai_dashboard():
         ("settlements", "💰 Фінанси",                  agent_settlements),
         ("reviews",     "⭐ Відгуки",                   agent_reviews_meta),
         ("inventory",   "📦 Склад",                    agent_inventory),
+        ("customer_feedback", "📣 Customer Feedback",  agent_customer_feedback),
         ("tender",      "🚚 Тендер",                   agent_tender),
     ]
 
@@ -10846,7 +10986,6 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
-
  
 
 
