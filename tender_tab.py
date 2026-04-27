@@ -23,7 +23,7 @@ tender_tab.py — Streamlit таб для логістичного тендер�
   ✅ Агрегована статистика (total boxes/kg/CBM/units)
   ✅ Pick-up date input (ручний або календар)
   ✅ Download кнопка → Excel в форматі Олексія
-  ✅ Опція "Include all / Only ready / Only active"
+  ✅ Завантаження квот перевізників (Модуль 2)
 """
 
 import streamlit as st
@@ -31,25 +31,22 @@ import pandas as pd
 import datetime
 import io
 import os
+import re
+import tempfile
 import psycopg2
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 # ============================================
-# DB helper (використовує той самий engine що в dashboard.py)
+# DB helper
 # ============================================
 def _get_conn():
-    """Підключення до БД. Використовує DATABASE_URL з env/secrets."""
     url = os.getenv("DATABASE_URL") or st.secrets.get("DATABASE_URL", "")
     return psycopg2.connect(url)
 
 @st.cache_data(ttl=300)
 def fetch_tender_shipments():
-    """
-    Повертає DataFrame з усіма shipments готовими до тендера.
-    Кеш 5 хвилин — щоб не довбати БД на кожен клік фільтра.
-    """
     conn = _get_conn()
     try:
         df = pd.read_sql("""
@@ -101,7 +98,6 @@ def fetch_tender_shipments():
 
 @st.cache_data(ttl=300)
 def fetch_placement_fees():
-    """Окремий query для fees — приєднаємо по placement_option_id"""
     conn = _get_conn()
     try:
         df = pd.read_sql("""
@@ -119,7 +115,7 @@ def fetch_placement_fees():
     return df
 
 # ============================================
-# Excel builder
+# Excel builder (тендерний файл)
 # ============================================
 FONT_BOLD   = Font(name="Arial", size=11, bold=True)
 FONT_HEADER = Font(name="Arial", size=11, bold=True, color="FFFFFF")
@@ -144,13 +140,9 @@ def _format_dw(start, end):
         return f"{str(start)[:10]} - {str(end)[:10]}"
 
 def build_tender_excel(df_selected, pickup_date):
-    """Генерує Excel в форматі Олексія, повертає bytes для Streamlit download_button"""
     wb = Workbook()
-
-    # ---------- Sheet: tender ----------
     ws = wb.active
     ws.title = "tender"
-
     widths = {"A": 18, "B": 12, "C": 8, "D": 6, "E": 6, "F": 10,
               "G": 6, "H": 6, "I": 6, "J": 6, "K": 28, "L": 32}
     for col, w in widths.items():
@@ -172,9 +164,9 @@ def build_tender_excel(df_selected, pickup_date):
         ws[f"{col}5"].font = FONT_BOLD
 
     if len(df_selected) > 0:
-        avg_kg = df_selected["avg_kg"].mean()
+        avg_kg  = df_selected["avg_kg"].mean()
         avg_cbm = df_selected["avg_cbm"].mean()
-        total_kg = df_selected["total_kg"].sum()
+        total_kg  = df_selected["total_kg"].sum()
         total_cbm = df_selected["total_cbm"].sum()
         ws["A6"] = round(avg_kg, 2)
         ws["B6"] = round(avg_kg * 0.95, 2)
@@ -185,8 +177,6 @@ def build_tender_excel(df_selected, pickup_date):
         for col in "ABCDEF":
             ws[f"{col}6"].fill = FILL_HIGHLIGHT
 
-    # Групуємо по source (Amazon/AWD) — зараз все FBA, 
-    # але задаватимемо розділювач щоб легко додати AWD пізніше
     ws["A9"] = "Amazon"
     ws["A9"].font = FONT_BOLD
     ws["A9"].fill = FILL_SECTION
@@ -201,7 +191,7 @@ def build_tender_excel(df_selected, pickup_date):
         ws.cell(row=current_row, column=10, value="units")
 
         fee_text = ""
-        fee_amt = ship.get("fee_amount", "") or ""
+        fee_amt  = ship.get("fee_amount", "") or ""
         fee_curr = ship.get("fee_currency", "") or "USD"
         if fee_amt and str(fee_amt) not in ("0", "0.0", ""):
             try:
@@ -216,10 +206,9 @@ def build_tender_excel(df_selected, pickup_date):
             ws.cell(row=current_row, column=12,
                     value=f"Delivery window: {dw}").font = FONT_SMALL
 
-        # Ship to line
-        line1 = ship.get("line1") or ""
-        city = (ship.get("city") or "").upper()
-        state = ship.get("state") or ""
+        line1  = ship.get("line1") or ""
+        city   = (ship.get("city") or "").upper()
+        state  = ship.get("state") or ""
         postal = ship.get("postal") or ""
         country = ship.get("country") or ""
         parts = [ship["fc"]]
@@ -233,12 +222,10 @@ def build_tender_excel(df_selected, pickup_date):
         cell.font = FONT_BOLD
         ws.merge_cells(start_row=current_row + 1, start_column=1,
                        end_row=current_row + 1, end_column=12)
-
         current_row += 3
 
     ws.freeze_panes = "A10"
 
-    # ---------- Sheet: Delivery comparison ----------
     ws2 = wb.create_sheet("Delivery comparison")
     headers = ["FBA ID", "Destination FC", "Carrier", "Service type",
                "Cost (USD)", "Transit days", "Pick-up date", "Delivery date",
@@ -248,13 +235,11 @@ def build_tender_excel(df_selected, pickup_date):
         cell.font = FONT_HEADER
         cell.fill = FILL_HEADER
         ws2.column_dimensions[get_column_letter(col_idx)].width = 16
-
     for r_idx, ship in enumerate(df_selected.itertuples(), 2):
         ws2.cell(row=r_idx, column=1, value=ship.fba_id)
         ws2.cell(row=r_idx, column=2, value=ship.fc)
     ws2.freeze_panes = "A2"
 
-    # ---------- Sheet: Transit Time Norms ----------
     ws3 = wb.create_sheet("Transit Time Norms")
     ws3["A1"] = "Transit Time Norms (fill manually based on historical data)"
     ws3["A1"].font = FONT_BOLD
@@ -266,19 +251,17 @@ def build_tender_excel(df_selected, pickup_date):
         cell.font = FONT_HEADER
         cell.fill = FILL_HEADER
         ws3.column_dimensions[get_column_letter(col_idx)].width = 20
-    samples = [
-        ["China", "US East Coast", "Ocean LCL",         30, 25, 45],
-        ["China", "US West Coast", "Ocean LCL",         20, 18, 35],
-        ["China", "US East Coast", "Air Freight",        7,  5, 10],
-        ["China", "US West Coast", "Air Freight",        5,  4,  8],
-        ["US WH", "Amazon FC",     "Ground (LTL)",       3,  2,  7],
-        ["US WH", "Amazon FC",     "Ground (Parcel)",    2,  1,  5],
-    ]
-    for r_idx, row in enumerate(samples, 4):
+    for r_idx, row in enumerate([
+        ["China", "US East Coast", "Ocean LCL",      30, 25, 45],
+        ["China", "US West Coast", "Ocean LCL",      20, 18, 35],
+        ["China", "US East Coast", "Air Freight",     7,  5, 10],
+        ["China", "US West Coast", "Air Freight",     5,  4,  8],
+        ["US WH", "Amazon FC",     "Ground (LTL)",    3,  2,  7],
+        ["US WH", "Amazon FC",     "Ground (Parcel)", 2,  1,  5],
+    ], 4):
         for c_idx, val in enumerate(row, 1):
             ws3.cell(row=r_idx, column=c_idx, value=val)
 
-    # ---------- Sheet: data for tender ----------
     ws4 = wb.create_sheet("data for tender")
     data_headers = [
         "FBA ID", "Shipment ID", "FC", "Status",
@@ -293,17 +276,16 @@ def build_tender_excel(df_selected, pickup_date):
         cell.font = FONT_HEADER
         cell.fill = FILL_HEADER
         ws4.column_dimensions[get_column_letter(col_idx)].width = 15
-
     for r_idx, ship in enumerate(df_selected.itertuples(), 2):
-        ws4.cell(row=r_idx, column=1, value=ship.fba_id)
-        ws4.cell(row=r_idx, column=2, value=ship.shipment_id)
-        ws4.cell(row=r_idx, column=3, value=ship.fc)
-        ws4.cell(row=r_idx, column=4, value=ship.status)
-        ws4.cell(row=r_idx, column=5, value=ship.city)
-        ws4.cell(row=r_idx, column=6, value=ship.state)
-        ws4.cell(row=r_idx, column=7, value=ship.postal)
-        ws4.cell(row=r_idx, column=8, value=ship.country)
-        ws4.cell(row=r_idx, column=9, value=ship.line1)
+        ws4.cell(row=r_idx, column=1,  value=ship.fba_id)
+        ws4.cell(row=r_idx, column=2,  value=ship.shipment_id)
+        ws4.cell(row=r_idx, column=3,  value=ship.fc)
+        ws4.cell(row=r_idx, column=4,  value=ship.status)
+        ws4.cell(row=r_idx, column=5,  value=ship.city)
+        ws4.cell(row=r_idx, column=6,  value=ship.state)
+        ws4.cell(row=r_idx, column=7,  value=ship.postal)
+        ws4.cell(row=r_idx, column=8,  value=ship.country)
+        ws4.cell(row=r_idx, column=9,  value=ship.line1)
         ws4.cell(row=r_idx, column=10, value=ship.source_city)
         ws4.cell(row=r_idx, column=11, value=ship.source_country)
         ws4.cell(row=r_idx, column=12, value=str(ship.dw_start)[:10] if ship.dw_start else "")
@@ -319,20 +301,374 @@ def build_tender_excel(df_selected, pickup_date):
         ws4.cell(row=r_idx, column=22, value=ship.name)
     ws4.freeze_panes = "A2"
 
-    # Bytes для Streamlit
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
     return buf.getvalue()
 
+
 # ============================================
-# Streamlit UI
+# МОДУЛЬ 2: Парсер квот перевізників
+# ============================================
+
+# Маппінг назв листів → код країни
+_SHEET_COUNTRY_MAP = {
+    "us": "US", "us sea+truck": "US", "us sea + spd": "US",
+    "ca": "CA",
+    "au": "AU",
+    "jp": "JP",
+    "uk&de": None,
+    "uk&de-tax included": None,
+}
+_SKIP_SHEETS = {"12kg (the same price as 100kg)", "compensation terms"}
+
+def _parse_delivery(text):
+    """'After ETD 18-22 days' | '30-35' | '15-21' → (15, 21)"""
+    if not text:
+        return None, None
+    m = re.search(r'(\d+)\s*[-–]\s*(\d+)', str(text))
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
+
+def _parse_truck_text_rate(text):
+    """ ' BY TRUCK :$1.57  33-40day' → (1.57, 33, 40) """
+    m_rate = re.search(r'\$(\d+\.?\d*)', str(text))
+    m_days = re.search(r'(\d+)\s*[-–]\s*(\d+)', str(text))
+    return (
+        float(m_rate.group(1)) if m_rate else None,
+        int(m_days.group(1))   if m_days else None,
+        int(m_days.group(2))   if m_days else None,
+    )
+
+def _parse_vertical_sheet(ws, country, carrier_name, quote_date, file_name):
+    rows = []
+    current_fc_group = "standard"
+    current_service  = None
+    has_800 = False
+
+    for row in ws.iter_rows(values_only=True):
+        c1 = row[1] if len(row) > 1 else None
+        c2 = row[2] if len(row) > 2 else None
+        c3 = row[3] if len(row) > 3 else None
+        c4 = row[4] if len(row) > 4 else None
+
+        if c1 is None and c2 is None:
+            continue
+        if isinstance(c1, str) and c1.strip().startswith('1.'):
+            continue
+
+        # Рядок-заголовок секції (col2 містить 'kg')
+        if isinstance(c2, str) and 'kg' in c2.lower():
+            svc_name = str(c1).strip() if c1 else ""
+            if any(x in svc_name for x in
+                   ['IUSP','IUSQ','IUSJ','IUSF','IUSL','IUST','IUSR','91730','Sumac']):
+                current_fc_group = svc_name
+                current_service  = None
+            else:
+                current_fc_group = "standard"
+                current_service  = svc_name
+            has_800 = isinstance(c3, str) and 'kg' in c3.lower()
+            continue
+
+        # Рядок тарифу (col2 = число)
+        if isinstance(c2, (int, float)):
+            zone = str(c1).strip() if c1 else ""
+            if not zone or 'Non Amazon' in zone:
+                continue
+            rate_101 = float(c2)
+            if has_800:
+                rate_800 = float(c3) if isinstance(c3, (int, float)) else None
+                delivery_raw = c4
+            else:
+                rate_800 = None
+                delivery_raw = c3
+            dmin, dmax = _parse_delivery(delivery_raw)
+            svc = zone if current_fc_group != "standard" else current_service
+            rows.append({
+                "carrier_name":      carrier_name,
+                "quote_date":        quote_date,
+                "marketplace":       country,
+                "fc_group":          current_fc_group,
+                "service_type":      svc,
+                "zone":              zone if current_fc_group == "standard" else None,
+                "rate_101kg":        rate_101,
+                "rate_800kg":        rate_800,
+                "delivery_days_min": dmin,
+                "delivery_days_max": dmax,
+                "raw_delivery_text": str(delivery_raw) if delivery_raw else None,
+                "file_name":         file_name,
+            })
+            continue
+
+        # Baitong: тариф у текстовому рядку col4 " BY TRUCK :$1.57"
+        if (isinstance(c1, str) and c2 is None and
+                c4 and isinstance(c4, str) and '$' in c4):
+            rate, dmin, dmax = _parse_truck_text_rate(c4)
+            if rate:
+                rows.append({
+                    "carrier_name":      carrier_name,
+                    "quote_date":        quote_date,
+                    "marketplace":       country,
+                    "fc_group":          current_fc_group,
+                    "service_type":      str(c1).strip(),
+                    "zone":              None,
+                    "rate_101kg":        rate,
+                    "rate_800kg":        None,
+                    "delivery_days_min": dmin,
+                    "delivery_days_max": dmax,
+                    "raw_delivery_text": c4.strip(),
+                    "file_name":         file_name,
+                })
+    return rows
+
+def _parse_ukde_sheet(ws, carrier_name, quote_date, file_name):
+    """Горизонтальний формат UK&DE: Country | AIR | time | SEA | time | TRUCK | time"""
+    rows = []
+    service_map = {}
+
+    for row in ws.iter_rows(values_only=True):
+        c1 = row[1] if len(row) > 1 else None
+        if c1 is None:
+            continue
+        if isinstance(c1, str) and c1.strip() == 'Country':
+            for ci, v in enumerate(row[2:], 2):
+                if isinstance(v, str) and v.strip() in ('AIR','Regular SEA','TRUCK','SEA'):
+                    service_map[ci] = v.strip()
+            continue
+        if isinstance(c1, str) and 'FBA' in c1:
+            country_code = "UK" if c1.startswith('UK') else "DE"
+            for ci, svc in service_map.items():
+                rate     = row[ci]     if ci < len(row) else None
+                time_val = row[ci + 1] if (ci + 1) < len(row) else None
+                if isinstance(rate, (int, float)) and rate:
+                    dmin, dmax = _parse_delivery(time_val)
+                    rows.append({
+                        "carrier_name":      carrier_name,
+                        "quote_date":        quote_date,
+                        "marketplace":       country_code,
+                        "fc_group":          "standard",
+                        "service_type":      svc,
+                        "zone":              "FBA",
+                        "rate_101kg":        float(rate),
+                        "rate_800kg":        None,
+                        "delivery_days_min": dmin,
+                        "delivery_days_max": dmax,
+                        "raw_delivery_text": str(time_val) if time_val else None,
+                        "file_name":         file_name,
+                    })
+    return rows
+
+def parse_carrier_excel(file_path: str, carrier_name: str,
+                        quote_date: datetime.date = None) -> list:
+    """
+    Парсить Excel-файл перевізника → list[dict] для INSERT в tender_quotes.
+    Підтримує: Maximumstores, UnrealChina, Baitong, Quotations2026 (формули).
+    """
+    if quote_date is None:
+        quote_date = datetime.date.today()
+    file_name = os.path.basename(file_path)
+    wb = load_workbook(file_path, data_only=True)   # data_only=True → формули як значення
+    all_rows = []
+
+    for sheet_name in wb.sheetnames:
+        sheet_key = sheet_name.strip().lower()
+        if sheet_key in _SKIP_SHEETS:
+            continue
+        ws = wb[sheet_name]
+        country = _SHEET_COUNTRY_MAP.get(sheet_key)
+        if country is None and ('uk' in sheet_key or 'de' in sheet_key):
+            all_rows.extend(_parse_ukde_sheet(ws, carrier_name, quote_date, file_name))
+        elif country:
+            all_rows.extend(_parse_vertical_sheet(ws, country, carrier_name, quote_date, file_name))
+
+    return all_rows
+
+_CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS tender_quotes (
+    id                 SERIAL PRIMARY KEY,
+    carrier_name       TEXT        NOT NULL,
+    quote_date         DATE        NOT NULL,
+    marketplace        TEXT        NOT NULL,
+    fc_group           TEXT,
+    service_type       TEXT,
+    zone               TEXT,
+    rate_101kg         NUMERIC(10,4),
+    rate_800kg         NUMERIC(10,4),
+    delivery_days_min  INTEGER,
+    delivery_days_max  INTEGER,
+    raw_delivery_text  TEXT,
+    file_name          TEXT,
+    uploaded_at        TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_tq_carrier  ON tender_quotes(carrier_name);
+CREATE INDEX IF NOT EXISTS idx_tq_market   ON tender_quotes(marketplace);
+CREATE INDEX IF NOT EXISTS idx_tq_date     ON tender_quotes(quote_date);
+"""
+
+def _ensure_table(conn):
+    with conn.cursor() as cur:
+        cur.execute(_CREATE_TABLE_SQL)
+        conn.commit()
+
+def _load_quotes_to_db(rows: list, conn) -> int:
+    if not rows:
+        return 0
+    carrier = rows[0]["carrier_name"]
+    qdate   = rows[0]["quote_date"]
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM tender_quotes WHERE carrier_name = %s AND quote_date = %s",
+            (carrier, qdate)
+        )
+        cur.executemany("""
+            INSERT INTO tender_quotes
+                (carrier_name, quote_date, marketplace, fc_group, service_type,
+                 zone, rate_101kg, rate_800kg, delivery_days_min, delivery_days_max,
+                 raw_delivery_text, file_name)
+            VALUES
+                (%(carrier_name)s, %(quote_date)s, %(marketplace)s, %(fc_group)s,
+                 %(service_type)s, %(zone)s, %(rate_101kg)s, %(rate_800kg)s,
+                 %(delivery_days_min)s, %(delivery_days_max)s,
+                 %(raw_delivery_text)s, %(file_name)s)
+        """, rows)
+        conn.commit()
+    return len(rows)
+
+
+# ============================================
+# МОДУЛЬ 2 UI: секція завантаження квот
+# ============================================
+KNOWN_CARRIERS = [
+    "Maximumstores",
+    "UnrealChina",
+    "Baitong",
+    "Інший (ввести вручну)",
+]
+
+def _render_quote_upload():
+    """Секція '📥 Квоти перевізників' всередині show_tender_tab()"""
+    st.markdown("---")
+    st.subheader("📥 Квоти перевізників")
+    st.caption("Завантаж Excel від перевізника — система сама розпарсить тарифи і збереже в БД.")
+
+    col1, col2, col3 = st.columns([2, 2, 2])
+    with col1:
+        choice = st.selectbox("Перевізник", KNOWN_CARRIERS, key="carrier_select")
+        carrier_name = (
+            st.text_input("Назва перевізника", key="carrier_custom")
+            if choice == "Інший (ввести вручну)" else choice
+        )
+    with col2:
+        quote_date = st.date_input("Дата квоти", value=datetime.date.today(), key="quote_date")
+    with col3:
+        uploaded = st.file_uploader("Excel-файл від перевізника", type=["xlsx"], key="quote_file")
+
+    if not (uploaded and carrier_name):
+        # ── Поточні квоти в БД ──────────────────────────────────────────────
+        _render_quotes_table()
+        return
+
+    # Кнопка "Розпарсити і перевірити"
+    if st.button("🔍 Розпарсити і перевірити", type="secondary", key="btn_parse"):
+        with st.spinner("Парсимо файл..."):
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                    tmp.write(uploaded.getvalue())
+                    tmp_path = tmp.name
+
+                rows = parse_carrier_excel(tmp_path, carrier_name, quote_date)
+                os.unlink(tmp_path)
+
+                if not rows:
+                    st.error("❌ Не вдалось витягти дані. Перевір формат файлу.")
+                    return
+
+                st.session_state["_tq_pending"] = rows
+                st.session_state["_tq_carrier"] = carrier_name
+
+                df_prev = pd.DataFrame(rows)
+                markets = df_prev["marketplace"].value_counts().to_dict()
+
+                c_a, c_b, c_c = st.columns(3)
+                c_a.metric("Рядків тарифів", len(rows))
+                c_b.metric("Ринків", len(markets))
+                c_c.metric("Перевізник", carrier_name)
+
+                st.dataframe(
+                    df_prev[[
+                        "marketplace", "fc_group", "service_type", "zone",
+                        "rate_101kg", "rate_800kg",
+                        "delivery_days_min", "delivery_days_max"
+                    ]],
+                    use_container_width=True,
+                    height=280,
+                )
+            except Exception as e:
+                st.error(f"❌ Помилка парсингу: {e}")
+
+    # Кнопка підтвердження → запис в БД
+    pending = st.session_state.get("_tq_pending", [])
+    if pending and st.session_state.get("_tq_carrier") == carrier_name:
+        if st.button(
+            f"✅ Зберегти {len(pending)} тарифів у БД",
+            type="primary", key="btn_save_quotes"
+        ):
+            try:
+                conn = _get_conn()
+                _ensure_table(conn)
+                n = _load_quotes_to_db(pending, conn)
+                conn.close()
+                st.success(
+                    f"✅ Збережено **{n}** рядків від **{carrier_name}** "
+                    f"на {quote_date.strftime('%d.%m.%Y')}"
+                )
+                st.session_state.pop("_tq_pending", None)
+                st.session_state.pop("_tq_carrier", None)
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Помилка БД: {e}")
+
+    _render_quotes_table()
+
+
+def _render_quotes_table():
+    """Зведена таблиця всіх квот що є в БД"""
+    st.markdown("---")
+    st.markdown("#### 📊 Квоти в базі даних")
+    try:
+        conn = _get_conn()
+        df_db = pd.read_sql("""
+            SELECT
+                carrier_name        AS "Перевізник",
+                quote_date          AS "Дата квоти",
+                marketplace         AS "Ринок",
+                COUNT(*)            AS "Тарифів",
+                ROUND(MIN(rate_101kg)::numeric, 3) AS "Min $/kg",
+                ROUND(MAX(rate_101kg)::numeric, 3) AS "Max $/kg",
+                MIN(delivery_days_min)              AS "Min днів",
+                MAX(delivery_days_max)              AS "Max днів"
+            FROM tender_quotes
+            GROUP BY carrier_name, quote_date, marketplace
+            ORDER BY quote_date DESC, carrier_name, marketplace
+        """, conn)
+        conn.close()
+
+        if df_db.empty:
+            st.info("Квоти ще не завантажені. Завантаж перший файл вище.")
+        else:
+            st.dataframe(df_db, use_container_width=True, height=280)
+    except Exception:
+        st.info("Таблиця tender_quotes буде створена при першому завантаженні квоти.")
+
+
+# ============================================
+# Streamlit UI — головна функція
 # ============================================
 def show_tender_tab():
     st.subheader("📋 Логістичний тендер")
     st.caption(
-        "Генерація Excel-файлу для розсилки перевізникам. "
-        "Формат 1:1 як у попередніх тендерах, але дані автоматично з БД."
+        "Генерація Excel-файлу для перевізників. "
+        "Дані автоматично з БД — формат 1:1 як у попередніх тендерах."
     )
 
     # --- Fetch data ---
@@ -348,43 +684,35 @@ def show_tender_tab():
         st.warning("Жодного shipment у `fba_inbound_shipments_v2`. Запусти v2024 loader.")
         return
 
-    # Merge fees
     df = df.merge(fees_df, on="placement_option_id", how="left")
-    df["fee_amount"] = df["fee_amount"].fillna("")
+    df["fee_amount"]   = df["fee_amount"].fillna("")
     df["fee_currency"] = df["fee_currency"].fillna("")
 
-    # --- Filters row ---
+    # --- Filters ---
     col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 2, 1])
-
     with col_f1:
         fc_options = sorted(df["fc"].dropna().unique())
-        selected_fcs = st.multiselect(
-            "🏠 Destination FC", options=fc_options, default=fc_options
-        )
-
+        selected_fcs = st.multiselect("🏠 Destination FC", options=fc_options, default=fc_options)
     with col_f2:
         status_options = sorted(df["status"].dropna().unique())
-        default_statuses = [s for s in status_options 
+        default_statuses = [s for s in status_options
                             if s in ("READY_TO_SHIP", "WORKING", "RECEIVING")]
         selected_statuses = st.multiselect(
             "📦 Status", options=status_options,
             default=default_statuses or status_options
         )
-
     with col_f3:
         marketplace_options = sorted(df["marketplace"].dropna().unique())
         selected_markets = st.multiselect(
             "🌍 Marketplace", options=marketplace_options, default=marketplace_options
         )
-
     with col_f4:
-        st.write("")  # spacer
         st.write("")
-        if st.button("🔄 Оновити", help="Перезавантажити дані з БД"):
+        st.write("")
+        if st.button("🔄 Оновити"):
             st.cache_data.clear()
             st.rerun()
 
-    # --- Apply filters ---
     mask = (
         df["fc"].isin(selected_fcs) &
         df["status"].isin(selected_statuses) &
@@ -396,29 +724,27 @@ def show_tender_tab():
         st.warning("Під фільтри нічого не підходить. Розкрий фільтри ширше.")
         return
 
-    # --- Summary metrics ---
+    # --- Metrics ---
     st.markdown("---")
     col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
     col_m1.metric("🚚 Shipments", len(df_filtered))
-    col_m2.metric("📦 Boxes", int(df_filtered["box_count"].sum()))
-    col_m3.metric("⚖️ Weight (kg)", f"{df_filtered['total_kg'].sum():,.1f}")
+    col_m2.metric("📦 Boxes",     int(df_filtered["box_count"].sum()))
+    col_m3.metric("⚖️ Weight (kg)",  f"{df_filtered['total_kg'].sum():,.1f}")
     col_m4.metric("📐 Volume (CBM)", f"{df_filtered['total_cbm'].sum():,.2f}")
-    col_m5.metric("🔢 Units", int(df_filtered["total_units"].sum()))
+    col_m5.metric("🔢 Units",        int(df_filtered["total_units"].sum()))
 
-    # --- Shipment selection table ---
+    # --- Shipment selection ---
     st.markdown("### Оберіть shipments для тендера")
-
     df_display = df_filtered[[
         "fba_id", "fc", "status", "city", "state", "country",
-        "dw_start", "dw_end",
-        "box_count", "total_kg", "total_cbm", "total_units",
-        "fee_amount"
+        "dw_start", "dw_end", "box_count", "total_kg", "total_cbm",
+        "total_units", "fee_amount"
     ]].copy()
-    df_display.insert(0, "✓", True)  # checkbox column, default all selected
-    df_display["dw_start"] = df_display["dw_start"].astype(str).str[:10]
-    df_display["dw_end"]   = df_display["dw_end"].astype(str).str[:10]
-    df_display["total_kg"] = df_display["total_kg"].round(1)
-    df_display["total_cbm"] = df_display["total_cbm"].round(3)
+    df_display.insert(0, "✓", True)
+    df_display["dw_start"]   = df_display["dw_start"].astype(str).str[:10]
+    df_display["dw_end"]     = df_display["dw_end"].astype(str).str[:10]
+    df_display["total_kg"]   = df_display["total_kg"].round(1)
+    df_display["total_cbm"]  = df_display["total_cbm"].round(3)
 
     edited = st.data_editor(
         df_display,
@@ -426,8 +752,8 @@ def show_tender_tab():
         use_container_width=True,
         column_config={
             "✓":          st.column_config.CheckboxColumn(width="small"),
-            "fba_id":     st.column_config.TextColumn("FBA ID", width="medium"),
-            "fc":         st.column_config.TextColumn("FC", width="small"),
+            "fba_id":     st.column_config.TextColumn("FBA ID",   width="medium"),
+            "fc":         st.column_config.TextColumn("FC",       width="small"),
             "status":     st.column_config.TextColumn("Status"),
             "city":       st.column_config.TextColumn("City"),
             "state":      st.column_config.TextColumn("St"),
@@ -440,13 +766,12 @@ def show_tender_tab():
             "total_units":st.column_config.NumberColumn("Units"),
             "fee_amount": st.column_config.TextColumn("Fee"),
         },
-        disabled=["fba_id", "fc", "status", "city", "state", "country",
-                  "dw_start", "dw_end", "box_count", "total_kg", "total_cbm",
-                  "total_units", "fee_amount"],
+        disabled=["fba_id","fc","status","city","state","country",
+                  "dw_start","dw_end","box_count","total_kg","total_cbm",
+                  "total_units","fee_amount"],
         key="tender_editor",
     )
 
-    # Filter to selected rows
     selected_fba_ids = edited[edited["✓"]]["fba_id"].tolist()
     df_selected = df_filtered[df_filtered["fba_id"].isin(selected_fba_ids)].copy()
 
@@ -454,35 +779,27 @@ def show_tender_tab():
         st.warning("⚠️ Жодного shipment не вибрано. Постав галочку хоча б на одному.")
         return
 
-    # --- Generation block ---
+    # --- Excel generation ---
     st.markdown("---")
     st.markdown("### 📥 Згенерувати Excel")
-
     col_g1, col_g2, col_g3 = st.columns([2, 2, 2])
-
     with col_g1:
         pickup_date_obj = st.date_input(
             "📅 Pick-up date",
             value=datetime.date.today() + datetime.timedelta(days=7),
-            help="Дата коли перевізник забирає вантаж зі складу"
         )
         pickup_date_str = pickup_date_obj.strftime("%d.%m.%y")
-
     with col_g2:
         output_name = st.text_input(
             "📄 Filename",
             value=f"tender_{datetime.date.today().isoformat()}.xlsx",
-            help="Назва Excel-файлу"
         )
-
     with col_g3:
         st.write("")
         st.write("")
         st.info(f"✅ Відібрано **{len(df_selected)}** shipments")
 
-    # Generate Excel
     excel_bytes = build_tender_excel(df_selected, pickup_date_str)
-
     st.download_button(
         label=f"📥 Завантажити {output_name}",
         data=excel_bytes,
@@ -492,7 +809,6 @@ def show_tender_tab():
         type="primary",
     )
 
-    # --- Preview of what will be in the Excel ---
     with st.expander("👁️ Preview — що буде в Excel (перші 3 рядки)"):
         for _, ship in df_selected.head(3).iterrows():
             st.markdown(
@@ -510,3 +826,6 @@ def show_tender_tab():
             if dw:
                 st.caption(f"Delivery window: {dw}")
             st.markdown("---")
+
+    # ── МОДУЛЬ 2: Завантаження квот перевізників ────────────────────────────
+    _render_quote_upload()
