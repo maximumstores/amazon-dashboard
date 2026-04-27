@@ -605,28 +605,47 @@ def _render_quote_upload():
             except Exception as e:
                 st.error(f"❌ Помилка парсингу: {e}")
 
-    # Кнопка підтвердження → запис в БД
+    # Кнопки після preview: скачати і/або зберегти в БД
     pending = st.session_state.get("_tq_pending", [])
     if pending and st.session_state.get("_tq_carrier") == carrier_name:
-        if st.button(
-            f"✅ Зберегти {len(pending)} тарифів у БД",
-            type="primary", key="btn_save_quotes"
-        ):
-            try:
-                conn = _get_conn()
-                _ensure_table(conn)
-                n = _load_quotes_to_db(pending, conn)
-                conn.close()
-                st.success(
-                    f"✅ Збережено **{n}** рядків від **{carrier_name}** "
-                    f"на {quote_date.strftime('%d.%m.%Y')}"
-                )
-                st.session_state.pop("_tq_pending", None)
-                st.session_state.pop("_tq_carrier", None)
-                st.cache_data.clear()
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Помилка БД: {e}")
+
+        # Генеруємо Excel з розпарсених даних
+        df_dl = pd.DataFrame(pending)
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df_dl.to_excel(writer, sheet_name="Тарифи", index=False)
+        buf.seek(0)
+
+        col_dl, col_sv = st.columns([1, 1])
+        with col_dl:
+            st.download_button(
+                label="📥 Скачати як Excel",
+                data=buf.getvalue(),
+                file_name=f"{carrier_name}_{quote_date}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        with col_sv:
+            if st.button(
+                f"✅ Зберегти {len(pending)} тарифів у БД",
+                type="primary", key="btn_save_quotes",
+                use_container_width=True,
+            ):
+                try:
+                    conn = _get_conn()
+                    _ensure_table(conn)
+                    n = _load_quotes_to_db(pending, conn)
+                    conn.close()
+                    st.success(
+                        f"✅ Збережено **{n}** рядків від **{carrier_name}** "
+                        f"на {quote_date.strftime('%d.%m.%Y')}"
+                    )
+                    st.session_state.pop("_tq_pending", None)
+                    st.session_state.pop("_tq_carrier", None)
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Помилка БД: {e}")
 
     _render_quotes_table()
 
