@@ -736,13 +736,158 @@ def _render_quotes_table():
 # ============================================
 # Streamlit UI — головна функція
 # ============================================
+def _render_ai_analysis():
+    """Суб-таб: AI аналіз квот — 3 варіанти прямо в Tender Tab"""
+    st.markdown("### 🤖 AI аналіз квот перевізників")
+    st.caption("Агент читає актуальні квоти з БД і шипменти — видає 3 варіанти рішення.")
+
+    if st.button("🔍 Запустити AI аналіз", type="primary", use_container_width=True):
+        with st.spinner("Аналізуємо квоти та шипменти..."):
+            try:
+                conn = _get_conn()
+
+                # Квоти з БД (остання дата)
+                df_quotes = pd.read_sql("""
+                    SELECT carrier_name, marketplace, service_type, zone,
+                           rate_101kg, rate_800kg,
+                           delivery_days_min, delivery_days_max
+                    FROM tender_quotes
+                    WHERE quote_date = (SELECT MAX(quote_date) FROM tender_quotes)
+                    ORDER BY marketplace, rate_101kg
+                """, conn)
+
+                # Активні шипменти
+                df_ships = pd.read_sql("""
+                    SELECT destination_fc AS fc, ship_to_country AS country,
+                           COUNT(DISTINCT b.box_id) AS boxes,
+                           SUM(NULLIF(b.weight_kg,'')::float) AS total_kg,
+                           SUM(NULLIF(b.volume_cbm,'')::float) AS total_cbm
+                    FROM public.fba_inbound_shipments_v2 s
+                    LEFT JOIN public.fba_shipment_boxes b ON b.inbound_plan_id = s.inbound_plan_id
+                    WHERE s.status IN ('WORKING','READY_TO_SHIP','RECEIVING')
+                    GROUP BY s.destination_fc, s.ship_to_country
+                    HAVING COUNT(DISTINCT b.box_id) > 0
+                """, conn)
+                conn.close()
+
+                if df_quotes.empty:
+                    st.warning("⚠️ Квоти не завантажені. Спочатку завантаж файли від перевізників у суб-табі 'Квоти перевізників'.")
+                    return
+
+                total_kg  = df_ships["total_kg"].sum() if not df_ships.empty else 0
+                total_cbm = df_ships["total_cbm"].sum() if not df_ships.empty else 0
+                total_boxes = int(df_ships["boxes"].sum()) if not df_ships.empty else 0
+
+                quotes_text   = df_quotes.to_string(index=False)
+                shipments_text = df_ships.to_string(index=False) if not df_ships.empty else "Немає активних шипментів"
+
+                prompt = f"""Ти — AI агент з логістики. Проаналізуй квоти перевізників і активні шипменти Amazon FBA.
+
+АКТИВНІ ШИПМЕНТИ:
+{shipments_text}
+
+Загальний вантаж: {total_boxes} коробок | {total_kg:.0f} kg | {total_cbm:.2f} CBM
+
+АКТУАЛЬНІ КВОТИ ПЕРЕВІЗНИКІВ ($/kg):
+{quotes_text}
+
+Надай рівно 3 варіанти у форматі нижче. Для кожного варіанту порахуй орієнтовну вартість ({total_kg:.0f} kg × ставка).
+
+ВАРІАНТ A 💰 МІНІМАЛЬНА ЦІНА
+Перевізник: [назва]
+Сервіс: [тип]
+Ставка: $[X]/kg
+Орієнтовна вартість: $[сума]
+Термін доставки: [X-Y] днів
+Чому: [1 речення]
+
+ВАРІАНТ B ⚡ МАКСИМАЛЬНА ШВИДКІСТЬ
+Перевізник: [назва]
+Сервіс: [тип]
+Ставка: $[X]/kg
+Орієнтовна вартість: $[сума]
+Термін доставки: [X-Y] днів
+Чому: [1 речення]
+
+ВАРІАНТ C 🔀 ДИВЕРСИФІКАЦІЯ
+Перевізник 1: [назва] — [X]% вантажу
+Перевізник 2: [назва] — [Y]% вантажу
+Орієнтовна вартість: $[сума]
+Термін доставки: [X-Y] днів
+Чому: [1 речення]
+
+РЕКОМЕНДАЦІЯ: [A/B/C] — [одне речення чому]"""
+
+                # Виклик Claude API
+                import requests as req
+                resp = req.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"Content-Type": "application/json"},
+                    json={
+                        "model": "claude-sonnet-4-20250514",
+                        "max_tokens": 1000,
+                        "messages": [{"role": "user", "content": prompt}]
+                    },
+                    timeout=60
+                )
+                result = resp.json()
+                ai_text = result["content"][0]["text"]
+
+                st.session_state["_tender_ai_result"] = ai_text
+
+            except Exception as e:
+                st.error(f"❌ Помилка: {e}")
+
+    # Показуємо результат
+    if "ـtender_ai_result" in st.session_state or "_tender_ai_result" in st.session_state:
+        ai_text = st.session_state.get("_tender_ai_result", "")
+        if ai_text:
+            # Парсимо 3 варіанти і показуємо в колонках
+            col_a, col_b, col_c = st.columns(3)
+
+            def extract_block(text, header):
+                lines = text.split('\n')
+                result, capture = [], False
+                for line in lines:
+                    if header in line:
+                        capture = True
+                    elif capture and line.startswith('ВАРІАНТ') and header not in line:
+                        break
+                    elif capture and line.startswith('РЕКОМЕНДАЦІЯ'):
+                        break
+                    elif capture:
+                        result.append(line)
+                return '\n'.join(result).strip()
+
+            block_a = extract_block(ai_text, "ВАРІАНТ A")
+            block_b = extract_block(ai_text, "ВАРІАНТ B")
+            block_c = extract_block(ai_text, "ВАРІАНТ C")
+            rec = next((l for l in ai_text.split('\n') if 'РЕКОМЕНДАЦІЯ' in l), "")
+
+            with col_a:
+                st.markdown("### 💰 Мінімальна ціна")
+                st.info(block_a or "—")
+            with col_b:
+                st.markdown("### ⚡ Швидкість")
+                st.warning(block_b or "—")
+            with col_c:
+                st.markdown("### 🔀 Диверсифікація")
+                st.success(block_c or "—")
+
+            if rec:
+                st.markdown(f"---\n**{rec}**")
+
+
 def show_tender_tab():
     st.subheader("📋 Логістичний тендер")
 
-    sub1, sub2 = st.tabs(["🚢 Тендер", "📥 Квоти перевізників"])
+    sub1, sub2, sub3 = st.tabs(["🚢 Тендер", "📥 Квоти перевізників", "🤖 AI Аналіз"])
 
     with sub2:
         _render_quote_upload()
+
+    with sub3:
+        _render_ai_analysis()
 
     with sub1:
         st.caption(
