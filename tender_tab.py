@@ -820,17 +820,27 @@ def _render_ai_analysis():
 
                 # Виклик Claude API
                 import requests as req
+                try:
+                    _akey = st.secrets["ANTHROPIC_API_KEY"]
+                except Exception:
+                    _akey = os.getenv("ANTHROPIC_API_KEY", "")
                 resp = req.post(
                     "https://api.anthropic.com/v1/messages",
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": _akey,
+                        "anthropic-version": "2023-06-01"
+                    },
                     json={
-                        "model": "claude-sonnet-4-20250514",
-                        "max_tokens": 1000,
+                        "model": "claude-sonnet-4-6",
+                        "max_tokens": 1500,
                         "messages": [{"role": "user", "content": prompt}]
                     },
                     timeout=60
                 )
                 result = resp.json()
+                if "error" in result:
+                    raise Exception(result["error"].get("message", str(result["error"])))
                 ai_text = result["content"][0]["text"]
 
                 st.session_state["_tender_ai_result"] = ai_text
