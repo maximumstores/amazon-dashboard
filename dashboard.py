@@ -9296,6 +9296,44 @@ def _gemini_key():
     return k
 
 
+def _anthropic_key() -> str:
+    k = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not k and hasattr(st, "secrets"):
+        k = st.secrets.get("ANTHROPIC_API_KEY", "")
+    return k
+
+
+def _call_claude(prompt: str) -> str:
+    key = _anthropic_key()
+    if not key:
+        return "⚠️ ANTHROPIC_API_KEY не задано"
+    try:
+        import requests as _rq
+        model_name = os.environ.get("ANTHROPIC_MODEL", "") or (
+            st.secrets.get("ANTHROPIC_MODEL", "claude-sonnet-4-6") if hasattr(st, "secrets") else "claude-sonnet-4-6"
+        )
+        resp = _rq.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model_name,
+                "max_tokens": 1500,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=120,
+        )
+        data = resp.json()
+        if resp.status_code != 200:
+            return f"❌ Claude {resp.status_code}: {data.get('error', {}).get('message', data)}"
+        return data["content"][0]["text"]
+    except Exception as e:
+        return f"❌ Помилка Claude: {e}"
+
+
 def _call_gemini(prompt: str) -> str:
     if not GEMINI_OK:
         return "⚠️ google-generativeai не встановлено"
@@ -9312,6 +9350,13 @@ def _call_gemini(prompt: str) -> str:
         return resp.text or ""
     except Exception as e:
         return f"❌ Помилка Gemini: {e}"
+
+
+def call_ai(prompt: str) -> str:
+    """Універсальний AI-роутер. Дивиться у session_state['ai_provider']."""
+    if st.session_state.get("ai_provider", "").startswith("Claude"):
+        return _call_claude(prompt)
+    return _call_gemini(prompt)
 
 
 def run_agent(agent_key: str, prompt: str, force_refresh: bool = False) -> str:
@@ -9346,7 +9391,7 @@ def run_agent(agent_key: str, prompt: str, force_refresh: bool = False) -> str:
         except Exception:
             pass
 
-    result = _call_gemini(prompt)
+    result = call_ai(prompt)
     # Не кешуємо помилки / порожні результати — щоб вони автоматично перезапускались
     _is_error = (
         not result
@@ -10266,7 +10311,19 @@ def show_ai_dashboard():
     st.markdown("## 🧠 AI Дашборд")
     st.caption("Щоденний огляд: 5 спеціалізованих агентів + головний синтез. Кеш оновлюється раз на день.")
 
-    if not _gemini_key():
+    # Перемикач AI-провайдера (Claude vs Gemini) — впливає на ВСІ агенти через call_ai()
+    ai_provider = st.radio(
+        "🤖 AI провайдер",
+        ["Claude (Anthropic)", "Gemini (Google)"],
+        horizontal=True,
+        key="ai_provider",
+    )
+    use_claude = ai_provider == "Claude (Anthropic)"
+
+    if use_claude and not _anthropic_key():
+        st.error("⚠️ ANTHROPIC_API_KEY не задано в Streamlit Secrets")
+        return
+    if (not use_claude) and not _gemini_key():
         st.error("⚠️ GEMINI_API_KEY не задано в Streamlit Secrets")
         return
 
@@ -11154,6 +11211,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
