@@ -9893,8 +9893,34 @@ def _agent_tender_payload() -> str:
                 ORDER BY created_at DESC
                 LIMIT 500
             """), conn)
+            # Агрегований ринок ставок (rate-card з останнього quote_date)
+            rate_card = pd.DataFrame()
+            try:
+                rate_card = pd.read_sql(text("""
+                    SELECT
+                        carrier_name,
+                        marketplace,
+                        service_type,
+                        zone,
+                        MIN(rate_101kg)        AS rate_101kg,
+                        MIN(rate_800kg)        AS rate_800kg,
+                        MIN(delivery_days_min) AS delivery_days_min,
+                        MAX(delivery_days_max) AS delivery_days_max
+                    FROM tender_quotes
+                    WHERE quote_date = (SELECT MAX(quote_date) FROM tender_quotes)
+                    GROUP BY carrier_name, marketplace, service_type, zone
+                    ORDER BY marketplace, rate_101kg
+                """), conn)
+            except Exception:
+                # Стара схема tender_quotes без rate-card колонок — пропускаємо
+                rate_card = pd.DataFrame()
     except Exception as e:
         return f"ERROR: {e}"
+
+    rate_card_text = (
+        rate_card.to_string(index=False) if not rate_card.empty
+        else "Квоти-ставки (rate-card) не завантажені — лише per-FBA quotes нижче"
+    )
 
     if ships.empty:
         return "Немає активних shipments у тендер-пулі (READY_TO_SHIP / WORKING / RECEIVING)."
@@ -10002,6 +10028,10 @@ def _agent_tender_payload() -> str:
         lines.append("SHIPMENTS БЕЗ QUOTES (треба запросити):")
         for _, s in no_quote_ships.iterrows():
             lines.append(f"  - {s['fba_id']} → {s['destination_fc']} ({s['ship_to_city']})")
+
+    lines.append("")
+    lines.append("АКТУАЛЬНІ КВОТИ ПЕРЕВІЗНИКІВ (rate-card):")
+    lines.append(rate_card_text)
 
     return "\n".join(lines)
 
@@ -10114,7 +10144,8 @@ def agent_customer_feedback(force=False):
 
 
 def agent_tender(force=False):
-    # Кастомний промпт для тендеру — фокус на покритті, monopoly-ризику, expiring quotes
+    # Кастомний промпт для тендеру — фокус на покритті, monopoly-ризику, expiring quotes,
+    # ПЛЮС 3 варіанти на основі rate-card перевізників.
     _tender_prompt = """Ти — senior логіст Amazon FBA. Аналізуєш тендер-матрицю quotes від перевізників.
 
 МАТРИЦЯ ТЕНДЕРУ:
@@ -10126,6 +10157,11 @@ def agent_tender(force=False):
 📦 ДЕТАЛІ: [найбільші price spread — де переплачуємо; підозрілі outliers — нумерований список до 5 пунктів]
 ✅ ПОЗИТИВ: [де конкуренція здорова і ціна ок]
 🎯 ДІЇ: [3 конкретні кроки: які quotes прийняти, у кого ще запросити, що expires зараз]
+
+На основі секції «АКТУАЛЬНІ КВОТИ ПЕРЕВІЗНИКІВ» додатково надай 3 варіанти вибору:
+Варіант A 💰 Ціна — найдешевший перевізник (carrier + service_type + zone + rate)
+Варіант B ⚡ Швидкість — найшвидший перевізник (мін delivery_days + rate)
+Варіант C 🔀 Диверсифікація — розбивка між 2-3 перевізниками (щоб уникнути monopoly-ризику)
 
 Мова: українська. Без markdown жирного тексту.""".format(data=_agent_tender_payload())
     return run_agent("tender", _tender_prompt, force)
@@ -11130,6 +11166,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
