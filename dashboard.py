@@ -9893,34 +9893,23 @@ def _agent_tender_payload() -> str:
                 ORDER BY created_at DESC
                 LIMIT 500
             """), conn)
-            # Агрегований ринок ставок (rate-card з останнього quote_date)
-            rate_card = pd.DataFrame()
-            try:
-                rate_card = pd.read_sql(text("""
-                    SELECT
-                        carrier_name,
-                        marketplace,
-                        service_type,
-                        zone,
-                        MIN(rate_101kg)        AS rate_101kg,
-                        MIN(rate_800kg)        AS rate_800kg,
-                        MIN(delivery_days_min) AS delivery_days_min,
-                        MAX(delivery_days_max) AS delivery_days_max
-                    FROM tender_quotes
-                    WHERE quote_date = (SELECT MAX(quote_date) FROM tender_quotes)
-                    GROUP BY carrier_name, marketplace, service_type, zone
-                    ORDER BY marketplace, rate_101kg
-                """), conn)
-            except Exception:
-                # Стара схема tender_quotes без rate-card колонок — пропускаємо
-                rate_card = pd.DataFrame()
+            # Агрегований ринок ставок (rate-card з останнього quote_date) —
+            # помилки логуємо явно, щоб не маскувати порожній результат "квот немає".
+            df_quotes = pd.read_sql("""
+                SELECT carrier_name, marketplace, service_type, zone,
+                       MIN(rate_101kg) as rate_101kg,
+                       MIN(rate_800kg) as rate_800kg,
+                       MIN(delivery_days_min) as delivery_days_min,
+                       MAX(delivery_days_max) as delivery_days_max
+                FROM tender_quotes
+                WHERE quote_date = (SELECT MAX(quote_date) FROM tender_quotes)
+                GROUP BY carrier_name, marketplace, service_type, zone
+                ORDER BY marketplace, rate_101kg
+            """, conn)
+            quotes_text = df_quotes.to_string(index=False) if not df_quotes.empty else "Квоти не завантажені"
     except Exception as e:
+        print(f"quotes error: {e}")
         return f"ERROR: {e}"
-
-    rate_card_text = (
-        rate_card.to_string(index=False) if not rate_card.empty
-        else "Квоти-ставки (rate-card) не завантажені — лише per-FBA quotes нижче"
-    )
 
     if ships.empty:
         return "Немає активних shipments у тендер-пулі (READY_TO_SHIP / WORKING / RECEIVING)."
@@ -10030,8 +10019,7 @@ def _agent_tender_payload() -> str:
             lines.append(f"  - {s['fba_id']} → {s['destination_fc']} ({s['ship_to_city']})")
 
     lines.append("")
-    lines.append("АКТУАЛЬНІ КВОТИ ПЕРЕВІЗНИКІВ (rate-card):")
-    lines.append(rate_card_text)
+    lines.append(f"АКТУАЛЬНІ КВОТИ ПЕРЕВІЗНИКІВ:\n{quotes_text}")
 
     return "\n".join(lines)
 
