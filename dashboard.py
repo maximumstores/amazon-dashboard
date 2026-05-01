@@ -7693,6 +7693,76 @@ def show_listings():
     ], "listings")
 
 
+def show_custom_quality():
+    st.markdown("### 🎯 Custom Quality")
+    engine = get_engine()
+
+    search_q   = st.sidebar.text_input("🔍 SKU / ASIN / Назва", "", key="cq_search")
+    sel_mp     = st.sidebar.selectbox("🌍 Marketplace:", ["Всі", "Amazon.com", "Amazon.ca", "Amazon.de", "Amazon.co.uk"], key="cq_mp")
+    sel_fc     = st.sidebar.selectbox("📦 Fulfillment:", ["Всі", "FBA (AMAZON_NA)", "FBM (DEFAULT)"], key="cq_fc")
+    sel_status = st.sidebar.selectbox("📊 Статус:", ["Всі", "Active", "Inactive"], key="cq_status")
+
+    try:
+        with engine.connect() as conn:
+            df_all = pd.read_sql(text("SELECT * FROM listings_all"), conn)
+            df_cat = pd.read_sql(text("SELECT asin, brand, main_image_url, sales_rank, sales_rank_category, color, size, product_type FROM catalog_items"), conn)
+    except Exception as e:
+        st.error(f"Помилка: {e}"); return
+
+    if df_all.empty:
+        st.warning("listings_all порожня"); return
+
+    df_all['price']     = pd.to_numeric(df_all['price'].replace('', None), errors='coerce').fillna(0)
+    df_all['quantity']  = pd.to_numeric(df_all['quantity'].replace('', None), errors='coerce').fillna(0)
+    df_all['open_date'] = pd.to_datetime(df_all['open_date'], errors='coerce')
+
+    df_f = df_all.merge(df_cat, left_on='asin1', right_on='asin', how='left')
+
+    if search_q:
+        mask = (df_f['seller_sku'].astype(str).str.contains(search_q, case=False, na=False) |
+                df_f['asin1'].astype(str).str.contains(search_q, case=False, na=False) |
+                df_f['item_name'].astype(str).str.contains(search_q, case=False, na=False))
+        df_f = df_f[mask]
+    if sel_mp != "Всі":
+        df_f = df_f[df_f['marketplace'].astype(str).str.contains(sel_mp.replace("Amazon.", ""), case=False, na=False)]
+    if sel_fc == "FBA (AMAZON_NA)":
+        df_f = df_f[df_f['fulfillment_channel'].astype(str).str.contains("AMAZON", case=False, na=False)]
+    elif sel_fc == "FBM (DEFAULT)":
+        df_f = df_f[~df_f['fulfillment_channel'].astype(str).str.contains("AMAZON", case=False, na=False)]
+    if sel_status == "Active":
+        df_f = df_f[df_f['status'].astype(str).str.lower() == 'active']
+    elif sel_status == "Inactive":
+        df_f = df_f[df_f['status'].astype(str).str.lower() != 'active']
+
+    st.markdown("#### 📋 Каталог листингів")
+    show_cols = ['seller_sku', 'asin1', 'item_name', 'price', 'quantity', 'status',
+                 'fulfillment_channel', 'marketplace', 'open_date']
+    for c in ['brand', 'size', 'color', 'sales_rank', 'main_image_url']:
+        if c in df_f.columns: show_cols.append(c)
+    show_cols = [c for c in show_cols if c in df_f.columns]
+    df_show = df_f[show_cols].sort_values('price', ascending=False).reset_index(drop=True)
+    col_cfg = {
+        'seller_sku':          st.column_config.TextColumn("SKU"),
+        'asin1':               st.column_config.TextColumn("ASIN"),
+        'item_name':           st.column_config.TextColumn("Назва", width="large"),
+        'price':               st.column_config.NumberColumn("Ціна $", format="$%.2f"),
+        'quantity':            st.column_config.NumberColumn("Qty"),
+        'status':              st.column_config.TextColumn("Статус"),
+        'fulfillment_channel': st.column_config.TextColumn("FC"),
+        'marketplace':         st.column_config.TextColumn("MP"),
+        'open_date':           st.column_config.DatetimeColumn("Open Date", format="YYYY-MM-DD"),
+        'brand':               st.column_config.TextColumn("Brand"),
+        'size':                st.column_config.TextColumn("Size"),
+        'color':                st.column_config.TextColumn("Color"),
+        'sales_rank':          st.column_config.NumberColumn("BSR", format="%d"),
+        'main_image_url':      st.column_config.ImageColumn("Фото", width="small"),
+    }
+    st.dataframe(df_show, column_config=col_cfg, width="stretch", hide_index=True, height=500)
+    st.caption(f"Показано {len(df_show):,} листингів")
+    st.download_button("📥 CSV", df_f[show_cols].to_csv(index=False).encode(),
+                       "custom_quality.csv", "text/csv", key="dl_cq")
+
+
 def show_pricing():
     st.markdown("### 💲 Pricing / Buy Box")
     engine = get_engine()
@@ -11097,6 +11167,7 @@ NAV_I18N = {
     "📦 Склад (Inventory)":            {"UA": "📦 Склад",              "EN": "📦 Inventory",        "RU": "📦 Склад"},
     "🔙 Повернення (Returns)":         {"UA": "🔙 Повернення",         "EN": "🔙 Returns",          "RU": "🔙 Возвраты"},
     "📝 Листинги (Listings)":          {"UA": "📝 Лістинги",           "EN": "📝 Listings",         "RU": "📝 Листинги"},
+    "🎯 Custom Quality":               {"UA": "🎯 Custom Quality",     "EN": "🎯 Custom Quality",   "RU": "🎯 Custom Quality"},
     "💲 Pricing / BuyBox":             {"UA": "💲 Ціни / BuyBox",      "EN": "💲 Pricing / BuyBox", "RU": "💲 Цены / BuyBox"},
     "📦 FBA Operations":               {"UA": "📦 FBA Операції",       "EN": "📦 FBA Operations",   "RU": "📦 FBA Операции"},
     "📋 Податки (Tax)":                {"UA": "📋 Податки",            "EN": "📋 Tax",              "RU": "📋 Налоги"},
@@ -11124,6 +11195,7 @@ main_nav = [
     "📦 Склад (Inventory)",
     "🔙 Повернення (Returns)",
     "📝 Листинги (Listings)",
+    "🎯 Custom Quality",
     "💲 Pricing / BuyBox",
     "📦 FBA Operations",
     "📋 Податки (Tax)",
@@ -11192,6 +11264,7 @@ elif report_choice == "🛒 Продажи (Orders)":         show_orders(t)
 elif report_choice == "📦 Склад (Inventory)":        show_inventory_unified()
 elif report_choice == "🔙 Повернення (Returns)":                  show_returns(t)
 elif report_choice == "📝 Листинги (Listings)":      show_listings()
+elif report_choice == "🎯 Custom Quality":           show_custom_quality()
 elif report_choice == "💲 Pricing / BuyBox":         show_pricing()
 elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "📋 Податки (Tax)":            show_tax(t)
@@ -11211,6 +11284,9 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
 
 
 
