@@ -8363,13 +8363,23 @@ def show_custom_quality():
                     f"=== ЗАВДАННЯ ===\n{ai_prompt.strip()}\n\n"
                     f"=== ВІДГУКИ (формат: [rating★ · asin/domain · date] title :: content) ===\n"
                     f"{reviews_block}\n\n"
-                    f"Дай стислий board-level аналіз у ТОЧНОМУ форматі (не додавай інших секцій):\n"
-                    f"🔥 ТРЕНД: [1-2 речення про загальну картину sentiment'у і динаміку]\n"
-                    f"⚠️ КРИТИЧНІ ПРОБЛЕМИ: [топ 3 повторюваних скарги з цифрами і ASIN; якщо нічого критичного — 'немає']\n"
-                    f"📦 ДЕТАЛІ: [топ ASIN/варіанти/розміри/кольори що мають проблеми — нумерований список до 5]\n"
-                    f"✅ ПОЗИТИВ: [що хвалять найбільше — креатив-хуки для маркетингу; якщо нічого — '—']\n"
-                    f"🎯 ДІЇ: [3 конкретні кроки що зробити]\n\n"
-                    f"Мова: українська. Без markdown жирного. Пиши коротко, конкретно, з цифрами."
+                    f"=== ВИВІД ===\n"
+                    f"СУВОРО ОБОВ'ЯЗКОВО використай РОВНО 5 секцій нижче з ЦИМИ САМИМИ маркерами і у ЦЬОМУ ПОРЯДКУ.\n"
+                    f"Не додавай заголовків, вступів, висновків, або інших секцій. Не використовуй markdown ## чи #.\n"
+                    f"Не пиши 'Аналіз скарг...' як заголовок. Починай ВІДРАЗУ з '🔥 ТРЕНД:'.\n\n"
+                    f"🔥 ТРЕНД:\n"
+                    f"[1-2 речення про головну sentiment-картину вибірки. Конкретно, з цифрами.]\n\n"
+                    f"⚠️ КРИТИЧНІ ПРОБЛЕМИ:\n"
+                    f"[Нумерований список 1-3 пунктів. Кожен пункт = повторювана скарга з кількістю згадок і ASIN. "
+                    f"Якщо немає критичних — напиши 'немає'.]\n\n"
+                    f"📦 ДЕТАЛІ:\n"
+                    f"[Нумерований список до 5 пунктів. Топ ASIN/варіанти/розміри/кольори з проблемами + "
+                    f"коротка цитата-приклад в лапках.]\n\n"
+                    f"✅ ПОЗИТИВ:\n"
+                    f"[Що хвалять — 1-3 пункти з цитатами. Якщо нічого — '—'.]\n\n"
+                    f"🎯 ДІЇ:\n"
+                    f"[Нумерований список 3 КОНКРЕТНИХ кроків (що поправити в продукті/лістингу/sizing-гайді).]\n\n"
+                    f"Мова: українська. Пиши коротко, по суті. Кожна секція максимум 4-6 рядків."
                 )
 
                 with st.spinner("🤖 AI аналізує відгуки..."):
@@ -8446,7 +8456,139 @@ def show_custom_quality():
 """, unsafe_allow_html=True)
 
                     # ── McKinsey-style картки (5 секцій) ──
-                    _render_ai_cards(_ans, _AGENT_CARDS_CFG, columns=2)
+                    _parsed_test = _parse_ai_sections(_ans, _AGENT_CARDS_CFG)
+                    if len(_parsed_test) >= 2:
+                        _render_ai_cards(_ans, _AGENT_CARDS_CFG, columns=2)
+                    else:
+                        # Fallback: AI проігнорував формат — рендеримо markdown у McKinsey-картку
+                        import re as _re_md, html as _html_l
+                        _accent = "#3b82f6"
+
+                        def _inline(t):
+                            t = _html_l.escape(t)
+                            t = _re_md.sub(r'\*\*(.+?)\*\*',
+                                           rf'<b style="color:{_accent}">\1</b>', t)
+                            t = _re_md.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)',
+                                           r'<i style="color:#cbd5e1">\1</i>', t)
+                            t = _re_md.sub(r'`(.+?)`',
+                                           r'<code style="background:#1e293b;padding:1px 6px;'
+                                           r'border-radius:3px;font-size:0.85em;color:#fbbf24">\1</code>', t)
+                            return t
+
+                        def _md_to_html(md_text):
+                            lines = md_text.split('\n')
+                            out, in_list, list_indent = [], False, 0
+                            def _close_list():
+                                nonlocal in_list
+                                if in_list:
+                                    out.append("</div>")
+                                    in_list = False
+                            for line in lines:
+                                s = line.rstrip()
+                                if not s.strip():
+                                    _close_list()
+                                    out.append('<div style="height:8px"></div>')
+                                    continue
+                                # Sub-bullet (≥2 пробіли + маркер) — індентований ▸
+                                m = _re_md.match(r'^(\s{2,})[\*\-◦○•]\s+(.+)$', s)
+                                if m:
+                                    if not in_list:
+                                        out.append(f'<div style="margin:6px 0">'); in_list = True
+                                    out.append(
+                                        f'<div style="margin:3px 0 3px 32px;padding:3px 0 3px 14px;'
+                                        f'border-left:2px solid #334155;font-size:0.85rem;color:#cbd5e1;line-height:1.55">'
+                                        f'<span style="color:{_accent};font-weight:700;margin-right:6px">▸</span>'
+                                        f'{_inline(m.group(2))}</div>')
+                                    continue
+                                # Top-level bullet
+                                m = _re_md.match(r'^[\*\-•]\s+(.+)$', s.lstrip())
+                                if m:
+                                    if not in_list:
+                                        out.append(f'<div style="margin:6px 0">'); in_list = True
+                                    out.append(
+                                        f'<div style="position:relative;padding:6px 0 6px 22px;font-size:0.9rem;'
+                                        f'color:#e2e8f0;line-height:1.6">'
+                                        f'<span style="position:absolute;left:6px;top:13px;width:8px;height:8px;'
+                                        f'border-radius:50%;background:{_accent};box-shadow:0 0 8px {_accent}80"></span>'
+                                        f'{_inline(m.group(1))}</div>')
+                                    continue
+                                # Numbered list
+                                m = _re_md.match(r'^(\d+)[\.\)]\s+(.+)$', s.lstrip())
+                                if m:
+                                    if not in_list:
+                                        out.append(f'<div style="margin:6px 0">'); in_list = True
+                                    out.append(
+                                        f'<div style="display:flex;gap:10px;margin:6px 0;align-items:flex-start">'
+                                        f'<div style="background:{_accent}22;color:{_accent};border:1px solid {_accent};'
+                                        f'border-radius:4px;padding:0 7px;font-size:0.7rem;font-weight:800;'
+                                        f'min-width:22px;text-align:center;flex-shrink:0;height:20px;'
+                                        f'display:flex;align-items:center;justify-content:center">{m.group(1)}</div>'
+                                        f'<div style="flex:1;font-size:0.9rem;color:#e2e8f0;line-height:1.55">'
+                                        f'{_inline(m.group(2))}</div></div>')
+                                    continue
+                                # H1 — великий заголовок
+                                m = _re_md.match(r'^#\s+(.+)$', s)
+                                if m:
+                                    _close_list()
+                                    out.append(
+                                        f'<div style="font-size:1.25rem;font-weight:800;color:#f1f5f9;'
+                                        f'margin:14px 0 12px 0;padding:0 0 8px 0;border-bottom:2px solid {_accent}55">'
+                                        f'{_inline(m.group(1))}</div>')
+                                    continue
+                                # H2
+                                m = _re_md.match(r'^##\s+(.+)$', s)
+                                if m:
+                                    _close_list()
+                                    out.append(
+                                        f'<div style="font-size:0.78rem;font-weight:800;color:{_accent};'
+                                        f'margin:14px 0 8px 0;text-transform:uppercase;letter-spacing:0.1em">'
+                                        f'{_inline(m.group(1))}</div>')
+                                    continue
+                                # H3
+                                m = _re_md.match(r'^###\s+(.+)$', s)
+                                if m:
+                                    _close_list()
+                                    out.append(
+                                        f'<div style="font-size:0.95rem;font-weight:700;color:#cbd5e1;'
+                                        f'margin:10px 0 6px 0">{_inline(m.group(1))}</div>')
+                                    continue
+                                # Quote
+                                m = _re_md.match(r'^>\s*(.+)$', s.lstrip())
+                                if m:
+                                    _close_list()
+                                    out.append(
+                                        f'<div style="margin:8px 0;padding:10px 14px;border-left:3px solid {_accent};'
+                                        f'background:rgba(59,130,246,0.06);border-radius:0 6px 6px 0;'
+                                        f'font-style:italic;color:#cbd5e1;font-size:0.88rem;line-height:1.55">'
+                                        f'"{_inline(m.group(1))}"</div>')
+                                    continue
+                                # Plain paragraph
+                                _close_list()
+                                out.append(
+                                    f'<div style="font-size:0.9rem;color:#e2e8f0;line-height:1.65;'
+                                    f'margin:6px 0">{_inline(s.strip())}</div>')
+                            _close_list()
+                            return "".join(out)
+
+                        _body_html = _md_to_html(_ans)
+                        st.markdown(f"""
+<div style="background:linear-gradient(135deg,#0b1425,#152036);border:1px solid #3b82f655;
+            border-left:4px solid #3b82f6;border-radius:12px;padding:20px 26px;margin-bottom:14px;
+            box-shadow:0 4px 12px rgba(0,0,0,0.3)">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:10px;
+              border-bottom:1px solid #3b82f633">
+    <div style="font-size:1.4rem">🧠</div>
+    <div>
+      <div style="font-size:0.7rem;color:#3b82f6;letter-spacing:0.15em;font-weight:800;
+                  text-transform:uppercase">AI-аналіз</div>
+      <div style="font-size:0.95rem;color:#cbd5e1;font-weight:600;margin-top:2px">
+        Структурований розбір вибірки відгуків
+      </div>
+    </div>
+  </div>
+  {_body_html}
+</div>
+""", unsafe_allow_html=True)
 
                     with st.expander("📄 Сирий текст AI (для копіювання)", expanded=False):
                         st.text(_ans)
@@ -11992,6 +12134,14 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
 
 
 
