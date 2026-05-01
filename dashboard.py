@@ -8394,18 +8394,26 @@ def show_custom_quality():
                 if _ans.startswith(("⚠️", "❌")):
                     st.error(_ans)
                 else:
+                    # Захист від старого кешу в session_state (перед оновленням схеми)
+                    _rows         = r.get("rows", 0)
+                    _total        = r.get("total_reviews", _rows)
+                    _asin_cnt     = r.get("asin_count", 0)
+                    _avg_r        = r.get("avg_rating", 0.0)
+                    _neg_pct_v    = r.get("neg_pct", 0.0)
+                    _preset_lbl   = r.get("preset", "—")
+
                     # ── Executive summary header ──
-                    _neg_color = ("#ef4444" if r['neg_pct'] >= 30
-                                  else "#f59e0b" if r['neg_pct'] >= 10 else "#22c55e")
-                    _rating_color = ("#22c55e" if r['avg_rating'] >= 4.0
-                                     else "#f59e0b" if r['avg_rating'] >= 3.0 else "#ef4444")
+                    _neg_color = ("#ef4444" if _neg_pct_v >= 30
+                                  else "#f59e0b" if _neg_pct_v >= 10 else "#22c55e")
+                    _rating_color = ("#22c55e" if _avg_r >= 4.0
+                                     else "#f59e0b" if _avg_r >= 3.0 else "#ef4444")
                     st.markdown(f"""
 <div style="background:linear-gradient(135deg,#0f172a,#1e293b);border:1px solid #334155;
             border-radius:12px;padding:18px 24px;margin-bottom:14px">
   <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;align-items:center">
     <div>
       <div style="font-size:10px;color:#64748b;letter-spacing:0.15em;font-weight:700;text-transform:uppercase">
-        EXECUTIVE SUMMARY · {r['preset']}
+        EXECUTIVE SUMMARY · {_preset_lbl}
       </div>
       <div style="font-size:1.2rem;font-weight:700;color:#f1f5f9;margin-top:4px">
         🧠 AI-розбір вибірки відгуків
@@ -8413,23 +8421,23 @@ def show_custom_quality():
     </div>
     <div style="display:flex;gap:18px;flex-wrap:wrap">
       <div style="text-align:center">
-        <div style="font-size:1.5rem;font-weight:800;color:#e2e8f0;line-height:1">{r['rows']}</div>
+        <div style="font-size:1.5rem;font-weight:800;color:#e2e8f0;line-height:1">{_rows}</div>
         <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">в аналізі</div>
       </div>
       <div style="text-align:center">
-        <div style="font-size:1.5rem;font-weight:800;color:#3b82f6;line-height:1">{r['total_reviews']}</div>
+        <div style="font-size:1.5rem;font-weight:800;color:#3b82f6;line-height:1">{_total}</div>
         <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">всього</div>
       </div>
       <div style="text-align:center">
-        <div style="font-size:1.5rem;font-weight:800;color:#a855f7;line-height:1">{r['asin_count']}</div>
+        <div style="font-size:1.5rem;font-weight:800;color:#a855f7;line-height:1">{_asin_cnt}</div>
         <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">asin</div>
       </div>
       <div style="text-align:center">
-        <div style="font-size:1.5rem;font-weight:800;color:{_neg_color};line-height:1">{r['neg_pct']:.0f}%</div>
+        <div style="font-size:1.5rem;font-weight:800;color:{_neg_color};line-height:1">{_neg_pct_v:.0f}%</div>
         <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">негативу</div>
       </div>
       <div style="text-align:center">
-        <div style="font-size:1.5rem;font-weight:800;color:{_rating_color};line-height:1">{r['avg_rating']:.2f}★</div>
+        <div style="font-size:1.5rem;font-weight:800;color:{_rating_color};line-height:1">{_avg_r:.2f}★</div>
         <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">середнє</div>
       </div>
     </div>
@@ -8446,13 +8454,13 @@ def show_custom_quality():
                 st.download_button(
                     "📥 Зберегти відповідь .md",
                     f"# AI Analysis · Custom Quality\n\n"
-                    f"**Preset:** {r['preset']}\n\n"
-                    f"**Prompt:** {r['prompt']}\n\n"
-                    f"**Reviews analyzed:** {r['rows']} of {r['total_reviews']}\n"
-                    f"**ASIN count:** {r['asin_count']} · "
-                    f"**Avg rating:** {r['avg_rating']:.2f}★ · "
-                    f"**Negative:** {r['neg_pct']:.1f}%\n\n"
-                    f"---\n\n{r['answer']}".encode(),
+                    f"**Preset:** {r.get('preset','—')}\n\n"
+                    f"**Prompt:** {r.get('prompt','')}\n\n"
+                    f"**Reviews analyzed:** {r.get('rows',0)} of {r.get('total_reviews', r.get('rows',0))}\n"
+                    f"**ASIN count:** {r.get('asin_count',0)} · "
+                    f"**Avg rating:** {r.get('avg_rating',0):.2f}★ · "
+                    f"**Negative:** {r.get('neg_pct',0):.1f}%\n\n"
+                    f"---\n\n{r.get('answer','')}".encode(),
                     "cq_ai_analysis.md", "text/markdown",
                     key="dl_cq_ai_md",
                 )
@@ -11984,6 +11992,8 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
 
 
 
