@@ -7697,11 +7697,6 @@ def show_custom_quality():
     st.markdown("### 🎯 Custom Quality")
     engine = get_engine()
 
-    search_q   = st.sidebar.text_input("🔍 SKU / ASIN / Назва", "", key="cq_search")
-    sel_mp     = st.sidebar.selectbox("🌍 Marketplace:", ["Всі", "Amazon.com", "Amazon.ca", "Amazon.de", "Amazon.co.uk"], key="cq_mp")
-    sel_fc     = st.sidebar.selectbox("📦 Fulfillment:", ["Всі", "FBA (AMAZON_NA)", "FBM (DEFAULT)"], key="cq_fc")
-    sel_status = st.sidebar.selectbox("📊 Статус:", ["Всі", "Active", "Inactive"], key="cq_status")
-
     try:
         with engine.connect() as conn:
             df_all = pd.read_sql(text("SELECT * FROM listings_all"), conn)
@@ -7716,13 +7711,47 @@ def show_custom_quality():
     df_all['quantity']  = pd.to_numeric(df_all['quantity'].replace('', None), errors='coerce').fillna(0)
     df_all['open_date'] = pd.to_datetime(df_all['open_date'], errors='coerce')
 
-    df_f = df_all.merge(df_cat, left_on='asin1', right_on='asin', how='left')
+    df_full = df_all.merge(df_cat, left_on='asin1', right_on='asin', how='left')
 
-    if search_q:
-        mask = (df_f['seller_sku'].astype(str).str.contains(search_q, case=False, na=False) |
-                df_f['asin1'].astype(str).str.contains(search_q, case=False, na=False) |
-                df_f['item_name'].astype(str).str.contains(search_q, case=False, na=False))
-        df_f = df_f[mask]
+    # ── Sidebar фільтри ──
+    st.sidebar.markdown("**🎯 Custom Quality фільтри**")
+
+    asin_input = st.sidebar.text_area(
+        "🔢 ASIN (через кому або з нового рядка)", "",
+        key="cq_asin_input", height=80,
+        placeholder="B0XXXXXXX, B0YYYYYYY"
+    )
+    name_q = st.sidebar.text_input("📝 Назва містить", "", key="cq_name")
+
+    def _opts(col):
+        if col not in df_full.columns: return []
+        return sorted([str(v).strip() for v in df_full[col].dropna().unique()
+                       if str(v).strip()])
+
+    sel_color = st.sidebar.multiselect("🎨 Колір", _opts('color'), key="cq_color")
+    sel_size  = st.sidebar.multiselect("📏 Розмір", _opts('size'),  key="cq_size")
+    sel_brand = st.sidebar.multiselect("🏷 Бренд", _opts('brand'), key="cq_brand")
+
+    sel_mp     = st.sidebar.selectbox("🌍 Marketplace:", ["Всі", "Amazon.com", "Amazon.ca", "Amazon.de", "Amazon.co.uk"], key="cq_mp")
+    sel_fc     = st.sidebar.selectbox("📦 Fulfillment:", ["Всі", "FBA (AMAZON_NA)", "FBM (DEFAULT)"], key="cq_fc")
+    sel_status = st.sidebar.selectbox("📊 Статус:", ["Всі", "Active", "Inactive"], key="cq_status")
+
+    # ── Застосування фільтрів ──
+    df_f = df_full.copy()
+
+    if asin_input.strip():
+        asins = [a.strip().upper() for a in re.split(r'[,\s\n]+', asin_input) if a.strip()]
+        if asins:
+            df_f = df_f[df_f['asin1'].astype(str).str.upper().isin(asins)]
+
+    if name_q:
+        df_f = df_f[df_f['item_name'].astype(str).str.contains(name_q, case=False, na=False)]
+    if sel_color:
+        df_f = df_f[df_f['color'].astype(str).str.strip().isin(sel_color)]
+    if sel_size:
+        df_f = df_f[df_f['size'].astype(str).str.strip().isin(sel_size)]
+    if sel_brand:
+        df_f = df_f[df_f['brand'].astype(str).str.strip().isin(sel_brand)]
     if sel_mp != "Всі":
         df_f = df_f[df_f['marketplace'].astype(str).str.contains(sel_mp.replace("Amazon.", ""), case=False, na=False)]
     if sel_fc == "FBA (AMAZON_NA)":
@@ -7734,6 +7763,7 @@ def show_custom_quality():
     elif sel_status == "Inactive":
         df_f = df_f[df_f['status'].astype(str).str.lower() != 'active']
 
+    # ── Таблиця каталогу ──
     st.markdown("#### 📋 Каталог листингів")
     show_cols = ['seller_sku', 'asin1', 'item_name', 'price', 'quantity', 'status',
                  'fulfillment_channel', 'marketplace', 'open_date']
@@ -7761,6 +7791,45 @@ def show_custom_quality():
     st.caption(f"Показано {len(df_show):,} листингів")
     st.download_button("📥 CSV", df_f[show_cols].to_csv(index=False).encode(),
                        "custom_quality.csv", "text/csv", key="dl_cq")
+
+    # ── Список ASIN для аналізу ──
+    st.markdown("---")
+    st.markdown("#### 🧬 Список ASIN для аналізу")
+
+    unique_asins = sorted(df_f['asin1'].dropna().astype(str).str.strip().unique().tolist())
+    unique_asins = [a for a in unique_asins if a]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Унікальних ASIN", f"{len(unique_asins):,}")
+    c2.metric("Рядків (SKU)",   f"{len(df_f):,}")
+    c3.metric("Активних ASIN",
+              f"{df_f[df_f['status'].astype(str).str.lower()=='active']['asin1'].nunique():,}")
+
+    fmt = st.radio("Формат виводу:",
+                   ["Через кому", "З нового рядка", "JSON-масив"],
+                   horizontal=True, key="cq_asin_fmt")
+
+    if fmt == "Через кому":
+        asin_text = ", ".join(unique_asins)
+    elif fmt == "З нового рядка":
+        asin_text = "\n".join(unique_asins)
+    else:
+        asin_text = json.dumps(unique_asins, ensure_ascii=False, indent=2)
+
+    st.text_area(
+        "📋 Скопіюй для аналізу (Helium10, Keepa, BrightData, тощо):",
+        asin_text, height=240, key="cq_asin_out"
+    )
+
+    cdl1, cdl2 = st.columns(2)
+    with cdl1:
+        st.download_button("📥 ASIN .txt",
+                           ("\n".join(unique_asins)).encode(),
+                           "asins.txt", "text/plain", key="dl_cq_asins_txt")
+    with cdl2:
+        st.download_button("📥 ASIN .csv",
+                           pd.DataFrame({"asin": unique_asins}).to_csv(index=False).encode(),
+                           "asins.csv", "text/csv", key="dl_cq_asins_csv")
 
 
 def show_pricing():
@@ -11284,6 +11353,15 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
 
 
 
