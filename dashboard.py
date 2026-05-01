@@ -7947,114 +7947,186 @@ def show_custom_quality():
             st.success(f"✅ Готово! Циклів: **{st.session_state.scr_cycles}**")
         st.progress(st.session_state.scr_pct, text=st.session_state.scr_label or " ")
 
-        cq_c1, cq_c2, cq_c3 = st.columns([2, 2, 2])
-        with cq_c1:
-            cq_domain = st.selectbox(
-                "🌍 Домен Amazon",
-                ["com", "co.uk", "de", "ca"],
-                key="cq_scr_domain",
+        cq_tab_single, cq_tab_monitor = st.tabs(["🎯 Одноразовий збір", "📊 Моніторинг ASIN"])
+
+        # ─── TAB 1: Одноразовий збір ────────────────────────
+        with cq_tab_single:
+            cq_c1, cq_c2, cq_c3 = st.columns([2, 2, 2])
+            with cq_c1:
+                cq_domain = st.selectbox(
+                    "🌍 Домен Amazon",
+                    ["com", "co.uk", "de", "ca"],
+                    key="cq_scr_domain",
+                    disabled=st.session_state.scr_running,
+                )
+            with cq_c2:
+                cq_source = st.radio(
+                    "🔌 Джерело",
+                    options=['apify', 'brightdata'],
+                    horizontal=True,
+                    format_func=lambda x: "🟡 Apify" if x == 'apify' else "🟣 Bright Data",
+                    key="cq_scr_source",
+                    disabled=st.session_state.scr_running,
+                )
+            with cq_c3:
+                cq_stars = st.multiselect(
+                    "⭐ Зірки",
+                    [1, 2, 3, 4, 5],
+                    default=[1, 2, 3, 4, 5],
+                    key="cq_scr_stars",
+                    disabled=st.session_state.scr_running,
+                )
+
+            cq_max_asins = st.slider(
+                "Скільки ASIN відправити в скрапер (максимум)",
+                min_value=1, max_value=min(200, len(unique_asins)),
+                value=min(20, len(unique_asins)),
                 disabled=st.session_state.scr_running,
+                key="cq_scr_max_asins",
+                help="Більше ASIN = довший збір. Apify: ~30 сек на ASIN/зірку. BD: ~10 сек на ASIN.",
             )
-        with cq_c2:
-            cq_source = st.radio(
-                "🔌 Джерело",
-                options=['apify', 'brightdata'],
-                horizontal=True,
-                format_func=lambda x: "🟡 Apify" if x == 'apify' else "🟣 Bright Data",
-                key="cq_scr_source",
-                disabled=st.session_state.scr_running,
-            )
-        with cq_c3:
-            cq_stars = st.multiselect(
-                "⭐ Зірки",
+
+            cq_run_col1, cq_run_col2 = st.columns([1, 1])
+            with cq_run_col1:
+                if st.session_state.scr_running:
+                    if st.button("⛔ Зупинити", width="stretch", type="secondary", key="cq_scr_stop"):
+                        if st.session_state.scr_stop_event:
+                            st.session_state.scr_stop_event.set()
+                        st.session_state.scr_running = False
+                        st.session_state.scr_done    = True
+                        st.rerun()
+                else:
+                    if st.button(f"🚀 Запустити для {cq_max_asins} ASIN",
+                                 width="stretch", type="primary", key="cq_scr_run"):
+                        target_asins = unique_asins[:cq_max_asins]
+                        cq_urls = [f"https://www.amazon.{cq_domain}/dp/{a}" for a in target_asins]
+
+                        import queue as _queue
+                        import threading as _threading
+                        lq, pq = _queue.Queue(), _queue.Queue()
+                        stop_ev = _threading.Event()
+
+                        st.session_state.scr_logs       = []
+                        st.session_state.scr_pct        = 0
+                        st.session_state.scr_label      = "Старт..."
+                        st.session_state.scr_done       = False
+                        st.session_state.scr_running    = True
+                        st.session_state.scr_cycles     = 0
+                        st.session_state.scr_log_q      = lq
+                        st.session_state.scr_prog_q     = pq
+                        st.session_state.scr_stop_event = stop_ev
+                        st.session_state.cq_run_started_at = dt.datetime.now()
+
+                        if cq_source == 'brightdata':
+                            _fake_monitored = []
+                            for _i, _u in enumerate(cq_urls):
+                                _dom, _asin = _scr_parse_url(_u)
+                                if _asin and _asin != "UNKNOWN":
+                                    _fake_monitored.append((
+                                        -(_i+1), _asin, _dom,
+                                        ",".join(map(str, sorted(cq_stars))) if cq_stars else "1,2,3,4",
+                                        True, None, 0, None, "", "", 0, 0, 0, 'brightdata'
+                                    ))
+                            _threading.Thread(
+                                target=_mon_worker,
+                                args=(_fake_monitored, 100, lq, pq, stop_ev, APIFY_TOKEN_DEFAULT),
+                                daemon=True,
+                            ).start()
+                        else:
+                            _threading.Thread(
+                                target=_scr_worker,
+                                args=(cq_urls, 100, lq, pq, False, stop_ev, APIFY_TOKEN_DEFAULT),
+                                kwargs={"stars": sorted(cq_stars) if cq_stars else [1,2,3,4,5]},
+                                daemon=True,
+                            ).start()
+                        st.rerun()
+            with cq_run_col2:
+                if st.button("🗑 Очистити логи", width="stretch", key="cq_scr_clear_logs",
+                             disabled=st.session_state.scr_running):
+                    st.session_state.scr_logs = []
+                    st.session_state.scr_done = False
+                    st.rerun()
+
+            # Логи
+            cq_logs = st.session_state.scr_logs
+            if cq_logs:
+                cq_log_html = "<br>".join(line.replace("<", "&lt;").replace(">", "&gt;")
+                                          for line in cq_logs[-80:])
+                st.markdown(f"""
+                <div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;
+                            padding:14px 18px;font-family:'Courier New',monospace;font-size:12.5px;
+                            line-height:1.7;max-height:340px;overflow-y:auto;color:#ccc">
+                  {cq_log_html}
+                </div>""", unsafe_allow_html=True)
+
+        # ─── TAB 2: Моніторинг ───────────────────────────────
+        with cq_tab_monitor:
+            st.caption("Додає всі відфільтровані ASIN у таблицю `monitored_asins`. "
+                       "Cron `daily_monitor.py` (06:00 UTC щодня) автоматично "
+                       "буде збирати нові відгуки.")
+
+            # Скільки з поточних ASIN вже в моніторингу
+            try:
+                _cm = _scr_get_conn(); _cur = _cm.cursor()
+                _cur.execute(
+                    "SELECT asin FROM monitored_asins WHERE asin = ANY(%s) AND is_active=TRUE",
+                    (list(unique_asins),)
+                )
+                already_monitored = {r[0] for r in _cur.fetchall()}
+                _cur.close(); _cm.close()
+            except Exception:
+                already_monitored = set()
+
+            mc1, mc2, mc3 = st.columns(3)
+            mc1.metric("Унікальних ASIN у фільтрі", f"{len(unique_asins):,}")
+            mc2.metric("Уже в моніторингу",          f"{len(already_monitored):,}")
+            mc3.metric("Будуть додані / оновлені",   f"{len(unique_asins) - len(already_monitored):,}")
+
+            mn_c1, mn_c2 = st.columns([1, 1])
+            with mn_c1:
+                mon_domain = st.selectbox(
+                    "🌍 Домен Amazon",
+                    ["com", "co.uk", "de", "ca"],
+                    key="cq_mon_domain",
+                )
+            with mn_c2:
+                mon_source = st.radio(
+                    "🔌 Джерело для авто-збору",
+                    options=['apify', 'brightdata'],
+                    horizontal=True,
+                    format_func=lambda x: "🟡 Apify" if x == 'apify' else "🟣 Bright Data",
+                    key="cq_mon_source",
+                )
+
+            mon_stars = st.multiselect(
+                "⭐ Які зірки моніторити",
                 [1, 2, 3, 4, 5],
-                default=[1, 2, 3, 4, 5],
-                key="cq_scr_stars",
-                disabled=st.session_state.scr_running,
+                default=[1, 2, 3, 4],
+                key="cq_mon_stars",
+                help="За замовчуванням 1-4★ — це найбільш цікаві відгуки для Custom Quality.",
             )
 
-        cq_max_asins = st.slider(
-            "Скільки ASIN відправити в скрапер (максимум)",
-            min_value=1, max_value=min(200, len(unique_asins)),
-            value=min(20, len(unique_asins)),
-            disabled=st.session_state.scr_running,
-            key="cq_scr_max_asins",
-            help="Більше ASIN = довший збір. Apify: ~30 сек на ASIN/зірку. BD: ~10 сек на ASIN.",
-        )
+            mon_note = st.text_input(
+                "📝 Нотатка (опц.)",
+                value="Custom Quality monitoring",
+                key="cq_mon_note",
+            )
 
-        cq_run_col1, cq_run_col2 = st.columns([1, 1])
-        with cq_run_col1:
-            if st.session_state.scr_running:
-                if st.button("⛔ Зупинити", width="stretch", type="secondary", key="cq_scr_stop"):
-                    if st.session_state.scr_stop_event:
-                        st.session_state.scr_stop_event.set()
-                    st.session_state.scr_running = False
-                    st.session_state.scr_done    = True
-                    st.rerun()
-            else:
-                if st.button(f"🚀 Запустити для {cq_max_asins} ASIN",
-                             width="stretch", type="primary", key="cq_scr_run"):
-                    target_asins = unique_asins[:cq_max_asins]
-                    cq_urls = [f"https://www.amazon.{cq_domain}/dp/{a}" for a in target_asins]
-
-                    import queue as _queue
-                    import threading as _threading
-                    lq, pq = _queue.Queue(), _queue.Queue()
-                    stop_ev = _threading.Event()
-
-                    st.session_state.scr_logs       = []
-                    st.session_state.scr_pct        = 0
-                    st.session_state.scr_label      = "Старт..."
-                    st.session_state.scr_done       = False
-                    st.session_state.scr_running    = True
-                    st.session_state.scr_cycles     = 0
-                    st.session_state.scr_log_q      = lq
-                    st.session_state.scr_prog_q     = pq
-                    st.session_state.scr_stop_event = stop_ev
-                    # позначка часу старту — покажемо «нові з цього прогону» в таблиці нижче
-                    st.session_state.cq_run_started_at = dt.datetime.now()
-
-                    if cq_source == 'brightdata':
-                        _fake_monitored = []
-                        for _i, _u in enumerate(cq_urls):
-                            _dom, _asin = _scr_parse_url(_u)
-                            if _asin and _asin != "UNKNOWN":
-                                _fake_monitored.append((
-                                    -(_i+1), _asin, _dom,
-                                    ",".join(map(str, sorted(cq_stars))) if cq_stars else "1,2,3,4",
-                                    True, None, 0, None, "", "", 0, 0, 0, 'brightdata'
-                                ))
-                        _threading.Thread(
-                            target=_mon_worker,
-                            args=(_fake_monitored, 100, lq, pq, stop_ev, APIFY_TOKEN_DEFAULT),
-                            daemon=True,
-                        ).start()
-                    else:
-                        _threading.Thread(
-                            target=_scr_worker,
-                            args=(cq_urls, 100, lq, pq, False, stop_ev, APIFY_TOKEN_DEFAULT),
-                            kwargs={"stars": sorted(cq_stars) if cq_stars else [1,2,3,4,5]},
-                            daemon=True,
-                        ).start()
-                    st.rerun()
-        with cq_run_col2:
-            if st.button("🗑 Очистити логи", width="stretch", key="cq_scr_clear_logs",
-                         disabled=st.session_state.scr_running):
-                st.session_state.scr_logs = []
-                st.session_state.scr_done = False
-                st.rerun()
-
-        # Логи
-        cq_logs = st.session_state.scr_logs
-        if cq_logs:
-            cq_log_html = "<br>".join(line.replace("<", "&lt;").replace(">", "&gt;")
-                                      for line in cq_logs[-80:])
-            st.markdown(f"""
-            <div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;
-                        padding:14px 18px;font-family:'Courier New',monospace;font-size:12.5px;
-                        line-height:1.7;max-height:340px;overflow-y:auto;color:#ccc">
-              {cq_log_html}
-            </div>""", unsafe_allow_html=True)
+            if st.button(f"➕ Додати {len(unique_asins)} ASIN у моніторинг",
+                         type="primary", key="cq_mon_add",
+                         disabled=not unique_asins):
+                stars_str = ",".join(map(str, sorted(mon_stars))) if mon_stars else "1,2,3,4"
+                added, updated = 0, 0
+                _user_name = (user.get("username") or user.get("email") or "anonymous"
+                              if isinstance(user, dict) else "anonymous")
+                for a in unique_asins:
+                    was_in = a in already_monitored
+                    if _mon_add(a, mon_domain, stars_str, mon_note, _user_name, mon_source):
+                        if was_in: updated += 1
+                        else:      added   += 1
+                st.success(f"✅ Додано: **{added}** · Оновлено: **{updated}** · "
+                           f"Всього в моніторингу за цим фільтром: **{added+updated+len(already_monitored - set(unique_asins))}**")
+                st.info("Управляти списком моніторингу можна в розділі «🕷 Скрапер відгуків» → «📊 Моніторинг ASIN».")
 
     # ══════════════════════════════════════════════════════════
     # 🆕 Нові відгуки
@@ -11660,6 +11732,15 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
 
 
 
