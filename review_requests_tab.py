@@ -314,4 +314,4 @@ def show_review_requests_tab(engine):
         st.dataframe(tbl, use_container_width=True, height=400, hide_index=True)
         st.caption(f"Показано {len(tbl):,} записів")
     else:
-        st.info("Таблиця порожня.")
+        st.info("Таблиця порожня.") 
