@@ -8305,21 +8305,13 @@ def show_custom_quality():
                     "Все коротко, у markdown.",
             }
 
-            ai_c1, ai_c2 = st.columns([2, 3])
-            with ai_c1:
-                ai_preset_key = st.selectbox(
-                    "🎯 Пресет",
-                    list(ai_presets.keys()),
-                    key="cq_ai_preset",
-                )
-            with ai_c2:
-                ai_max_rows = st.slider(
-                    "Скільки відгуків відправити в AI (max)",
-                    min_value=10, max_value=min(500, len(df_new_reviews)),
-                    value=min(100, len(df_new_reviews)),
-                    key="cq_ai_max_rows",
-                    help="Більше = глибший аналіз, але дорожче по токенах і повільніше.",
-                )
+            ai_preset_key = st.selectbox(
+                "🎯 Пресет",
+                list(ai_presets.keys()),
+                key="cq_ai_preset",
+            )
+            # Беремо все що в таблиці (з safety cap 500 щоб AI не задихнувся на токенах)
+            ai_max_rows = min(500, len(df_new_reviews))
 
             # Якщо змінили пресет — підставимо його як value (без перезапису користувацького тексту)
             _preset_text = ai_presets.get(ai_preset_key, "")
@@ -8366,13 +8358,18 @@ def show_custom_quality():
                         f"{df_new_reviews['rating'].value_counts().sort_index().to_dict()}")
 
                 full_prompt = (
-                    f"Ти — досвідчений Amazon FBA Quality аналітик для бренду {STORE_NAME if 'STORE_NAME' in globals() else 'MR.EQUIPP'}.\n"
-                    f"Відповідай українською, у markdown, конкретно і без води.\n\n"
+                    f"Ти — senior Amazon FBA Quality аналітик для бренду MR.EQUIPP.\n\n"
                     f"=== МЕТА ===\n{meta}\n\n"
-                    f"=== ЗАВДАННЯ ВІД КОРИСТУВАЧА ===\n{ai_prompt.strip()}\n\n"
+                    f"=== ЗАВДАННЯ ===\n{ai_prompt.strip()}\n\n"
                     f"=== ВІДГУКИ (формат: [rating★ · asin/domain · date] title :: content) ===\n"
                     f"{reviews_block}\n\n"
-                    f"=== ВІДПОВІДЬ ==="
+                    f"Дай стислий board-level аналіз у ТОЧНОМУ форматі (не додавай інших секцій):\n"
+                    f"🔥 ТРЕНД: [1-2 речення про загальну картину sentiment'у і динаміку]\n"
+                    f"⚠️ КРИТИЧНІ ПРОБЛЕМИ: [топ 3 повторюваних скарги з цифрами і ASIN; якщо нічого критичного — 'немає']\n"
+                    f"📦 ДЕТАЛІ: [топ ASIN/варіанти/розміри/кольори що мають проблеми — нумерований список до 5]\n"
+                    f"✅ ПОЗИТИВ: [що хвалять найбільше — креатив-хуки для маркетингу; якщо нічого — '—']\n"
+                    f"🎯 ДІЇ: [3 конкретні кроки що зробити]\n\n"
+                    f"Мова: українська. Без markdown жирного. Пиши коротко, конкретно, з цифрами."
                 )
 
                 with st.spinner("🤖 AI аналізує відгуки..."):
@@ -8385,25 +8382,76 @@ def show_custom_quality():
                     "preset": ai_preset_key,
                     "rows":   len(rows_for_ai),
                     "answer": ai_text,
+                    "asin_count":   df_new_reviews['asin'].nunique(),
+                    "total_reviews": len(df_new_reviews),
+                    "avg_rating":   float(df_new_reviews['rating'].mean()) if len(df_new_reviews) else 0,
+                    "neg_pct":      (float((df_new_reviews['rating'] <= 2).sum()) / max(len(df_new_reviews), 1) * 100),
                 }
 
             if "cq_ai_result" in st.session_state:
                 r = st.session_state.cq_ai_result
-                st.markdown(
-                    f"<div style='background:#0f172a;border:1px solid #334155;"
-                    f"border-radius:10px;padding:14px 18px;margin-top:8px'>"
-                    f"<div style='font-size:11px;color:#64748b;letter-spacing:0.05em;"
-                    f"text-transform:uppercase;font-weight:700;margin-bottom:6px'>"
-                    f"Промпт: {r['preset']} · {r['rows']} відгуків</div>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-                st.markdown(r["answer"])
+                _ans = r.get("answer", "")
+                if _ans.startswith(("⚠️", "❌")):
+                    st.error(_ans)
+                else:
+                    # ── Executive summary header ──
+                    _neg_color = ("#ef4444" if r['neg_pct'] >= 30
+                                  else "#f59e0b" if r['neg_pct'] >= 10 else "#22c55e")
+                    _rating_color = ("#22c55e" if r['avg_rating'] >= 4.0
+                                     else "#f59e0b" if r['avg_rating'] >= 3.0 else "#ef4444")
+                    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#0f172a,#1e293b);border:1px solid #334155;
+            border-radius:12px;padding:18px 24px;margin-bottom:14px">
+  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;align-items:center">
+    <div>
+      <div style="font-size:10px;color:#64748b;letter-spacing:0.15em;font-weight:700;text-transform:uppercase">
+        EXECUTIVE SUMMARY · {r['preset']}
+      </div>
+      <div style="font-size:1.2rem;font-weight:700;color:#f1f5f9;margin-top:4px">
+        🧠 AI-розбір вибірки відгуків
+      </div>
+    </div>
+    <div style="display:flex;gap:18px;flex-wrap:wrap">
+      <div style="text-align:center">
+        <div style="font-size:1.5rem;font-weight:800;color:#e2e8f0;line-height:1">{r['rows']}</div>
+        <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">в аналізі</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:1.5rem;font-weight:800;color:#3b82f6;line-height:1">{r['total_reviews']}</div>
+        <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">всього</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:1.5rem;font-weight:800;color:#a855f7;line-height:1">{r['asin_count']}</div>
+        <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">asin</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:1.5rem;font-weight:800;color:{_neg_color};line-height:1">{r['neg_pct']:.0f}%</div>
+        <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">негативу</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:1.5rem;font-weight:800;color:{_rating_color};line-height:1">{r['avg_rating']:.2f}★</div>
+        <div style="font-size:0.65rem;color:#64748b;letter-spacing:0.08em;text-transform:uppercase">середнє</div>
+      </div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+                    # ── McKinsey-style картки (5 секцій) ──
+                    _render_ai_cards(_ans, _AGENT_CARDS_CFG, columns=2)
+
+                    with st.expander("📄 Сирий текст AI (для копіювання)", expanded=False):
+                        st.text(_ans)
+
                 st.download_button(
                     "📥 Зберегти відповідь .md",
                     f"# AI Analysis · Custom Quality\n\n"
+                    f"**Preset:** {r['preset']}\n\n"
                     f"**Prompt:** {r['prompt']}\n\n"
-                    f"**Reviews analyzed:** {r['rows']}\n\n"
+                    f"**Reviews analyzed:** {r['rows']} of {r['total_reviews']}\n"
+                    f"**ASIN count:** {r['asin_count']} · "
+                    f"**Avg rating:** {r['avg_rating']:.2f}★ · "
+                    f"**Negative:** {r['neg_pct']:.1f}%\n\n"
                     f"---\n\n{r['answer']}".encode(),
                     "cq_ai_analysis.md", "text/markdown",
                     key="dl_cq_ai_md",
@@ -11936,6 +11984,15 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
 
 
 
