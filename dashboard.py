@@ -7877,7 +7877,32 @@ def show_custom_quality():
         value=asin_text, height=240,
     )
 
-    cdl1, cdl2 = st.columns(2)
+    cdl0, cdl1, cdl2 = st.columns(3)
+    with cdl0:
+        import json as _json_l
+        js_payload = _json_l.dumps(asin_text)
+        components.html(f"""
+        <button id="cq_copy_btn" onclick='
+            navigator.clipboard.writeText({js_payload}).then(()=>{{
+                const b=document.getElementById("cq_copy_btn");
+                b.innerText="✅ Скопійовано!";
+                b.style.background="#16a34a";
+                setTimeout(()=>{{b.innerText="📋 Копіювати ASIN"; b.style.background="#dc2626";}},1500);
+            }}).catch(err=>{{
+                document.getElementById("cq_copy_btn").innerText="❌ Помилка";
+            }});
+        '
+        style="background:#dc2626;color:white;border:none;padding:10px 16px;
+               border-radius:8px;font-weight:700;cursor:pointer;font-size:14px;
+               width:100%;height:40px;box-shadow:0 2px 4px rgba(220,38,38,0.3);
+               transition:transform 0.05s;"
+        onmouseover="this.style.background='#b91c1c'"
+        onmouseout="this.style.background='#dc2626'"
+        onmousedown="this.style.transform='scale(0.97)'"
+        onmouseup="this.style.transform='scale(1)'">
+        📋 Копіювати ASIN
+        </button>
+        """, height=50)
     with cdl1:
         st.download_button("📥 ASIN .txt",
                            ("\n".join(unique_asins)).encode(),
@@ -11409,6 +11434,14 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
 
 
 
