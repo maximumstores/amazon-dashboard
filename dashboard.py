@@ -7780,13 +7780,52 @@ def show_custom_quality():
         df_f = df_f[df_f['status'].astype(str).str.lower() != 'active']
 
     # ── Таблиця каталогу ──
-    st.markdown("#### 📋 Каталог листингів")
+    hcol1, hcol2 = st.columns([3, 2])
+    with hcol1:
+        st.markdown("#### 📋 Каталог листингів")
+    with hcol2:
+        view_mode = st.radio(
+            "Групування:",
+            ["По ASIN (дедупліковано)", "По SKU (всі рядки)"],
+            horizontal=True, key="cq_view_mode", label_visibility="collapsed",
+        )
+
+    if view_mode.startswith("По ASIN"):
+        df_v = df_f.copy()
+        df_v['_active'] = (df_v['status'].astype(str).str.lower() == 'active').astype(int)
+
+        def _join_unique(s):
+            vals = [str(v).strip() for v in s if pd.notna(v) and str(v).strip()]
+            return ', '.join(sorted(set(vals))) if vals else ''
+
+        agg = {
+            'seller_sku':          'first',
+            'item_name':           'first',
+            'price':               'mean',
+            'quantity':            'sum',
+            '_active':             'max',
+            'fulfillment_channel': 'first',
+            'marketplace':         'first',
+            'open_date':           'min',
+        }
+        for c, fn in [('brand', 'first'), ('size', _join_unique),
+                      ('color', _join_unique), ('sales_rank', 'first'),
+                      ('main_image_url', 'first')]:
+            if c in df_v.columns: agg[c] = fn
+
+        df_v = df_v.groupby('asin1', as_index=False).agg(agg)
+        df_v['status'] = df_v['_active'].map({1: 'Active', 0: 'Inactive'})
+        df_v['price']  = df_v['price'].round(2)
+        df_v = df_v.drop(columns=['_active'])
+    else:
+        df_v = df_f.copy()
+
     show_cols = ['seller_sku', 'asin1', 'item_name', 'price', 'quantity', 'status',
                  'fulfillment_channel', 'marketplace', 'open_date']
     for c in ['brand', 'size', 'color', 'sales_rank', 'main_image_url']:
-        if c in df_f.columns: show_cols.append(c)
-    show_cols = [c for c in show_cols if c in df_f.columns]
-    df_show = df_f[show_cols].sort_values('price', ascending=False).reset_index(drop=True)
+        if c in df_v.columns: show_cols.append(c)
+    show_cols = [c for c in show_cols if c in df_v.columns]
+    df_show = df_v[show_cols].sort_values('price', ascending=False).reset_index(drop=True)
     col_cfg = {
         'seller_sku':          st.column_config.TextColumn("SKU"),
         'asin1':               st.column_config.TextColumn("ASIN"),
@@ -7804,8 +7843,8 @@ def show_custom_quality():
         'main_image_url':      st.column_config.ImageColumn("Фото", width="small"),
     }
     st.dataframe(df_show, column_config=col_cfg, width="stretch", hide_index=True, height=500)
-    st.caption(f"Показано {len(df_show):,} листингів")
-    st.download_button("📥 CSV", df_f[show_cols].to_csv(index=False).encode(),
+    st.caption(f"Показано {len(df_show):,} рядків ({df_f['asin1'].nunique():,} унікальних ASIN, {len(df_f):,} SKU)")
+    st.download_button("📥 CSV", df_show.to_csv(index=False).encode(),
                        "custom_quality.csv", "text/csv", key="dl_cq")
 
     # ── Список ASIN для аналізу ──
@@ -11369,6 +11408,15 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
 
 
 
