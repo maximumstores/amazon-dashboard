@@ -8405,12 +8405,29 @@ def show_custom_quality():
                     st.error(_ans)
                 else:
                     # Захист від старого кешу в session_state (перед оновленням схеми)
-                    _rows         = r.get("rows", 0)
-                    _total        = r.get("total_reviews", _rows)
-                    _asin_cnt     = r.get("asin_count", 0)
-                    _avg_r        = r.get("avg_rating", 0.0)
-                    _neg_pct_v    = r.get("neg_pct", 0.0)
-                    _preset_lbl   = r.get("preset", "—")
+                    _rows       = r.get("rows", 0)
+                    _preset_lbl = r.get("preset", "—")
+                    # Якщо в кеші немає нових полів — рахуємо з поточного df_new_reviews
+                    _has_new_fields = all(k in r for k in
+                                          ("asin_count", "avg_rating", "neg_pct", "total_reviews"))
+                    if _has_new_fields:
+                        _total      = r["total_reviews"]
+                        _asin_cnt   = r["asin_count"]
+                        _avg_r      = r["avg_rating"]
+                        _neg_pct_v  = r["neg_pct"]
+                    else:
+                        _total     = len(df_new_reviews)
+                        _asin_cnt  = int(df_new_reviews['asin'].nunique()) if _total else 0
+                        _avg_r     = float(df_new_reviews['rating'].mean()) if _total else 0.0
+                        _neg_pct_v = (float((df_new_reviews['rating'] <= 2).sum())
+                                      / max(_total, 1) * 100) if _total else 0.0
+                        # Backfill кеш — наступний рендер буде швидшим
+                        r.update({
+                            "total_reviews": _total,
+                            "asin_count":    _asin_cnt,
+                            "avg_rating":    _avg_r,
+                            "neg_pct":       _neg_pct_v,
+                        })
 
                     # ── Executive summary header ──
                     _neg_color = ("#ef4444" if _neg_pct_v >= 30
@@ -12134,6 +12151,15 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
 
 
 
