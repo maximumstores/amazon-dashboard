@@ -7713,25 +7713,32 @@ def show_custom_quality():
 
     df_full = df_all.merge(df_cat, left_on='asin1', right_on='asin', how='left')
 
-    # ── Sidebar фільтри ──
-    st.sidebar.markdown("**🎯 Custom Quality фільтри**")
-
-    asin_input = st.sidebar.text_area(
-        "🔢 ASIN (через кому або з нового рядка)", "",
-        key="cq_asin_input", height=80,
-        placeholder="B0XXXXXXX, B0YYYYYYY"
-    )
-    name_q = st.sidebar.text_input("📝 Назва містить", "", key="cq_name")
-
     def _opts(col):
         if col not in df_full.columns: return []
         return sorted([str(v).strip() for v in df_full[col].dropna().unique()
                        if str(v).strip()])
 
-    sel_color = st.sidebar.multiselect("🎨 Колір", _opts('color'), key="cq_color")
-    sel_size  = st.sidebar.multiselect("📏 Розмір", _opts('size'),  key="cq_size")
-    sel_brand = st.sidebar.multiselect("🏷 Бренд", _opts('brand'), key="cq_brand")
+    # ── Фільтри над таблицею ──
+    with st.container(border=True):
+        st.markdown("**🔍 Фільтри**")
+        r1c1, r1c2, r1c3, r1c4 = st.columns([2, 2, 2, 2])
+        with r1c1:
+            sel_size  = st.multiselect("📏 Розмір", _opts('size'),  key="cq_size")
+        with r1c2:
+            sel_color = st.multiselect("🎨 Колір", _opts('color'), key="cq_color")
+        with r1c3:
+            sel_brand = st.multiselect("🏷 Бренд", _opts('brand'), key="cq_brand")
+        with r1c4:
+            name_q = st.text_input("📝 Назва містить", "", key="cq_name",
+                                   placeholder="напр. Merino")
 
+        asin_input = st.text_area(
+            "🔢 ASIN (через кому, пробіл або з нового рядка)", "",
+            key="cq_asin_input", height=70,
+            placeholder="B0XXXXXXX, B0YYYYYYY"
+        )
+
+    # ── Sidebar (глобальні) ──
     sel_mp     = st.sidebar.selectbox("🌍 Marketplace:", ["Всі", "Amazon.com", "Amazon.ca", "Amazon.de", "Amazon.co.uk"], key="cq_mp")
     sel_fc     = st.sidebar.selectbox("📦 Fulfillment:", ["Всі", "FBA (AMAZON_NA)", "FBM (DEFAULT)"], key="cq_fc")
     sel_status = st.sidebar.selectbox("📊 Статус:", ["Всі", "Active", "Inactive"], key="cq_status")
@@ -11353,6 +11360,10 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
 
 
 
