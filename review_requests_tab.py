@@ -283,16 +283,43 @@ def show_review_requests_tab(engine):
                        "Перевір `DATABASE_URL` в Streamlit secrets — він може вказувати на іншу БД, "
                        "ніж .env вашого sender'а.")
 
-        # 4) Чи існують views
-        views = _qdf(engine, """
-            SELECT table_name FROM information_schema.views
-            WHERE table_name LIKE 'v_review_requests%'
-            ORDER BY table_name
+        # 4) Контекст підключення
+        ctx = _qdf(engine, """
+            SELECT current_database() AS db,
+                   current_user        AS usr,
+                   current_schema()    AS schema,
+                   current_schemas(true)::text AS search_path
         """)
-        if not views.empty:
-            st.write(f"**Views: {', '.join(views['table_name'].tolist())}**")
+        if not ctx.empty:
+            st.write("**Контекст підключення:**")
+            st.dataframe(ctx, hide_index=True, use_container_width=True)
+
+        # 5) Усі таблиці review_requests у БД (по всіх схемах) — з лічильниками
+        all_tabs = _qdf(engine, """
+            SELECT table_schema, table_name
+            FROM information_schema.tables
+            WHERE table_name = 'review_requests'
+            ORDER BY table_schema
+        """)
+        if not all_tabs.empty:
+            st.write(f"**Таблиці `review_requests` у схемах:** "
+                     f"`{', '.join(all_tabs['table_schema'].tolist())}`")
+            for sch in all_tabs['table_schema'].tolist():
+                cnt = _qdf(engine, f'SELECT COUNT(*) AS n FROM "{sch}".review_requests')
+                if not cnt.empty:
+                    st.write(f"   • `{sch}.review_requests`: **{int(cnt.iloc[0]['n'])}** рядків")
+
+        # 6) Views у всіх схемах
+        all_views = _qdf(engine, """
+            SELECT table_schema, table_name FROM information_schema.views
+            WHERE table_name LIKE 'v_review_requests%'
+            ORDER BY table_schema, table_name
+        """)
+        if not all_views.empty:
+            st.write("**Views (схема.назва):**")
+            st.dataframe(all_views, hide_index=True, use_container_width=True)
         else:
-            st.error("❌ Views `v_review_requests_*` НЕ створені — DDL-міграція не пройшла.")
+            st.error("❌ Views `v_review_requests_*` НЕ створені.")
 
         # 5) Що бачить UI під своїм STORE_NAME
         ui_view = _qdf(
