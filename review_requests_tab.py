@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS review_requests (
     status         VARCHAR(20)  NOT NULL DEFAULT 'sent',
     error_msg      TEXT,
     marketplace_id VARCHAR(30)  NOT NULL DEFAULT 'ATVPDKIKX0DER',
-    store_name     VARCHAR(50)  NOT NULL DEFAULT 'MERINO',
+    store_name     VARCHAR(50)  NOT NULL DEFAULT 'MR.EQUIPP',
     sent_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
