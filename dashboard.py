@@ -8139,16 +8139,61 @@ def show_custom_quality():
     if not unique_asins:
         st.info("Немає ASIN — нічого показувати.")
     else:
-        nrf1, nrf2, nrf3 = st.columns([1, 1, 2])
+        # Динамічний список source із БД (щоб у dropdown було те що реально є)
+        try:
+            with engine.connect() as conn:
+                _src_rows = pd.read_sql(
+                    text("""
+                        SELECT COALESCE(NULLIF(source, ''), '—') AS source, COUNT(*) AS cnt
+                        FROM amazon_reviews
+                        WHERE asin = ANY(:asins)
+                        GROUP BY 1 ORDER BY cnt DESC
+                    """),
+                    conn, params={"asins": list(unique_asins)},
+                )
+            src_options = ["Усі"] + _src_rows['source'].astype(str).tolist()
+            src_counts  = dict(zip(_src_rows['source'].astype(str),
+                                   _src_rows['cnt'].astype(int)))
+        except Exception:
+            src_options = ["Усі", "apify", "brightdata"]
+            src_counts  = {}
+
+        nrf1, nrf2, nrf3, nrf4 = st.columns([1, 1, 1.4, 1.4])
         with nrf1:
-            nr_days = st.selectbox("Період", [7, 14, 30, 60, 90, 365],
-                                   index=2, key="cq_nr_days")
+            nr_days = st.selectbox("Період", [7, 14, 30, 60, 90, 365, 9999],
+                                   index=2, key="cq_nr_days",
+                                   format_func=lambda x: "Усі" if x == 9999 else f"{x} днів")
         with nrf2:
             nr_stars = st.multiselect("⭐ Зірки", [1, 2, 3, 4, 5],
                                       default=[1, 2, 3, 4, 5], key="cq_nr_stars")
         with nrf3:
-            nr_limit = st.selectbox("Показати", [50, 100, 200, 500, 1000],
+            nr_source = st.selectbox(
+                "🔌 Source",
+                src_options,
+                index=0,
+                key="cq_nr_source",
+                format_func=lambda s: (
+                    "Усі" if s == "Усі" else f"{s} ({src_counts.get(s, 0):,})"
+                ),
+            )
+        with nrf4:
+            nr_limit = st.selectbox("Показати", [50, 100, 200, 500, 1000, 5000],
                                     index=2, key="cq_nr_limit")
+
+        # Зведена картка по джерелах (щоб видно було скільки якого джерела)
+        if src_counts:
+            chip_html = " ".join(
+                f'<span style="background:#1e293b;border:1px solid #334155;'
+                f'border-radius:14px;padding:3px 10px;margin-right:6px;'
+                f'font-size:12px;color:#cbd5e1">'
+                f'{(s if s != "—" else "<i>NULL</i>")}: '
+                f'<b style="color:#60a5fa">{src_counts[s]:,}</b></span>'
+                for s in src_counts
+            )
+            st.markdown(f"<div style='margin:6px 0 10px 0'>"
+                        f"<span style='font-size:11px;color:#94a3b8;'>"
+                        f"📊 По всіх джерелах за вибраними ASIN:</span><br>"
+                        f"{chip_html}</div>", unsafe_allow_html=True)
 
         try:
             with engine.connect() as conn:
@@ -8158,14 +8203,25 @@ def show_custom_quality():
                     "stars": list(nr_stars) if nr_stars else [1, 2, 3, 4, 5],
                     "lim":   int(nr_limit),
                 }
+                where_extra = ""
+                if nr_source and nr_source != "Усі":
+                    if nr_source == "—":
+                        where_extra = " AND (source IS NULL OR source = '')"
+                    else:
+                        where_extra = " AND source = :src"
+                        q_params["src"] = nr_source
+                days_filter = ("" if int(nr_days) >= 9999
+                               else " AND created_at >= NOW() - (:days || ' days')::interval")
+
                 df_new_reviews = pd.read_sql(
-                    text("""
+                    text(f"""
                         SELECT created_at, asin, domain, rating, title, content,
                                author, is_verified, helpful_count, source, review_country
                         FROM amazon_reviews
                         WHERE asin = ANY(:asins)
-                          AND created_at >= NOW() - (:days || ' days')::interval
+                          {days_filter}
                           AND rating = ANY(:stars)
+                          {where_extra}
                         ORDER BY created_at DESC
                         LIMIT :lim
                     """),
@@ -8204,6 +8260,154 @@ def show_custom_quality():
                 df_new_reviews.to_csv(index=False).encode(),
                 "cq_new_reviews.csv", "text/csv", key="dl_cq_new_reviews",
             )
+
+            # ── 🤖 ШІ-аналіз відгуків ─────────────────────────
+            st.markdown("---")
+            st.markdown("#### 🤖 ШІ-аналіз відгуків")
+            st.caption("Введи свій промпт або вибери пресет — AI проаналізує таблицю вище. "
+                       "Чим конкретніше питання, тим корисніша відповідь.")
+
+            ai_presets = {
+                "— (свій промпт)": "",
+                "🔥 Топ-5 проблем якості":
+                    "Проаналізуй негативні відгуки (1-2★) і знайди 5 найчастіших скарг "
+                    "на якість продукту. Згрупуй за категоріями (матеріал, розмір, "
+                    "кольори, доставка, інше). Для кожної проблеми — кількість згадок "
+                    "і 1-2 цитати-приклади.",
+                "✨ Що хвалять найбільше":
+                    "Подивись на 4-5★ відгуки і знайди топ-5 переваг продукту, "
+                    "які найчастіше згадують покупці. Для кожної — підрахуй згадки "
+                    "та наведи приклад цитати.",
+                "📏 Проблеми з розміром":
+                    "Знайди ВСІ скарги на розмір (малий/великий/не той/не співпадає з гайдом). "
+                    "Виведи цитати з ASIN, рейтингом і коротким висновком: "
+                    "збігається фактичний розмір з заявленим чи ні.",
+                "🎨 Проблеми з кольором / зображенням":
+                    "Знайди всі скарги що колір на фото не співпадає з реальним, "
+                    "плями, неправильні відтінки. Цитати + ASIN + рекомендації що поправити.",
+                "🛠 Конкретні дефекти":
+                    "Виведи список конкретних дефектів продукту (шви, отвори, поломки, "
+                    "брак фурнітури, тощо). Згрупуй за ASIN. Скільки відгуків на кожен дефект.",
+                "🆚 Порівняння з конкурентами":
+                    "Знайди всі згадки конкурентів або порівняння («as good as X», «better than Y», "
+                    "«expected like Z»). Виведи цитати — це підказки для маркетингу.",
+                "💡 Що покращити (action items)":
+                    "На основі всіх відгуків напиши 5-7 конкретних дій (action items) "
+                    "які бренд може зробити щоб підвищити якість. Кожне — у форматі: "
+                    "**Дія** — Чому (з цитати) — Очікуваний ефект.",
+                "🌍 Поведінка по регіонах":
+                    "Поділи відгуки за полем review_country/domain і подивись чи є "
+                    "регіональні різниці у скаргах/перевагах. Які проблеми унікальні "
+                    "для US vs UK vs DE.",
+                "📊 Зведений summary":
+                    "Зроби короткий executive summary всіх відгуків: загальний sentiment, "
+                    "топ-3 переваги, топ-3 недоліки, рекомендований next step. "
+                    "Все коротко, у markdown.",
+            }
+
+            ai_c1, ai_c2 = st.columns([2, 3])
+            with ai_c1:
+                ai_preset_key = st.selectbox(
+                    "🎯 Пресет",
+                    list(ai_presets.keys()),
+                    key="cq_ai_preset",
+                )
+            with ai_c2:
+                ai_max_rows = st.slider(
+                    "Скільки відгуків відправити в AI (max)",
+                    min_value=10, max_value=min(500, len(df_new_reviews)),
+                    value=min(100, len(df_new_reviews)),
+                    key="cq_ai_max_rows",
+                    help="Більше = глибший аналіз, але дорожче по токенах і повільніше.",
+                )
+
+            # Якщо змінили пресет — підставимо його як value (без перезапису користувацького тексту)
+            _preset_text = ai_presets.get(ai_preset_key, "")
+            ai_prompt = st.text_area(
+                "💬 Свій промпт (або відредагуй пресет вище)",
+                value=_preset_text,
+                height=130,
+                key=f"cq_ai_prompt__{ai_preset_key}",  # перезавантажується при зміні пресету
+                placeholder="Напр.: знайди всі скарги на запах, склад тканини або колір...",
+            )
+
+            ai_run_col1, ai_run_col2 = st.columns([1, 4])
+            with ai_run_col1:
+                run_ai = st.button("🚀 Запустити аналіз",
+                                   type="primary", width="stretch",
+                                   key="cq_ai_run",
+                                   disabled=not ai_prompt.strip())
+            with ai_run_col2:
+                if "cq_ai_result" in st.session_state and st.button(
+                        "🗑 Очистити результат", key="cq_ai_clear"):
+                    st.session_state.pop("cq_ai_result", None)
+                    st.rerun()
+
+            if run_ai:
+                # Готуємо контекст: компактний дамп таблиці
+                rows_for_ai = df_new_reviews.head(int(ai_max_rows)).copy()
+                rows_for_ai['title']   = rows_for_ai['title'].astype(str).str.slice(0, 120)
+                rows_for_ai['content'] = rows_for_ai['content'].astype(str).str.slice(0, 500)
+
+                ctx_lines = []
+                for _, r in rows_for_ai.iterrows():
+                    ctx_lines.append(
+                        f"[{r.get('rating','?')}★ · {r.get('asin','?')}/{r.get('domain','?')} "
+                        f"· {pd.to_datetime(r.get('created_at')).strftime('%Y-%m-%d') if pd.notna(r.get('created_at')) else '?'}"
+                        f"] {r.get('title','')} :: {r.get('content','')}"
+                    )
+                reviews_block = "\n".join(ctx_lines)
+
+                # Топ-метаінформація
+                meta = (f"ASIN-ів у вибірці: {df_new_reviews['asin'].nunique()} · "
+                        f"Загалом відгуків у вибірці: {len(df_new_reviews)} · "
+                        f"В аналіз пішло: {len(rows_for_ai)} · "
+                        f"Розподіл рейтингу: "
+                        f"{df_new_reviews['rating'].value_counts().sort_index().to_dict()}")
+
+                full_prompt = (
+                    f"Ти — досвідчений Amazon FBA Quality аналітик для бренду {STORE_NAME if 'STORE_NAME' in globals() else 'MR.EQUIPP'}.\n"
+                    f"Відповідай українською, у markdown, конкретно і без води.\n\n"
+                    f"=== МЕТА ===\n{meta}\n\n"
+                    f"=== ЗАВДАННЯ ВІД КОРИСТУВАЧА ===\n{ai_prompt.strip()}\n\n"
+                    f"=== ВІДГУКИ (формат: [rating★ · asin/domain · date] title :: content) ===\n"
+                    f"{reviews_block}\n\n"
+                    f"=== ВІДПОВІДЬ ==="
+                )
+
+                with st.spinner("🤖 AI аналізує відгуки..."):
+                    try:
+                        ai_text = call_ai(full_prompt)
+                    except Exception as _e:
+                        ai_text = f"❌ Помилка AI: {_e}"
+                st.session_state.cq_ai_result = {
+                    "prompt": ai_prompt.strip(),
+                    "preset": ai_preset_key,
+                    "rows":   len(rows_for_ai),
+                    "answer": ai_text,
+                }
+
+            if "cq_ai_result" in st.session_state:
+                r = st.session_state.cq_ai_result
+                st.markdown(
+                    f"<div style='background:#0f172a;border:1px solid #334155;"
+                    f"border-radius:10px;padding:14px 18px;margin-top:8px'>"
+                    f"<div style='font-size:11px;color:#64748b;letter-spacing:0.05em;"
+                    f"text-transform:uppercase;font-weight:700;margin-bottom:6px'>"
+                    f"Промпт: {r['preset']} · {r['rows']} відгуків</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(r["answer"])
+                st.download_button(
+                    "📥 Зберегти відповідь .md",
+                    f"# AI Analysis · Custom Quality\n\n"
+                    f"**Prompt:** {r['prompt']}\n\n"
+                    f"**Reviews analyzed:** {r['rows']}\n\n"
+                    f"---\n\n{r['answer']}".encode(),
+                    "cq_ai_analysis.md", "text/markdown",
+                    key="dl_cq_ai_md",
+                )
 
 
 def show_pricing():
@@ -11732,6 +11936,15 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
 
 
 
