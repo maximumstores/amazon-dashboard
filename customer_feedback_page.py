@@ -680,4 +680,4 @@ def show_customer_feedback():
 
 if __name__ == "__main__":
     st.set_page_config(page_title="Customer Feedback", page_icon="📣", layout="wide")
-    show_customer_feedback()
+    show_customer_feedback() 
