@@ -36,6 +36,14 @@ except Exception as _e:
     CF_OK = False
     CF_ERR = f"{type(_e).__name__}: {_e}"
 
+try:
+    from review_requests_tab import show_review_requests_tab
+    RR_OK = True
+    RR_ERR = None
+except Exception as _e:
+    RR_OK = False
+    RR_ERR = f"{type(_e).__name__}: {_e}"
+
 load_dotenv()
 
 def ensure_ai_chat_table():
@@ -11318,6 +11326,7 @@ NAV_I18N = {
     "🔙 Повернення (Returns)":         {"UA": "🔙 Повернення",         "EN": "🔙 Returns",          "RU": "🔙 Возвраты"},
     "📝 Листинги (Listings)":          {"UA": "📝 Лістинги",           "EN": "📝 Listings",         "RU": "📝 Листинги"},
     "🎯 Custom Quality":               {"UA": "🎯 Custom Quality",     "EN": "🎯 Custom Quality",   "RU": "🎯 Custom Quality"},
+    "📨 Review Requests":              {"UA": "📨 Запити на відгуки",  "EN": "📨 Review Requests",  "RU": "📨 Запросы на отзывы"},
     "💲 Pricing / BuyBox":             {"UA": "💲 Ціни / BuyBox",      "EN": "💲 Pricing / BuyBox", "RU": "💲 Цены / BuyBox"},
     "📦 FBA Operations":               {"UA": "📦 FBA Операції",       "EN": "📦 FBA Operations",   "RU": "📦 FBA Операции"},
     "📋 Податки (Tax)":                {"UA": "📋 Податки",            "EN": "📋 Tax",              "RU": "📋 Налоги"},
@@ -11346,6 +11355,7 @@ main_nav = [
     "🔙 Повернення (Returns)",
     "📝 Листинги (Listings)",
     "🎯 Custom Quality",
+    "📨 Review Requests",
     "💲 Pricing / BuyBox",
     "📦 FBA Operations",
     "📋 Податки (Tax)",
@@ -11415,6 +11425,9 @@ elif report_choice == "📦 Склад (Inventory)":        show_inventory_unifi
 elif report_choice == "🔙 Повернення (Returns)":                  show_returns(t)
 elif report_choice == "📝 Листинги (Listings)":      show_listings()
 elif report_choice == "🎯 Custom Quality":           show_custom_quality()
+elif report_choice == "📨 Review Requests":
+    if RR_OK: show_review_requests_tab(get_engine())
+    else:     st.error(f"❌ review_requests_tab недоступний: {RR_ERR}")
 elif report_choice == "💲 Pricing / BuyBox":         show_pricing()
 elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "📋 Податки (Tax)":            show_tax(t)
@@ -11434,6 +11447,13 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
 
 
 
