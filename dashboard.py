@@ -7869,7 +7869,8 @@ def show_custom_quality():
     elif fmt == "З нового рядка":
         asin_text = "\n".join(unique_asins)
     else:
-        asin_text = json.dumps(unique_asins, ensure_ascii=False, indent=2)
+        import json as _json_local
+        asin_text = _json_local.dumps(unique_asins, ensure_ascii=False, indent=2)
 
     st.text_area(
         "📋 Скопіюй для аналізу (Helium10, Keepa, BrightData, тощо):",
@@ -11408,6 +11409,14 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
 
 
 
