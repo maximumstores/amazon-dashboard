@@ -7729,8 +7729,9 @@ def show_custom_quality():
         with r1c3:
             sel_brand = st.multiselect("🏷 Бренд", _opts('brand'), key="cq_brand")
         with r1c4:
-            name_q = st.text_input("📝 Назва містить", "", key="cq_name",
-                                   placeholder="напр. Merino")
+            name_q = st.text_input("🔍 Пошук (назва / SKU / бренд / колір / розмір)",
+                                   "", key="cq_name",
+                                   placeholder="напр. hoodie")
 
         asin_input = st.text_area(
             "🔢 ASIN (через кому, пробіл або з нового рядка)", "",
@@ -7752,7 +7753,15 @@ def show_custom_quality():
             df_f = df_f[df_f['asin1'].astype(str).str.upper().isin(asins)]
 
     if name_q:
-        df_f = df_f[df_f['item_name'].astype(str).str.contains(name_q, case=False, na=False)]
+        q = name_q.strip()
+        search_cols = [c for c in ['item_name', 'seller_sku', 'asin1',
+                                    'brand', 'color', 'size', 'product_type']
+                       if c in df_f.columns]
+        if search_cols:
+            mask = pd.Series(False, index=df_f.index)
+            for c in search_cols:
+                mask |= df_f[c].astype(str).str.contains(q, case=False, na=False, regex=False)
+            df_f = df_f[mask]
     if sel_color:
         df_f = df_f[df_f['color'].astype(str).str.strip().isin(sel_color)]
     if sel_size:
@@ -11360,6 +11369,15 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
 
 
 
