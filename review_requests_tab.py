@@ -31,7 +31,7 @@ MAX_SEND_DEFAULT = 200
 # тільки перший SQL з multi-statement рядка.
 DDL_STATEMENTS = [
     """
-    CREATE TABLE IF NOT EXISTS review_requests (
+    CREATE TABLE IF NOT EXISTS public.review_requests (
         id             SERIAL PRIMARY KEY,
         order_id       VARCHAR(50)  UNIQUE NOT NULL,
         status         VARCHAR(20)  NOT NULL DEFAULT 'sent',
@@ -42,11 +42,11 @@ DDL_STATEMENTS = [
         created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_rr_order_id ON review_requests (order_id)",
-    "CREATE INDEX IF NOT EXISTS idx_rr_sent_at  ON review_requests (sent_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_rr_store    ON review_requests (store_name, sent_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_rr_order_id ON public.review_requests (order_id)",
+    "CREATE INDEX IF NOT EXISTS idx_rr_sent_at  ON public.review_requests (sent_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_rr_store    ON public.review_requests (store_name, sent_at DESC)",
     """
-    CREATE OR REPLACE VIEW v_review_requests_daily AS
+    CREATE OR REPLACE VIEW public.v_review_requests_daily AS
     SELECT
         DATE(sent_at AT TIME ZONE 'Europe/Kiev') AS day,
         store_name,
@@ -55,10 +55,10 @@ DDL_STATEMENTS = [
         COUNT(*) FILTER (WHERE status = 'failed')  AS cnt_failed,
         COUNT(*) FILTER (WHERE status = 'outside') AS cnt_outside,
         COUNT(*)                                    AS cnt_total
-    FROM review_requests GROUP BY 1, 2 ORDER BY 1 DESC, 2
+    FROM public.review_requests GROUP BY 1, 2 ORDER BY 1 DESC, 2
     """,
     """
-    CREATE OR REPLACE VIEW v_review_requests_summary AS
+    CREATE OR REPLACE VIEW public.v_review_requests_summary AS
     SELECT
         store_name,
         COUNT(*) FILTER (WHERE status = 'sent')    AS total_sent,
@@ -68,7 +68,7 @@ DDL_STATEMENTS = [
         COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= NOW() - INTERVAL '24 hours') AS sent_today,
         COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= NOW() - INTERVAL '7 days')   AS sent_7d,
         MAX(sent_at) AS last_run_at
-    FROM review_requests GROUP BY store_name
+    FROM public.review_requests GROUP BY store_name
     """,
 ]
 
@@ -140,7 +140,7 @@ def _send_one(order_id: str) -> tuple:
 def _load_existing(engine) -> set:
     with engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT order_id FROM review_requests WHERE store_name = :s"),
+            text("SELECT order_id FROM public.review_requests WHERE store_name = :s"),
             {"s": STORE_NAME}).fetchall()
     return {r[0] for r in rows}
 
@@ -149,7 +149,7 @@ def _save_batch(engine, batch: list):
     if not batch: return
     with engine.begin() as conn:
         conn.execute(text("""
-            INSERT INTO review_requests (order_id,status,error_msg,marketplace_id,store_name,sent_at)
+            INSERT INTO public.review_requests (order_id,status,error_msg,marketplace_id,store_name,sent_at)
             VALUES (:oid,:st,:err,:mid,:sn,NOW())
             ON CONFLICT (order_id) DO UPDATE
                 SET status=EXCLUDED.status, error_msg=EXCLUDED.error_msg, sent_at=EXCLUDED.sent_at
@@ -263,15 +263,15 @@ def show_review_requests_tab(engine):
         except Exception as e:
             st.error(f"engine.url error: {e}")
 
-        # 2) Скільки рядків у review_requests через цей engine
-        diag_total = _qdf(engine, "SELECT COUNT(*) AS n FROM review_requests")
+        # 2) Скільки рядків у public.review_requests через цей engine
+        diag_total = _qdf(engine, "SELECT COUNT(*) AS n FROM public.review_requests")
         if not diag_total.empty:
-            st.write(f"**Всього рядків в `review_requests` (через UI engine): `{int(diag_total.iloc[0]['n'])}`**")
+            st.write(f"**Всього рядків в `public.review_requests` (через UI engine): `{int(diag_total.iloc[0]['n'])}`**")
 
         # 3) Групування по store_name
         diag_group = _qdf(engine, """
             SELECT store_name, COUNT(*) AS cnt, MAX(sent_at) AS last_sent
-            FROM review_requests
+            FROM public.review_requests
             GROUP BY store_name
             ORDER BY cnt DESC
         """)
@@ -324,7 +324,7 @@ def show_review_requests_tab(engine):
         # 5) Що бачить UI під своїм STORE_NAME
         ui_view = _qdf(
             engine,
-            "SELECT * FROM v_review_requests_summary WHERE store_name = :s",
+            "SELECT * FROM public.v_review_requests_summary WHERE store_name = :s",
             {"s": STORE_NAME},
         )
         st.write(f"**SELECT з `v_review_requests_summary` WHERE store_name='{STORE_NAME}':**")
@@ -339,7 +339,7 @@ def show_review_requests_tab(engine):
     # ── KPI ─────────────────────────────────────────────────
     summary = _qdf(
         engine,
-        "SELECT * FROM v_review_requests_summary WHERE store_name = :s",
+        "SELECT * FROM public.v_review_requests_summary WHERE store_name = :s",
         {"s": STORE_NAME},
     )
     if not summary.empty:
@@ -366,7 +366,7 @@ def show_review_requests_tab(engine):
         # Діагностика: подивимось, що реально лежить у БД
         diag = _qdf(engine, """
             SELECT store_name, COUNT(*) AS cnt
-            FROM review_requests GROUP BY store_name ORDER BY cnt DESC
+            FROM public.review_requests GROUP BY store_name ORDER BY cnt DESC
         """)
         if not diag.empty:
             st.caption("🔎 Діагностика: store_name у таблиці `review_requests`")
@@ -380,7 +380,7 @@ def show_review_requests_tab(engine):
     daily = _qdf(
         engine,
         """
-        SELECT * FROM v_review_requests_daily
+        SELECT * FROM public.v_review_requests_daily
         WHERE store_name = :s ORDER BY day ASC LIMIT 60
         """,
         {"s": STORE_NAME},
@@ -415,7 +415,7 @@ def show_review_requests_tab(engine):
     sql = """
         SELECT order_id, status, error_msg,
                TO_CHAR(sent_at AT TIME ZONE 'Europe/Kiev','DD.MM.YYYY HH24:MI') AS sent_at_kyiv
-        FROM review_requests
+        FROM public.review_requests
         WHERE store_name = :s
     """
     params = {"s": STORE_NAME}
@@ -434,4 +434,5 @@ def show_review_requests_tab(engine):
         st.caption(f"Показано {len(tbl):,} записів")
     else:
         st.info("Таблиця порожня.")
+
 
