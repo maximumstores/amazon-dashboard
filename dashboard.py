@@ -7920,6 +7920,219 @@ def show_custom_quality():
                            pd.DataFrame({"asin": unique_asins}).to_csv(index=False).encode(),
                            "asins.csv", "text/csv", key="dl_cq_asins_csv")
 
+    # ══════════════════════════════════════════════════════════
+    # 🕷 Скрапер відгуків (для відфільтрованих ASIN)
+    # ══════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("#### 🕷 Скрапер відгуків")
+    st.caption("Запускає той самий скрапер що в розділі «🕷 Скрапер відгуків» — "
+               "але автоматично формує URL зі списку ASIN вище. "
+               "Дані пишуться в спільну таблицю `amazon_reviews`.")
+
+    # Гарантуємо ініціалізацію scraper-state (ті самі ключі що й в show_scraper_manager)
+    _scr_init()
+    _scr_flush()
+    try:
+        _scr_ensure_table()
+    except Exception:
+        pass
+
+    if not unique_asins:
+        st.info("Немає ASIN для збору — налаштуй фільтри вище.")
+    else:
+        # Прогрес-бар + статус (показуємо завжди — буде пустим якщо нічого не йде)
+        if st.session_state.scr_running:
+            st.info(f"🔄 {st.session_state.scr_label or 'Збір в процесі...'}")
+        elif st.session_state.scr_done:
+            st.success(f"✅ Готово! Циклів: **{st.session_state.scr_cycles}**")
+        st.progress(st.session_state.scr_pct, text=st.session_state.scr_label or " ")
+
+        cq_c1, cq_c2, cq_c3 = st.columns([2, 2, 2])
+        with cq_c1:
+            cq_domain = st.selectbox(
+                "🌍 Домен Amazon",
+                ["com", "co.uk", "de", "ca"],
+                key="cq_scr_domain",
+                disabled=st.session_state.scr_running,
+            )
+        with cq_c2:
+            cq_source = st.radio(
+                "🔌 Джерело",
+                options=['apify', 'brightdata'],
+                horizontal=True,
+                format_func=lambda x: "🟡 Apify" if x == 'apify' else "🟣 Bright Data",
+                key="cq_scr_source",
+                disabled=st.session_state.scr_running,
+            )
+        with cq_c3:
+            cq_stars = st.multiselect(
+                "⭐ Зірки",
+                [1, 2, 3, 4, 5],
+                default=[1, 2, 3, 4, 5],
+                key="cq_scr_stars",
+                disabled=st.session_state.scr_running,
+            )
+
+        cq_max_asins = st.slider(
+            "Скільки ASIN відправити в скрапер (максимум)",
+            min_value=1, max_value=min(200, len(unique_asins)),
+            value=min(20, len(unique_asins)),
+            disabled=st.session_state.scr_running,
+            key="cq_scr_max_asins",
+            help="Більше ASIN = довший збір. Apify: ~30 сек на ASIN/зірку. BD: ~10 сек на ASIN.",
+        )
+
+        cq_run_col1, cq_run_col2 = st.columns([1, 1])
+        with cq_run_col1:
+            if st.session_state.scr_running:
+                if st.button("⛔ Зупинити", width="stretch", type="secondary", key="cq_scr_stop"):
+                    if st.session_state.scr_stop_event:
+                        st.session_state.scr_stop_event.set()
+                    st.session_state.scr_running = False
+                    st.session_state.scr_done    = True
+                    st.rerun()
+            else:
+                if st.button(f"🚀 Запустити для {cq_max_asins} ASIN",
+                             width="stretch", type="primary", key="cq_scr_run"):
+                    target_asins = unique_asins[:cq_max_asins]
+                    cq_urls = [f"https://www.amazon.{cq_domain}/dp/{a}" for a in target_asins]
+
+                    import queue as _queue
+                    import threading as _threading
+                    lq, pq = _queue.Queue(), _queue.Queue()
+                    stop_ev = _threading.Event()
+
+                    st.session_state.scr_logs       = []
+                    st.session_state.scr_pct        = 0
+                    st.session_state.scr_label      = "Старт..."
+                    st.session_state.scr_done       = False
+                    st.session_state.scr_running    = True
+                    st.session_state.scr_cycles     = 0
+                    st.session_state.scr_log_q      = lq
+                    st.session_state.scr_prog_q     = pq
+                    st.session_state.scr_stop_event = stop_ev
+                    # позначка часу старту — покажемо «нові з цього прогону» в таблиці нижче
+                    st.session_state.cq_run_started_at = dt.datetime.now()
+
+                    if cq_source == 'brightdata':
+                        _fake_monitored = []
+                        for _i, _u in enumerate(cq_urls):
+                            _dom, _asin = _scr_parse_url(_u)
+                            if _asin and _asin != "UNKNOWN":
+                                _fake_monitored.append((
+                                    -(_i+1), _asin, _dom,
+                                    ",".join(map(str, sorted(cq_stars))) if cq_stars else "1,2,3,4",
+                                    True, None, 0, None, "", "", 0, 0, 0, 'brightdata'
+                                ))
+                        _threading.Thread(
+                            target=_mon_worker,
+                            args=(_fake_monitored, 100, lq, pq, stop_ev, APIFY_TOKEN_DEFAULT),
+                            daemon=True,
+                        ).start()
+                    else:
+                        _threading.Thread(
+                            target=_scr_worker,
+                            args=(cq_urls, 100, lq, pq, False, stop_ev, APIFY_TOKEN_DEFAULT),
+                            kwargs={"stars": sorted(cq_stars) if cq_stars else [1,2,3,4,5]},
+                            daemon=True,
+                        ).start()
+                    st.rerun()
+        with cq_run_col2:
+            if st.button("🗑 Очистити логи", width="stretch", key="cq_scr_clear_logs",
+                         disabled=st.session_state.scr_running):
+                st.session_state.scr_logs = []
+                st.session_state.scr_done = False
+                st.rerun()
+
+        # Логи
+        cq_logs = st.session_state.scr_logs
+        if cq_logs:
+            cq_log_html = "<br>".join(line.replace("<", "&lt;").replace(">", "&gt;")
+                                      for line in cq_logs[-80:])
+            st.markdown(f"""
+            <div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;
+                        padding:14px 18px;font-family:'Courier New',monospace;font-size:12.5px;
+                        line-height:1.7;max-height:340px;overflow-y:auto;color:#ccc">
+              {cq_log_html}
+            </div>""", unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════
+    # 🆕 Нові відгуки
+    # ══════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("#### 🆕 Нові відгуки")
+    st.caption("Відгуки з `amazon_reviews` для ASIN-ів у поточному фільтрі. "
+               "За замовчуванням — за останні 30 днів.")
+
+    if not unique_asins:
+        st.info("Немає ASIN — нічого показувати.")
+    else:
+        nrf1, nrf2, nrf3 = st.columns([1, 1, 2])
+        with nrf1:
+            nr_days = st.selectbox("Період", [7, 14, 30, 60, 90, 365],
+                                   index=2, key="cq_nr_days")
+        with nrf2:
+            nr_stars = st.multiselect("⭐ Зірки", [1, 2, 3, 4, 5],
+                                      default=[1, 2, 3, 4, 5], key="cq_nr_stars")
+        with nrf3:
+            nr_limit = st.selectbox("Показати", [50, 100, 200, 500, 1000],
+                                    index=2, key="cq_nr_limit")
+
+        try:
+            with engine.connect() as conn:
+                q_params = {
+                    "asins": list(unique_asins),
+                    "days":  int(nr_days),
+                    "stars": list(nr_stars) if nr_stars else [1, 2, 3, 4, 5],
+                    "lim":   int(nr_limit),
+                }
+                df_new_reviews = pd.read_sql(
+                    text("""
+                        SELECT created_at, asin, domain, rating, title, content,
+                               author, is_verified, helpful_count, source, review_country
+                        FROM amazon_reviews
+                        WHERE asin = ANY(:asins)
+                          AND created_at >= NOW() - (:days || ' days')::interval
+                          AND rating = ANY(:stars)
+                        ORDER BY created_at DESC
+                        LIMIT :lim
+                    """),
+                    conn, params=q_params,
+                )
+        except Exception as e:
+            st.error(f"❌ Помилка читання `amazon_reviews`: {e}")
+            df_new_reviews = pd.DataFrame()
+
+        if df_new_reviews.empty:
+            st.info("Нових відгуків за вибраний період не знайдено. "
+                    "Запусти скрапер вище — і вони з'являться тут.")
+        else:
+            st.caption(f"Знайдено {len(df_new_reviews):,} відгуків · "
+                       f"{df_new_reviews['asin'].nunique()} ASIN · "
+                       f"за останні {nr_days} днів")
+            st.dataframe(
+                df_new_reviews,
+                column_config={
+                    'created_at':     st.column_config.DatetimeColumn("Додано", format="YYYY-MM-DD HH:mm"),
+                    'asin':           st.column_config.TextColumn("ASIN"),
+                    'domain':         st.column_config.TextColumn("MP"),
+                    'rating':         st.column_config.NumberColumn("⭐", format="%d"),
+                    'title':          st.column_config.TextColumn("Заголовок", width="medium"),
+                    'content':        st.column_config.TextColumn("Текст", width="large"),
+                    'author':         st.column_config.TextColumn("Автор"),
+                    'is_verified':    st.column_config.CheckboxColumn("Verified"),
+                    'helpful_count':  st.column_config.NumberColumn("👍", format="%d"),
+                    'source':         st.column_config.TextColumn("Source"),
+                    'review_country': st.column_config.TextColumn("Country"),
+                },
+                width="stretch", hide_index=True, height=500,
+            )
+            st.download_button(
+                "📥 CSV (нові відгуки)",
+                df_new_reviews.to_csv(index=False).encode(),
+                "cq_new_reviews.csv", "text/csv", key="dl_cq_new_reviews",
+            )
+
 
 def show_pricing():
     st.markdown("### 💲 Pricing / Buy Box")
@@ -11447,6 +11660,11 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
 
 
 
