@@ -23,7 +23,7 @@ SP_CLIENT_SECRET = os.getenv("LWA_CLIENT_SECRET", "")
 SP_REFRESH_TOKEN = os.getenv("LWA_REFRESH_TOKEN", "")
 SP_API_BASE      = "https://sellingpartnerapi-na.amazon.com"
 MARKETPLACE_ID   = os.getenv("MARKETPLACE_ID", "ATVPDKIKX0DER")
-STORE_NAME       = "MERINO"
+STORE_NAME       = "MR.EQUIPP"
 MAX_SEND_DEFAULT = 200
 
 # ─── DDL (auto-migration) ───────────────────────────────────
@@ -241,7 +241,7 @@ def show_review_requests_tab(engine):
     st.divider()
 
     # ── KPI ─────────────────────────────────────────────────
-    summary = _qdf(engine, "SELECT * FROM v_review_requests_summary WHERE store_name='MERINO'")
+    summary = _qdf(engine, "SELECT * FROM v_review_requests_summary WHERE store_name='MR.EQUIPP'")
     if not summary.empty:
         r      = summary.iloc[0]
         lr     = r.get("last_run_at")
@@ -270,7 +270,7 @@ def show_review_requests_tab(engine):
     st.markdown("### 📊 Відправлено по днях")
     daily = _qdf(engine, """
         SELECT * FROM v_review_requests_daily
-        WHERE store_name='MERINO' ORDER BY day ASC LIMIT 60
+        WHERE store_name='MR.EQUIPP' ORDER BY day ASC LIMIT 60
     """)
     if not daily.empty:
         daily["day"] = pd.to_datetime(daily["day"])
@@ -304,7 +304,7 @@ def show_review_requests_tab(engine):
     tbl = _qdf(engine, f"""
         SELECT order_id, status, error_msg,
                TO_CHAR(sent_at AT TIME ZONE 'Europe/Kiev','DD.MM.YYYY HH24:MI') AS sent_at_kyiv
-        FROM review_requests WHERE store_name='MERINO' {where}
+        FROM review_requests WHERE store_name='MR.EQUIPP' {where}
         ORDER BY sent_at DESC LIMIT {lf}
     """)
     if not tbl.empty:
@@ -314,4 +314,4 @@ def show_review_requests_tab(engine):
         st.dataframe(tbl, use_container_width=True, height=400, hide_index=True)
         st.caption(f"Показано {len(tbl):,} записів")
     else:
-        st.info("Таблиця порожня.") 
+        st.info("Таблиця порожня.")
