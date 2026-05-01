@@ -252,6 +252,61 @@ def show_review_requests_tab(engine):
     _css()
     st.markdown("## ⭐ Review Request Sender")
     st.caption(f"SP-API Solicitations v1 · {STORE_NAME} · вікно 8–33 дні після Shipped")
+
+    # ── 🔧 ДІАГНОСТИКА (тимчасова — можна прибрати після фікса) ──
+    with st.expander("🔧 Діагностика підключення до БД", expanded=True):
+        # 1) Який URL у engine (без пароля)
+        try:
+            url = engine.url
+            safe_url = f"{url.drivername}://{url.username or ''}@{url.host or ''}:{url.port or ''}/{url.database or ''}"
+            st.code(f"engine.url = {safe_url}", language="text")
+        except Exception as e:
+            st.error(f"engine.url error: {e}")
+
+        # 2) Скільки рядків у review_requests через цей engine
+        diag_total = _qdf(engine, "SELECT COUNT(*) AS n FROM review_requests")
+        if not diag_total.empty:
+            st.write(f"**Всього рядків в `review_requests` (через UI engine): `{int(diag_total.iloc[0]['n'])}`**")
+
+        # 3) Групування по store_name
+        diag_group = _qdf(engine, """
+            SELECT store_name, COUNT(*) AS cnt, MAX(sent_at) AS last_sent
+            FROM review_requests
+            GROUP BY store_name
+            ORDER BY cnt DESC
+        """)
+        if not diag_group.empty:
+            st.write("**store_name у БД:**")
+            st.dataframe(diag_group, hide_index=True, use_container_width=True)
+        else:
+            st.warning("⚠️ Таблиця `review_requests` порожня **в тій БД, до якої підключений UI**. "
+                       "Перевір `DATABASE_URL` в Streamlit secrets — він може вказувати на іншу БД, "
+                       "ніж .env вашого sender'а.")
+
+        # 4) Чи існують views
+        views = _qdf(engine, """
+            SELECT table_name FROM information_schema.views
+            WHERE table_name LIKE 'v_review_requests%'
+            ORDER BY table_name
+        """)
+        if not views.empty:
+            st.write(f"**Views: {', '.join(views['table_name'].tolist())}**")
+        else:
+            st.error("❌ Views `v_review_requests_*` НЕ створені — DDL-міграція не пройшла.")
+
+        # 5) Що бачить UI під своїм STORE_NAME
+        ui_view = _qdf(
+            engine,
+            "SELECT * FROM v_review_requests_summary WHERE store_name = :s",
+            {"s": STORE_NAME},
+        )
+        st.write(f"**SELECT з `v_review_requests_summary` WHERE store_name='{STORE_NAME}':**")
+        if not ui_view.empty:
+            st.dataframe(ui_view, hide_index=True, use_container_width=True)
+        else:
+            st.warning(f"⚠️ Порожньо для store_name='{STORE_NAME}'. Якщо вище у списку є інше ім'я — "
+                       f"sender пише під ним. Поправ `STORE_NAME` у sender'і або в UI.")
+
     st.divider()
 
     # ── KPI ─────────────────────────────────────────────────
