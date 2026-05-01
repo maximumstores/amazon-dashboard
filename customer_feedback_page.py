@@ -430,13 +430,17 @@ def _tab_by_node(snap: date):
 # ═══════════════════════════════════════════════════════════════════════
 def _tab_cross(snap: date):
     st.markdown("### 🔥 Всі ASINs × Теми — порівняння")
-    st.caption("Червоний = ми вище категорії (проблема). Зелений = ми кращі.")
 
-    c1, c2, c3 = st.columns([1, 1, 2])
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
     with c1:
         sent = st.radio("Sentiment", ["negative", "positive"],
                         horizontal=True, key="cross_sent")
     with c2:
+        view = st.radio("Вигляд", ["Ranked list", "Bubble chart"],
+                        horizontal=True, key="cross_view")
+    with c3:
+        max_topics = st.slider("Топ N тем", 5, 30, 12, key="cross_n")
+    with c4:
         metric = st.selectbox("Метрика", [
             "parent_occurrence_pct",
             "parent_star_impact",
@@ -446,8 +450,6 @@ def _tab_cross(snap: date):
             "parent_star_impact":    "★ Star impact",
             "asin_occurrence_pct":   "ASIN %",
         }[x])
-    with c3:
-        max_topics = st.slider("Топ N тем", 5, 30, 12, key="cross_n")
 
     df = _query("""
         SELECT asin, item_name, topic, sentiment,
@@ -462,96 +464,181 @@ def _tab_cross(snap: date):
         st.info("Немає даних")
         return
 
-    # Топ N тем по середньому значенню метрику
     top_topics = (
         df.groupby("topic")[metric]
-        .mean()
-        .dropna()
-        .abs()
+        .mean().dropna().abs()
         .sort_values(ascending=(sent == "positive"))
-        .head(max_topics)
-        .index.tolist()
+        .head(max_topics).index.tolist()
     )
-    df_filtered = df[df["topic"].isin(top_topics)].copy()
+    df = df[df["topic"].isin(top_topics)].copy()
+    df["item_name"] = df["item_name"].str[:40]
+    df["gap"] = (df["parent_occurrence_pct"] - df["bn_occurrence_pct"]).round(1)
 
-    # Pivot для heatmap
-    pivot = df_filtered.pivot_table(
-        index="asin", columns="topic",
-        values=metric, aggfunc="first",
-    ).round(2)
+    # ── RANKED LIST ─────────────────────────────────────────
+    if view == "Ranked list":
+        st.caption("Червона смуга = наш %, сіра = категорія. Δ = відхилення від benchmark.")
 
-    # Підписи рядків — item_name скорочено
-    name_map = (
-        df_filtered.drop_duplicates("asin")
-        .set_index("asin")["item_name"]
-        .str[:45]
-    )
-    pivot.index = [name_map.get(a, a) for a in pivot.index]
+        df_sorted = df.sort_values(
+            "parent_star_impact",
+            ascending=(sent == "negative")
+        ).reset_index(drop=True)
 
-    # Heatmap
-    colorscale = "RdYlGn" if metric == "parent_star_impact" else (
-        "Reds" if sent == "negative" else "Greens"
-    )
-    zmid = 0 if metric == "parent_star_impact" else None
+        max_our = df_sorted["parent_occurrence_pct"].max() or 1
 
-    fig = go.Figure(data=go.Heatmap(
-        z=pivot.values,
-        x=list(pivot.columns),
-        y=list(pivot.index),
-        text=[[f"{v:.1f}" if pd.notna(v) else "" for v in row]
-              for row in pivot.values],
-        texttemplate="%{text}",
-        textfont=dict(size=11),
-        colorscale=colorscale,
-        zmid=zmid,
-        hoverongaps=False,
-        colorbar=dict(
-            title={"parent_occurrence_pct": "Parent %",
-                   "parent_star_impact": "★ Impact",
-                   "asin_occurrence_pct": "ASIN %"}[metric],
-            thickness=12,
-        ),
-    ))
-    fig.update_layout(
-        height=max(320, len(pivot) * 44 + 120),
-        margin=dict(l=10, r=10, t=20, b=90),
-        xaxis=dict(tickangle=-35, tickfont=dict(size=11)),
-        yaxis=dict(tickfont=dict(size=11)),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font_color="#e2e8f0",
-    )
-    st.plotly_chart(fig, use_container_width=True)
+        st.markdown("""
+        <style>
+        .rl-row{display:flex;align-items:center;gap:8px;padding:6px 0;
+                border-bottom:0.5px solid var(--color-border-tertiary)}
+        .rl-row:last-child{border-bottom:none}
+        .rl-name{font-size:12px;color:var(--color-text-secondary);
+                 width:170px;flex-shrink:0;white-space:nowrap;
+                 overflow:hidden;text-overflow:ellipsis}
+        .rl-topic{font-size:11px;padding:2px 8px;border-radius:12px;
+                  flex-shrink:0;width:120px;white-space:nowrap;
+                  overflow:hidden;text-overflow:ellipsis}
+        .rl-neg{background:#FCEBEB;color:#A32D2D}
+        .rl-pos{background:#EAF3DE;color:#3B6D11}
+        .rl-bars{flex:1}
+        .rl-bar-our{height:10px;border-radius:3px;background:#E24B4A;min-width:2px}
+        .rl-bar-cat{height:5px;border-radius:3px;background:#888780;
+                    opacity:.5;margin-top:2px;min-width:2px}
+        .rl-pct{font-size:12px;font-weight:500;min-width:34px;text-align:right}
+        .rl-delta{font-size:12px;min-width:42px;text-align:right}
+        .rl-star{font-size:12px;font-weight:500;min-width:42px;text-align:right}
+        </style>
+        """, unsafe_allow_html=True)
+
+        rows_html = ""
+        for _, r in df_sorted.iterrows():
+            our = r["parent_occurrence_pct"] or 0
+            cat = r["bn_occurrence_pct"] or 0
+            star = r["parent_star_impact"]
+            gap = our - cat
+            bar_w = int(our / max_our * 180)
+            cat_w = int(cat / max_our * 180)
+            tag_cls = "rl-neg" if sent == "negative" else "rl-pos"
+            d_color = "#E24B4A" if gap > 0 else "#1D9E75"
+            s_color = "#E24B4A" if (star or 0) < 0 else "#1D9E75"
+            star_str = f"{star:+.2f}" if star is not None and pd.notna(star) else "—"
+            gap_str  = f"{gap:+.1f}" if pd.notna(gap) else "—"
+            rows_html += f"""
+            <div class="rl-row">
+              <div class="rl-name" title="{r['asin']} — {r['item_name']}"><span style="font-family:monospace;font-size:10px;color:var(--color-text-tertiary)">{r['asin']}</span><br>{r['item_name']}</div>
+              <div class="rl-topic {tag_cls}">{r['topic']}</div>
+              <div class="rl-bars">
+                <div class="rl-bar-our" style="width:{bar_w}px"></div>
+                <div class="rl-bar-cat" style="width:{cat_w}px"></div>
+              </div>
+              <div class="rl-pct">{our:.1f}%</div>
+              <div class="rl-delta" style="color:{d_color}">{gap_str}</div>
+              <div class="rl-star" style="color:{s_color}">{star_str}</div>
+            </div>"""
+
+        header = """
+        <div style="display:flex;gap:8px;padding:0 0 4px;
+                    font-size:11px;color:var(--color-text-secondary)">
+          <div style="width:150px">ASIN</div>
+          <div style="width:120px">Тема</div>
+          <div style="flex:1">Наш % vs Категорія</div>
+          <div style="min-width:34px;text-align:right">Наш</div>
+          <div style="min-width:42px;text-align:right">Δ</div>
+          <div style="min-width:42px;text-align:right">★</div>
+        </div>"""
+        st.markdown(header + rows_html, unsafe_allow_html=True)
+
+    # ── BUBBLE CHART ────────────────────────────────────────
+    else:
+        st.caption("X = наш %, Y = star impact, розмір = Δ від категорії. Пунктир = середнє категорії.")
+
+        df_b = df.dropna(subset=["parent_occurrence_pct", "parent_star_impact"]).copy()
+        df_b["delta_abs"] = df_b["gap"].abs().clip(lower=2)
+        df_b["color"] = df_b["gap"].apply(
+            lambda g: "rgba(226,75,74,0.8)" if g > 0 else "rgba(29,158,117,0.8)"
+        )
+        df_b["label"] = df_b["item_name"].str[:20] + "<br>" + df_b["topic"]
+
+        cat_avg = df_b["bn_occurrence_pct"].mean()
+
+        fig = go.Figure()
+
+        # Bubble
+        fig.add_trace(go.Scatter(
+            x=df_b["parent_occurrence_pct"],
+            y=df_b["parent_star_impact"],
+            mode="markers+text",
+            text=df_b["topic"].str[:14],
+            textposition="top center",
+            textfont=dict(size=9),
+            marker=dict(
+                size=df_b["delta_abs"] * 2.5,
+                color=df_b["color"].tolist(),
+                line=dict(width=1, color="rgba(0,0,0,0.3)"),
+            ),
+            customdata=df_b[["item_name", "topic", "parent_occurrence_pct",
+                              "bn_occurrence_pct", "gap", "parent_star_impact"]].values,
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "Тема: %{customdata[1]}<br>"
+                "Наш: %{customdata[2]:.1f}%<br>"
+                "Категорія: %{customdata[3]:.1f}%<br>"
+                "Δ: %{customdata[4]:+.1f}<br>"
+                "★: %{customdata[5]:+.2f}<extra></extra>"
+            ),
+        ))
+
+        # Лінія категорії
+        fig.add_vline(
+            x=cat_avg, line_dash="dot",
+            line_color="rgba(226,75,74,0.4)", line_width=1.5,
+            annotation_text=f"avg cat {cat_avg:.1f}%",
+            annotation_position="top right",
+            annotation_font_size=10,
+        )
+        # Нульова лінія star impact
+        fig.add_hline(
+            y=0, line_dash="dot",
+            line_color="rgba(128,128,128,0.3)", line_width=1,
+        )
+
+        fig.update_layout(
+            height=420,
+            xaxis_title="Наш parent %",
+            yaxis_title="★ Star impact",
+            hovermode="closest",
+            margin=dict(l=10, r=10, t=20, b=10),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font_color="#e2e8f0",
+            xaxis=dict(gridcolor="rgba(128,128,128,0.15)"),
+            yaxis=dict(gridcolor="rgba(128,128,128,0.15)"),
+            showlegend=False,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Червоний = ми вище категорії (проблема) · Зелений = ми нижче (добре) · Розмір = Δ")
 
     st.divider()
 
-    # Таблиця відхилень: наш % vs категорія
-    st.markdown("### 📊 Де найбільше відхилення від категорії")
-    gap_df = df.copy()
-    gap_df["gap"] = (gap_df["parent_occurrence_pct"] - gap_df["bn_occurrence_pct"]).round(1)
-    gap_df = gap_df.dropna(subset=["gap"])
-    gap_df = gap_df.sort_values("gap", ascending=(sent == "positive"))
-    gap_df["item_name"] = gap_df["item_name"].str[:45]
-
+    # ── Таблиця відхилень (спільна для обох вглядів) ────────
+    st.markdown("### 📊 Топ відхилень від категорії")
+    gap_df = df.sort_values("gap", ascending=(sent == "positive")).head(20)
     st.dataframe(
         gap_df[["asin", "item_name", "topic",
                 "parent_occurrence_pct", "bn_occurrence_pct",
-                "gap", "parent_star_impact"]].head(30).rename(columns={
+                "gap", "parent_star_impact"]].rename(columns={
             "asin":                  "ASIN",
             "item_name":             "Item",
             "topic":                 "Тема",
             "parent_occurrence_pct": "Наш %",
             "bn_occurrence_pct":     "Категорія %",
-            "gap":                   "Δ (наш − кат)",
+            "gap":                   "Δ",
             "parent_star_impact":    "★ Impact",
         }),
-        use_container_width=True,
-        hide_index=True,
+        use_container_width=True, hide_index=True,
         column_config={
-            "Наш %":        st.column_config.NumberColumn(format="%.1f"),
-            "Категорія %":  st.column_config.NumberColumn(format="%.1f"),
-            "Δ (наш − кат)": st.column_config.NumberColumn(format="%.1f"),
-            "★ Impact":     st.column_config.NumberColumn(format="%.2f"),
+            "Наш %":       st.column_config.NumberColumn(format="%.1f"),
+            "Категорія %": st.column_config.NumberColumn(format="%.1f"),
+            "Δ":           st.column_config.NumberColumn(format="%.1f"),
+            "★ Impact":    st.column_config.NumberColumn(format="%.2f"),
         },
     )
 
