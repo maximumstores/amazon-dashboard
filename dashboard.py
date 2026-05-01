@@ -7834,7 +7834,7 @@ def show_custom_quality():
 
     st.text_area(
         "📋 Скопіюй для аналізу (Helium10, Keepa, BrightData, тощо):",
-        asin_text, height=240, key="cq_asin_out"
+        value=asin_text, height=240,
     )
 
     cdl1, cdl2 = st.columns(2)
@@ -11369,6 +11369,14 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
 
 
 
