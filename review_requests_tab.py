@@ -27,44 +27,50 @@ STORE_NAME       = "MR.EQUIPP"
 MAX_SEND_DEFAULT = 200
 
 # ─── DDL (auto-migration) ───────────────────────────────────
-DDL = """
-CREATE TABLE IF NOT EXISTS review_requests (
-    id             SERIAL PRIMARY KEY,
-    order_id       VARCHAR(50)  UNIQUE NOT NULL,
-    status         VARCHAR(20)  NOT NULL DEFAULT 'sent',
-    error_msg      TEXT,
-    marketplace_id VARCHAR(30)  NOT NULL DEFAULT 'ATVPDKIKX0DER',
-    store_name     VARCHAR(50)  NOT NULL DEFAULT 'MR.EQUIPP',
-    sent_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_rr_order_id ON review_requests (order_id);
-CREATE INDEX IF NOT EXISTS idx_rr_sent_at  ON review_requests (sent_at DESC);
-CREATE INDEX IF NOT EXISTS idx_rr_store    ON review_requests (store_name, sent_at DESC);
-
-CREATE OR REPLACE VIEW v_review_requests_daily AS
-SELECT
-    DATE(sent_at AT TIME ZONE 'Europe/Kiev') AS day,
-    store_name,
-    COUNT(*) FILTER (WHERE status = 'sent')    AS cnt_sent,
-    COUNT(*) FILTER (WHERE status = 'already') AS cnt_already,
-    COUNT(*) FILTER (WHERE status = 'failed')  AS cnt_failed,
-    COUNT(*) FILTER (WHERE status = 'outside') AS cnt_outside,
-    COUNT(*)                                    AS cnt_total
-FROM review_requests GROUP BY 1, 2 ORDER BY 1 DESC, 2;
-
-CREATE OR REPLACE VIEW v_review_requests_summary AS
-SELECT
-    store_name,
-    COUNT(*) FILTER (WHERE status = 'sent')    AS total_sent,
-    COUNT(*) FILTER (WHERE status = 'already') AS total_already,
-    COUNT(*) FILTER (WHERE status = 'failed')  AS total_failed,
-    COUNT(*) FILTER (WHERE status = 'outside') AS total_outside,
-    COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= NOW() - INTERVAL '24 hours') AS sent_today,
-    COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= NOW() - INTERVAL '7 days')   AS sent_7d,
-    MAX(sent_at) AS last_run_at
-FROM review_requests GROUP BY store_name;
-"""
+# Розбито на список окремих statement'ів — деякі драйвери виконують
+# тільки перший SQL з multi-statement рядка.
+DDL_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS review_requests (
+        id             SERIAL PRIMARY KEY,
+        order_id       VARCHAR(50)  UNIQUE NOT NULL,
+        status         VARCHAR(20)  NOT NULL DEFAULT 'sent',
+        error_msg      TEXT,
+        marketplace_id VARCHAR(30)  NOT NULL DEFAULT 'ATVPDKIKX0DER',
+        store_name     VARCHAR(50)  NOT NULL DEFAULT 'MR.EQUIPP',
+        sent_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+        created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_rr_order_id ON review_requests (order_id)",
+    "CREATE INDEX IF NOT EXISTS idx_rr_sent_at  ON review_requests (sent_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_rr_store    ON review_requests (store_name, sent_at DESC)",
+    """
+    CREATE OR REPLACE VIEW v_review_requests_daily AS
+    SELECT
+        DATE(sent_at AT TIME ZONE 'Europe/Kiev') AS day,
+        store_name,
+        COUNT(*) FILTER (WHERE status = 'sent')    AS cnt_sent,
+        COUNT(*) FILTER (WHERE status = 'already') AS cnt_already,
+        COUNT(*) FILTER (WHERE status = 'failed')  AS cnt_failed,
+        COUNT(*) FILTER (WHERE status = 'outside') AS cnt_outside,
+        COUNT(*)                                    AS cnt_total
+    FROM review_requests GROUP BY 1, 2 ORDER BY 1 DESC, 2
+    """,
+    """
+    CREATE OR REPLACE VIEW v_review_requests_summary AS
+    SELECT
+        store_name,
+        COUNT(*) FILTER (WHERE status = 'sent')    AS total_sent,
+        COUNT(*) FILTER (WHERE status = 'already') AS total_already,
+        COUNT(*) FILTER (WHERE status = 'failed')  AS total_failed,
+        COUNT(*) FILTER (WHERE status = 'outside') AS total_outside,
+        COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= NOW() - INTERVAL '24 hours') AS sent_today,
+        COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= NOW() - INTERVAL '7 days')   AS sent_7d,
+        MAX(sent_at) AS last_run_at
+    FROM review_requests GROUP BY store_name
+    """,
+]
 
 # ════════════════════════════════════════════════════════════
 #  SENDER ЛОГІКА
@@ -219,29 +225,41 @@ def _css():
     </style>""", unsafe_allow_html=True)
 
 
-def _qdf(engine, sql: str) -> pd.DataFrame:
+def _qdf(engine, sql: str, params: dict | None = None) -> pd.DataFrame:
+    """Виконати SELECT і повернути DataFrame. Помилки показуємо явно."""
     try:
         with engine.connect() as conn:
-            return pd.read_sql(text(sql), conn)
+            result = conn.execute(text(sql), params or {})
+            rows = result.fetchall()
+            cols = list(result.keys())
+        return pd.DataFrame(rows, columns=cols)
     except Exception as e:
-        st.error(f"DB: {e}"); return pd.DataFrame()
+        st.error(f"❌ SQL error: {type(e).__name__}: {e}")
+        st.code(sql, language="sql")
+        return pd.DataFrame()
 
 
 def show_review_requests_tab(engine):
-    # Auto-migration
-    try:
-        with engine.begin() as conn:
-            conn.execute(text(DDL))
-    except Exception as e:
-        st.warning(f"⚠️ Migration: {e}")
+    # Auto-migration — кожен statement окремим execute()
+    for stmt in DDL_STATEMENTS:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(stmt))
+        except Exception as e:
+            st.warning(f"⚠️ Migration step failed: {type(e).__name__}: {e}")
+            st.code(stmt[:300], language="sql")
 
     _css()
     st.markdown("## ⭐ Review Request Sender")
-    st.caption("SP-API Solicitations v1 · merino.tech · вікно 8–33 дні після Shipped")
+    st.caption(f"SP-API Solicitations v1 · {STORE_NAME} · вікно 8–33 дні після Shipped")
     st.divider()
 
     # ── KPI ─────────────────────────────────────────────────
-    summary = _qdf(engine, "SELECT * FROM v_review_requests_summary WHERE store_name='MR.EQUIPP'")
+    summary = _qdf(
+        engine,
+        "SELECT * FROM v_review_requests_summary WHERE store_name = :s",
+        {"s": STORE_NAME},
+    )
     if not summary.empty:
         r      = summary.iloc[0]
         lr     = r.get("last_run_at")
@@ -263,15 +281,28 @@ def show_review_requests_tab(engine):
         st.caption(f"Останній запуск: **{lr_str}**")
     else:
         st.info("Даних ще немає — запусти sender нижче.")
+        # Діагностика: подивимось, що реально лежить у БД
+        diag = _qdf(engine, """
+            SELECT store_name, COUNT(*) AS cnt
+            FROM review_requests GROUP BY store_name ORDER BY cnt DESC
+        """)
+        if not diag.empty:
+            st.caption("🔎 Діагностика: store_name у таблиці `review_requests`")
+            st.dataframe(diag, hide_index=True, use_container_width=True)
+            st.caption(f"UI шукає `store_name = '{STORE_NAME}'`")
 
     st.divider()
 
     # ── Графік ──────────────────────────────────────────────
     st.markdown("### 📊 Відправлено по днях")
-    daily = _qdf(engine, """
+    daily = _qdf(
+        engine,
+        """
         SELECT * FROM v_review_requests_daily
-        WHERE store_name='MR.EQUIPP' ORDER BY day ASC LIMIT 60
-    """)
+        WHERE store_name = :s ORDER BY day ASC LIMIT 60
+        """,
+        {"s": STORE_NAME},
+    )
     if not daily.empty:
         daily["day"] = pd.to_datetime(daily["day"])
         fig = go.Figure()
@@ -289,7 +320,6 @@ def show_review_requests_tab(engine):
     else:
         st.info("Даних для графіка ще немає.")
 
-
     st.divider()
 
     # ── Таблиця ─────────────────────────────────────────────
@@ -300,13 +330,20 @@ def show_review_requests_tab(engine):
     with cf2:
         lf = st.selectbox("Показати", [100, 300, 500, 1000], key="rr_lf")
 
-    where = f"AND status='{sf}'" if sf != "Всі" else ""
-    tbl = _qdf(engine, f"""
+    sql = """
         SELECT order_id, status, error_msg,
                TO_CHAR(sent_at AT TIME ZONE 'Europe/Kiev','DD.MM.YYYY HH24:MI') AS sent_at_kyiv
-        FROM review_requests WHERE store_name='MR.EQUIPP' {where}
-        ORDER BY sent_at DESC LIMIT {lf}
-    """)
+        FROM review_requests
+        WHERE store_name = :s
+    """
+    params = {"s": STORE_NAME}
+    if sf != "Всі":
+        sql += " AND status = :st"
+        params["st"] = sf
+    sql += " ORDER BY sent_at DESC LIMIT :lim"
+    params["lim"] = int(lf)
+
+    tbl = _qdf(engine, sql, params)
     if not tbl.empty:
         icons = {"sent":"✅ sent","already":"⏭️ already","failed":"❌ failed","outside":"⏰ outside"}
         tbl["status"] = tbl["status"].map(lambda s: icons.get(s, s))
@@ -315,3 +352,4 @@ def show_review_requests_tab(engine):
         st.caption(f"Показано {len(tbl):,} записів")
     else:
         st.info("Таблиця порожня.")
+
