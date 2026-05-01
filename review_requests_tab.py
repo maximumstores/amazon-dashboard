@@ -253,86 +253,48 @@ def show_review_requests_tab(engine):
     st.markdown("## ⭐ Review Request Sender")
     st.caption(f"SP-API Solicitations v1 · {STORE_NAME} · вікно 8–33 дні після Shipped")
 
-    # ── 🔧 ДІАГНОСТИКА (тимчасова — можна прибрати після фікса) ──
-    with st.expander("🔧 Діагностика підключення до БД", expanded=True):
-        # 1) Який URL у engine (без пароля)
-        try:
-            url = engine.url
-            safe_url = f"{url.drivername}://{url.username or ''}@{url.host or ''}:{url.port or ''}/{url.database or ''}"
-            st.code(f"engine.url = {safe_url}", language="text")
-        except Exception as e:
-            st.error(f"engine.url error: {e}")
+    with st.expander("ℹ️ Що це і навіщо", expanded=False):
+        st.markdown("""
+**Що робить цей розділ?**
 
-        # 2) Скільки рядків у public.review_requests через цей engine
-        diag_total = _qdf(engine, "SELECT COUNT(*) AS n FROM public.review_requests")
-        if not diag_total.empty:
-            st.write(f"**Всього рядків в `public.review_requests` (через UI engine): `{int(diag_total.iloc[0]['n'])}`**")
+Автоматично надсилає покупцям офіційний запит від Amazon
+**«Request a Review»** через SP-API (`solicitations/v1`). Це той самий запит,
+який можна натиснути вручну в Seller Central — лист про оцінку продукту
+та feedback продавця, написаний шаблоном Amazon.
 
-        # 3) Групування по store_name
-        diag_group = _qdf(engine, """
-            SELECT store_name, COUNT(*) AS cnt, MAX(sent_at) AS last_sent
-            FROM public.review_requests
-            GROUP BY store_name
-            ORDER BY cnt DESC
-        """)
-        if not diag_group.empty:
-            st.write("**store_name у БД:**")
-            st.dataframe(diag_group, hide_index=True, use_container_width=True)
-        else:
-            st.warning("⚠️ Таблиця `review_requests` порожня **в тій БД, до якої підключений UI**. "
-                       "Перевір `DATABASE_URL` в Streamlit secrets — він може вказувати на іншу БД, "
-                       "ніж .env вашого sender'а.")
+**Навіщо?**
+- Збільшує кількість відгуків на ASIN → краще ранжування і конверсія.
+- Економить час: замість того щоб клікати на кожне замовлення вручну
+  в Seller Central, скрипт пройде по всіх Shipped-ордерах за раз.
+- Працює в межах правил Amazon (один запит на замовлення, вікно 5–30 днів) —
+  ризику бану немає.
 
-        # 4) Контекст підключення
-        ctx = _qdf(engine, """
-            SELECT current_database() AS db,
-                   current_user        AS usr,
-                   current_schema()    AS schema,
-                   current_schemas(true)::text AS search_path
-        """)
-        if not ctx.empty:
-            st.write("**Контекст підключення:**")
-            st.dataframe(ctx, hide_index=True, use_container_width=True)
+**Як це працює?**
+1. Sender бере всі **Shipped** замовлення віком **8–33 дні**
+   (Amazon дозволяє запит між 5 і 30 днями після доставки — беремо безпечне вікно).
+2. Відсіює ті, на які ми вже надсилали (по таблиці `review_requests`).
+3. Для кожного нового — викликає SP-API `productReviewAndSellerFeedback`.
+4. Записує результат у БД зі статусом:
+   - **`sent`** ✅ — Amazon прийняв запит, лист піде покупцю.
+   - **`already`** ⏭️ — на це замовлення вже надсилали (вручну, інший скрипт,
+     або Amazon-автозапит). API не дозволяє дублі.
+   - **`outside`** ⏰ — замовлення вийшло з 5–30 денного вікна.
+   - **`failed`** ❌ — реальна помилка (мережа, перміссії, etc).
 
-        # 5) Усі таблиці review_requests у БД (по всіх схемах) — з лічильниками
-        all_tabs = _qdf(engine, """
-            SELECT table_schema, table_name
-            FROM information_schema.tables
-            WHERE table_name = 'review_requests'
-            ORDER BY table_schema
-        """)
-        if not all_tabs.empty:
-            st.write(f"**Таблиці `review_requests` у схемах:** "
-                     f"`{', '.join(all_tabs['table_schema'].tolist())}`")
-            for sch in all_tabs['table_schema'].tolist():
-                cnt = _qdf(engine, f'SELECT COUNT(*) AS n FROM "{sch}".review_requests')
-                if not cnt.empty:
-                    st.write(f"   • `{sch}.review_requests`: **{int(cnt.iloc[0]['n'])}** рядків")
+**Як читати графіки/KPI?**
+- **Всього відправлено** — реальні `sent` за весь час.
+- **Сьогодні / За 7 днів** — динаміка нових запитів.
+- **Already (дублі)** — нормально, особливо при першому запуску
+  на старій базі замовлень. Не помилка.
+- **Помилки** — має бути 0; якщо росте — дивись таблицю нижче,
+  колонка `Помилка`.
 
-        # 6) Views у всіх схемах
-        all_views = _qdf(engine, """
-            SELECT table_schema, table_name FROM information_schema.views
-            WHERE table_name LIKE 'v_review_requests%'
-            ORDER BY table_schema, table_name
-        """)
-        if not all_views.empty:
-            st.write("**Views (схема.назва):**")
-            st.dataframe(all_views, hide_index=True, use_container_width=True)
-        else:
-            st.error("❌ Views `v_review_requests_*` НЕ створені.")
-
-        # 5) Що бачить UI під своїм STORE_NAME
-        ui_view = _qdf(
-            engine,
-            "SELECT * FROM public.v_review_requests_summary WHERE store_name = :s",
-            {"s": STORE_NAME},
-        )
-        st.write(f"**SELECT з `v_review_requests_summary` WHERE store_name='{STORE_NAME}':**")
-        if not ui_view.empty:
-            st.dataframe(ui_view, hide_index=True, use_container_width=True)
-        else:
-            st.warning(f"⚠️ Порожньо для store_name='{STORE_NAME}'. Якщо вище у списку є інше ім'я — "
-                       f"sender пише під ним. Поправ `STORE_NAME` у sender'і або в UI.")
+**Коли запускати?**
+- **Раз на день** через cron / scheduled task. Тоді `Already` майже не буде —
+  скрипт буде ловити свіжі замовлення в потрібний момент.
+- При першому запуску на старій базі очікуй високий `Already` —
+  Amazon уже сам розіслав запити (їх built-in policy), і це не дубль наш.
+""")
 
     st.divider()
 
@@ -363,15 +325,6 @@ def show_review_requests_tab(engine):
         st.caption(f"Останній запуск: **{lr_str}**")
     else:
         st.info("Даних ще немає — запусти sender нижче.")
-        # Діагностика: подивимось, що реально лежить у БД
-        diag = _qdf(engine, """
-            SELECT store_name, COUNT(*) AS cnt
-            FROM public.review_requests GROUP BY store_name ORDER BY cnt DESC
-        """)
-        if not diag.empty:
-            st.caption("🔎 Діагностика: store_name у таблиці `review_requests`")
-            st.dataframe(diag, hide_index=True, use_container_width=True)
-            st.caption(f"UI шукає `store_name = '{STORE_NAME}'`")
 
     st.divider()
 
