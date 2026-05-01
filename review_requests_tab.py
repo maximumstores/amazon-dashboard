@@ -7,7 +7,7 @@ SP-API Review Request Sender + Streamlit UI для dashboard.py
     show_review_requests_tab(engine)
 """
 
-import os, time, threading
+import os, time
 import requests
 import pandas as pd
 import plotly.graph_objects as go
@@ -289,56 +289,6 @@ def show_review_requests_tab(engine):
     else:
         st.info("Даних для графіка ще немає.")
 
-    st.divider()
-
-    # ── Запуск ──────────────────────────────────────────────
-    st.markdown("### 🚀 Запуск")
-
-    if "rr_log"     not in st.session_state: st.session_state.rr_log     = []
-    if "rr_running" not in st.session_state: st.session_state.rr_running = False
-    if "rr_done"    not in st.session_state: st.session_state.rr_done    = False
-
-    cl, cr = st.columns([1, 2])
-    with cl:
-        max_send = st.number_input("MAX_SEND", 10, 500, MAX_SEND_DEFAULT, 10, key="rr_max")
-        run_btn  = st.button("▶️ Запустити", type="primary",
-                              use_container_width=True, key="rr_btn",
-                              disabled=st.session_state.rr_running)
-    with cr:
-        st.markdown("""
-        **Що відбувається:**
-        - Shipped замовлення SP-API за **8–33 дні**
-        - Пропускає ті що вже є в БД
-        - Відправляє `productReviewAndSellerFeedback`
-        - Записує результат у таблицю `review_requests`
-        - Rate limit: 1 req/s + авто-ретрай 429
-        """)
-
-    if run_btn and not st.session_state.rr_running:
-        st.session_state.rr_log     = []
-        st.session_state.rr_running = True
-        st.session_state.rr_done    = False
-
-        def _thread():
-            run_sender(engine, int(st.session_state.rr_max),
-                       lambda line: st.session_state.rr_log.append(line))
-            st.session_state.rr_running = False
-            st.session_state.rr_done    = True
-
-        threading.Thread(target=_thread, daemon=True).start()
-        st.rerun()
-
-    if st.session_state.rr_log:
-        st.markdown(
-            '<div class="rr-log">' + "\n".join(st.session_state.rr_log[-80:]) + '</div>',
-            unsafe_allow_html=True)
-
-    if st.session_state.rr_running:
-        st.info("⏳ Sender працює...")
-        time.sleep(2); st.rerun()
-    elif st.session_state.rr_done:
-        st.success("✅ Sender завершив роботу!")
-        st.session_state.rr_done = False
 
     st.divider()
 
