@@ -2999,295 +2999,331 @@ def _fmt(v):
     return f"{sign}${a:,.0f}"
 
 
+# ── Reimbursement constants ─────────────────────────────────────────────────
+LEDGER_REASON_CODES = {
+    'M': 'Damaged at Warehouse',
+    'E': 'Lost (written off)',
+    'Q': 'Damaged in Inbound',
+    'K': 'Generic Damage',
+    'F': 'Found at Warehouse',
+    'P': 'Item Recovered',
+    'N': 'Misplaced — Found',
+    'D': 'Defective',
+    'G': 'Other',
+    '3': 'Found by Customer Return',
+    '4': 'Damaged by Customer',
+}
+CLAIMABLE_CODES = ['E', 'M', 'Q', 'K']
+CODE_TO_REIMB_REASON = {
+    'E': 'Lost_Warehouse',
+    'M': 'Damaged_Warehouse',
+    'Q': 'Lost_Inbound',
+    'K': 'Damaged_Warehouse',
+}
+
+
 def show_reimbursement(t=None):
     """💸 Reimbursement — Money on the Table (gap) + History (paid + clawbacks).
-    2 саб-таби з 2 таблиць: inventory_ledger + fba_reimbursements."""
-    st.markdown("### 💸 Reimbursement — повернення коштів від Amazon")
-    st.caption("Скільки Amazon **винен** за втрачений inventory — і скільки вже виплачено / забрав назад.")
+    `t` тут — i18n dict (як в інших функціях dashboard.py); engine створюємо самі."""
+    eng = get_engine()
 
-    sub1, sub2 = st.tabs(["🔍 Money on the Table", "💰 History"])
+    st.markdown("## 💸 Reimbursement — повернення коштів від Amazon")
+    st.caption(
+        "Скільки Amazon винен за втрачений inventory — "
+        "і скільки вже виплачено / забрав назад."
+    )
 
-    # ── завантаження таблиць (один раз для двох вкладок) ──
-    # без ORDER BY — колонки можуть називатись по-різному; сортуємо в pandas
+    # Перевірка наявності таблиць
     try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            df_ledger = pd.read_sql(text("SELECT * FROM inventory_ledger LIMIT 50000"), conn)
+        ledger_count = pd.read_sql(
+            text("SELECT COUNT(*) AS cnt FROM inventory_ledger"), eng
+        ).iloc[0, 0]
     except Exception as e:
-        df_ledger = pd.DataFrame()
-        st.warning(f"⚠️ Не вдалося завантажити inventory_ledger: {e}")
+        st.error(f"❌ Таблиця `inventory_ledger` не знайдена: {e}")
+        st.info("Запусти `19_inventory_ledger_loader.py` для backfill.")
+        return
+
     try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            df_reimb = pd.read_sql(text("SELECT * FROM fba_reimbursements LIMIT 50000"), conn)
+        reimb_count = pd.read_sql(
+            text("SELECT COUNT(*) AS cnt FROM fba_reimbursements"), eng
+        ).iloc[0, 0]
     except Exception as e:
-        df_reimb = pd.DataFrame()
-        st.warning(f"⚠️ Не вдалося завантажити fba_reimbursements: {e}")
+        st.error(f"❌ Таблиця `fba_reimbursements` не знайдена: {e}")
+        st.info("Запусти `12_reimbursements_loader.py` для backfill.")
+        return
 
-    # сортуємо по даті в pandas, якщо є відповідна колонка
-    for _df, _candidates in [
-        (df_ledger, ["date","event_date","posted_date","adjusted_date","snapshot_date"]),
-        (df_reimb, ["approval_date","posted_date","date","reimbursement_date"]),
-    ]:
-        if not _df.empty:
-            _dc = next((c for c in _candidates if c in _df.columns), None)
-            if _dc:
-                try:
-                    _df.sort_values(_dc, ascending=False, inplace=True, na_position="last")
-                except Exception:
-                    pass
+    if ledger_count == 0:
+        st.warning(
+            "⚠️ В `inventory_ledger` немає даних. "
+            "Запусти: `LEDGER_DAYS_BACK=540 python 19_inventory_ledger_loader.py`"
+        )
+        return
 
-    # ──────────────────────────────────────────────────────────────────────
-    # SUB-TAB 1: Money on the Table
-    # ──────────────────────────────────────────────────────────────────────
-    with sub1:
-        st.markdown("##### 🔍 Втрати які Amazon ще НЕ компенсував")
-        st.caption(
-            "Записи з `inventory_ledger` (втрати/пошкодження/customer_damaged тощо) "
-            "співставлені з виплатами в `fba_reimbursements`. "
-            "Те що залишилось — **gap**, гроші на столі, які треба відкривати кейсами."
+    # Інфо про період
+    period_q = """
+        SELECT
+            COUNT(*) FILTER (WHERE event_type = 'Adjustments') AS adj_events,
+            (SELECT COUNT(*) FROM fba_reimbursements) AS reimb_rows
+        FROM inventory_ledger
+    """
+    info = pd.read_sql(text(period_q), eng).iloc[0]
+
+    cols = st.columns(3)
+    cols[0].metric("📒 Ledger rows", f"{ledger_count:,}")
+    cols[1].metric("⚙️ Adjustments events", f"{info['adj_events']:,}")
+    cols[2].metric("💰 Reimbursements", f"{info['reimb_rows']:,}")
+
+    st.markdown("---")
+
+    tab1, tab2 = st.tabs(["🔍 Money on the Table", "💰 History"])
+
+    with tab1:
+        render_money_on_table(eng)
+
+    with tab2:
+        render_history(eng)
+
+
+# ============================================================================
+# TAB 1: MONEY ON THE TABLE
+# ============================================================================
+
+def render_money_on_table(eng):
+    st.markdown("### 🔍 Втрати які Amazon ще НЕ компенсував")
+    st.caption(
+        "Записи з `inventory_ledger` (Lost/Damaged/Inbound damage) співставлені "
+        "з виплатами в `fba_reimbursements`. Те що залишилось — gap, "
+        "гроші на столі, які треба відкривати кейсами."
+    )
+
+    # Reconciliation query — мапимо ledger reason codes на reimbursement reason
+    sql = """
+    WITH
+    losses AS (
+        SELECT
+            asin,
+            CASE
+                WHEN reason = 'E' THEN 'Lost_Warehouse'
+                WHEN reason = 'M' THEN 'Damaged_Warehouse'
+                WHEN reason = 'K' THEN 'Damaged_Warehouse'
+                WHEN reason = 'Q' THEN 'Lost_Inbound'
+            END AS claim_type,
+            SUM(ABS(CAST(NULLIF(quantity, '') AS INTEGER))) AS units_lost,
+            COUNT(*) AS events,
+            MIN(event_date) AS first_event,
+            MAX(event_date) AS last_event
+        FROM inventory_ledger
+        WHERE event_type = 'Adjustments'
+          AND reason IN ('E', 'M', 'Q', 'K')
+          AND CAST(NULLIF(quantity, '') AS INTEGER) < 0
+          AND COALESCE(asin, '') <> ''
+        GROUP BY asin, claim_type
+    ),
+    paid AS (
+        SELECT
+            asin,
+            reason AS claim_type,
+            SUM(CAST(NULLIF(quantity_reimbursed_total, '') AS INTEGER)) AS units_paid,
+            SUM(CAST(NULLIF(amount_total, '') AS NUMERIC)) AS usd_paid,
+            AVG(CAST(NULLIF(amount_per_unit, '') AS NUMERIC)) FILTER
+                (WHERE CAST(NULLIF(amount_per_unit, '') AS NUMERIC) > 0) AS avg_price
+        FROM fba_reimbursements
+        WHERE reason IN ('Lost_Warehouse', 'Damaged_Warehouse', 'Lost_Inbound')
+          AND COALESCE(asin, '') <> ''
+        GROUP BY asin, claim_type
+    ),
+    global_avg AS (
+        SELECT AVG(CAST(NULLIF(amount_per_unit, '') AS NUMERIC)) AS price
+        FROM fba_reimbursements
+        WHERE CAST(NULLIF(amount_per_unit, '') AS NUMERIC) > 0
+    ),
+    titles AS (
+        SELECT DISTINCT ON (asin) asin, title
+        FROM inventory_ledger
+        WHERE COALESCE(title, '') <> ''
+        ORDER BY asin, event_date DESC
+    )
+    SELECT
+        l.asin,
+        tt.title,
+        l.claim_type,
+        l.units_lost,
+        COALESCE(p.units_paid, 0) AS units_paid,
+        l.units_lost - COALESCE(p.units_paid, 0) AS gap_units,
+        ROUND(
+            (l.units_lost - COALESCE(p.units_paid, 0))
+            * COALESCE(p.avg_price, (SELECT price FROM global_avg))
+        , 2) AS gap_usd,
+        l.events,
+        l.first_event,
+        l.last_event
+    FROM losses l
+    LEFT JOIN paid p USING (asin, claim_type)
+    LEFT JOIN titles tt USING (asin)
+    WHERE l.units_lost > COALESCE(p.units_paid, 0)
+    ORDER BY gap_usd DESC NULLS LAST
+    """
+
+    try:
+        df = pd.read_sql(text(sql), eng)
+    except Exception as e:
+        st.error(f"❌ Reconciliation query failed: {e}")
+        return
+
+    if df.empty:
+        st.success(
+            "✅ Усі втрати з ledger мають відповідні виплати в reimbursements. "
+            "Дашборд порожній — це гарний знак."
+        )
+        return
+
+    # KPI
+    total_gap_units = int(df['gap_units'].sum())
+    total_gap_usd = float(df['gap_usd'].sum() or 0)
+    affected_asins = df['asin'].nunique()
+
+    cols = st.columns(3)
+    cols[0].metric("💵 Estimated $ to claim", f"${total_gap_usd:,.0f}")
+    cols[1].metric("📦 Units gap", f"{total_gap_units:,}")
+    cols[2].metric("🏷️ ASINs affected", f"{affected_asins}")
+
+    # Розбивка по типу
+    st.markdown("#### За типом claim")
+    by_type = df.groupby('claim_type', as_index=False).agg(
+        units_lost=('units_lost', 'sum'),
+        units_paid=('units_paid', 'sum'),
+        gap_units=('gap_units', 'sum'),
+        gap_usd=('gap_usd', 'sum'),
+        asins=('asin', 'nunique'),
+    ).sort_values('gap_usd', ascending=False)
+    by_type['gap_usd'] = by_type['gap_usd'].round(2)
+    st.dataframe(by_type, use_container_width=True, hide_index=True)
+
+    # Фільтр
+    st.markdown("#### 📋 Список претендентів на claim")
+    claim_types = ['(всі)'] + sorted(df['claim_type'].dropna().unique().tolist())
+    chosen = st.selectbox("Filter by claim_type:", claim_types, key="reimb_claim_filter")
+
+    df_show = df.copy() if chosen == '(всі)' else df[df['claim_type'] == chosen].copy()
+
+    # Скорочуємо title для відображення
+    if 'title' in df_show.columns:
+        df_show['title'] = df_show['title'].fillna('').str.slice(0, 60)
+
+    st.dataframe(
+        df_show[[
+            'asin', 'title', 'claim_type',
+            'units_lost', 'units_paid', 'gap_units', 'gap_usd',
+            'events', 'first_event', 'last_event'
+        ]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    # Експорт
+    csv = df_show.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        "📥 Export to CSV (для Seller Central case)",
+        csv,
+        f"reimbursement_candidates_{chosen}.csv",
+        "text/csv",
+        key="reimb_money_dl",
+    )
+
+
+# ============================================================================
+# TAB 2: HISTORY
+# ============================================================================
+
+def render_history(eng):
+    st.markdown("### 💰 Історія виплат від Amazon")
+    st.caption(
+        "Що Amazon повернув автоматично + що подавали через case_id + clawbacks."
+    )
+
+    # KPI: total paid / clawback / NET
+    sql_kpi = """
+    SELECT
+        SUM(CAST(NULLIF(amount_total, '') AS NUMERIC)) FILTER
+            (WHERE CAST(NULLIF(amount_total, '') AS NUMERIC) > 0) AS total_paid,
+        SUM(CAST(NULLIF(amount_total, '') AS NUMERIC)) FILTER
+            (WHERE CAST(NULLIF(amount_total, '') AS NUMERIC) < 0) AS total_clawback,
+        SUM(CAST(NULLIF(amount_total, '') AS NUMERIC)) AS net,
+        COUNT(*) FILTER (WHERE COALESCE(case_id, '') <> '') AS with_case_id,
+        COUNT(*) AS total_rows,
+        COUNT(DISTINCT reimbursement_id) AS unique_reimb
+    FROM fba_reimbursements
+    """
+    kpi = pd.read_sql(text(sql_kpi), eng).iloc[0]
+
+    cols = st.columns(4)
+    cols[0].metric("💚 Total paid", f"${float(kpi['total_paid'] or 0):,.0f}")
+    cols[1].metric("🔻 Clawback", f"${float(kpi['total_clawback'] or 0):,.0f}")
+    cols[2].metric("📊 NET", f"${float(kpi['net'] or 0):,.0f}")
+    cols[3].metric(
+        "📁 With case_id",
+        f"{int(kpi['with_case_id'])} / {int(kpi['total_rows'])}",
+        help="Кейси які подавалися вручну (manual claim)"
+    )
+
+    # Розбивка по reason
+    st.markdown("#### Розбивка по reason")
+    sql_by_reason = """
+    SELECT
+        reason,
+        COUNT(*) AS rows,
+        COUNT(DISTINCT reimbursement_id) AS unique_reimb,
+        COUNT(*) FILTER (WHERE COALESCE(case_id, '') <> '') AS with_case_id,
+        SUM(CAST(NULLIF(quantity_reimbursed_total, '') AS INTEGER)) AS units,
+        ROUND(SUM(CAST(NULLIF(amount_total, '') AS NUMERIC)), 2) AS usd_total
+    FROM fba_reimbursements
+    GROUP BY reason
+    ORDER BY usd_total DESC NULLS LAST
+    """
+    df_reason = pd.read_sql(text(sql_by_reason), eng)
+    st.dataframe(df_reason, use_container_width=True, hide_index=True)
+
+    # Деталі — фільтр + таблиця
+    st.markdown("#### Деталізація")
+    reasons = ['(всі)'] + df_reason['reason'].dropna().tolist()
+    chosen_reason = st.selectbox("Filter by reason:", reasons, key='reimb_reason_filter')
+
+    sql_details = """
+    SELECT
+        approval_date,
+        reimbursement_id,
+        case_id,
+        amazon_order_id,
+        reason,
+        sku, asin,
+        product_name,
+        amount_per_unit,
+        amount_total,
+        quantity_reimbursed_total
+    FROM fba_reimbursements
+    {where}
+    ORDER BY approval_date DESC
+    LIMIT 1000
+    """
+    where = "" if chosen_reason == '(всі)' else f"WHERE reason = '{chosen_reason}'"
+    df_details = pd.read_sql(text(sql_details.format(where=where)), eng)
+
+    # Скорочуємо product_name для відображення
+    if 'product_name' in df_details.columns:
+        df_details['product_name'] = (
+            df_details['product_name'].fillna('').str.slice(0, 50)
         )
 
-        if df_ledger.empty:
-            st.info("Немає даних в inventory_ledger.")
-        else:
-            # шукаємо колонки кількості та причини в ledger
-            qty_col = next((c for c in ["quantity","qty","units","amount"] if c in df_ledger.columns), None)
-            reason_col = next((c for c in ["reason","disposition","event_type","reason_code"] if c in df_ledger.columns), None)
-            asin_col = next((c for c in ["asin","fnsku","sku"] if c in df_ledger.columns), None)
-            date_col = next((c for c in ["date","event_date","posted_date","adjusted_date"] if c in df_ledger.columns), None)
+    st.dataframe(df_details, use_container_width=True, hide_index=True)
 
-            # приводимо qty до числа
-            if qty_col:
-                df_ledger = df_ledger.copy()
-                df_ledger[qty_col] = pd.to_numeric(df_ledger[qty_col], errors="coerce").fillna(0)
-            # reimb_qty / reimb_amt теж зробимо числовими тут, бо використовуються в JOIN'ах нижче
-            for _c_name in ["quantity_reimbursed_total","quantity_reimbursed","amount_total","amount_per_unit","amount"]:
-                if _c_name in df_reimb.columns:
-                    df_reimb[_c_name] = pd.to_numeric(df_reimb[_c_name], errors="coerce").fillna(0)
-
-            # тільки негативні події (втрати)
-            LOSS_REASONS = ["customer_damaged","damaged","lost","misplaced",
-                            "warehouse_damage","carrier_damage","destroyed",
-                            "expired","fc_damaged","missing"]
-            if reason_col and qty_col:
-                df_loss = df_ledger.copy()
-                df_loss = df_loss[
-                    df_loss[reason_col].fillna("").astype(str).str.lower().isin(LOSS_REASONS)
-                ]
-                # сума втрат по ASIN
-                if asin_col:
-                    by_asin = (
-                        df_loss.groupby(asin_col)[qty_col]
-                        .sum()
-                        .reset_index(name="lost_units")
-                        .sort_values("lost_units", ascending=False)
-                    )
-
-                    # співставляємо з reimbursements
-                    if not df_reimb.empty:
-                        reimb_asin = next((c for c in ["asin","fnsku","sku"] if c in df_reimb.columns), None)
-                        reimb_qty = next((c for c in ["quantity_reimbursed_total","quantity_reimbursed","amount_total","amount_per_unit"] if c in df_reimb.columns), None)
-                        reimb_amt = next((c for c in ["amount_total","amount_per_unit","amount"] if c in df_reimb.columns), None)
-                        if reimb_asin and reimb_qty:
-                            paid_by_asin = (
-                                df_reimb.groupby(reimb_asin)[reimb_qty]
-                                .sum()
-                                .reset_index(name="reimbursed_units")
-                                .rename(columns={reimb_asin: asin_col})
-                            )
-                            by_asin = by_asin.merge(paid_by_asin, on=asin_col, how="left")
-                        else:
-                            by_asin["reimbursed_units"] = 0
-                        if reimb_asin and reimb_amt:
-                            paid_amt = (
-                                df_reimb.groupby(reimb_asin)[reimb_amt]
-                                .sum()
-                                .reset_index(name="reimbursed_amount_$")
-                                .rename(columns={reimb_asin: asin_col})
-                            )
-                            by_asin = by_asin.merge(paid_amt, on=asin_col, how="left")
-                        else:
-                            by_asin["reimbursed_amount_$"] = 0
-                    else:
-                        by_asin["reimbursed_units"] = 0
-                        by_asin["reimbursed_amount_$"] = 0
-
-                    by_asin["reimbursed_units"] = by_asin["reimbursed_units"].fillna(0).astype(int)
-                    by_asin["reimbursed_amount_$"] = by_asin["reimbursed_amount_$"].fillna(0).round(2)
-                    by_asin["gap_units"] = (by_asin["lost_units"] - by_asin["reimbursed_units"]).clip(lower=0)
-
-                    # KPI
-                    total_lost = int(by_asin["lost_units"].sum())
-                    total_reimb = int(by_asin["reimbursed_units"].sum())
-                    total_gap = int(by_asin["gap_units"].sum())
-                    total_paid_usd = float(by_asin["reimbursed_amount_$"].sum())
-
-                    k1, k2, k3, k4 = st.columns(4)
-                    k1.metric("📉 Втрачено units", f"{total_lost:,}")
-                    k2.metric("💵 Уже компенсовано", f"{total_reimb:,}",
-                              delta=f"{round(total_reimb/total_lost*100) if total_lost else 0}%")
-                    k3.metric("🔥 Gap (треба claim'ити)", f"{total_gap:,}",
-                              delta_color="inverse",
-                              delta=f"-{total_gap}" if total_gap else None)
-                    k4.metric("💰 Reimbursed $", _fmt(total_paid_usd))
-
-                    if total_gap > 0:
-                        st.warning(
-                            f"💡 Amazon втратив **{total_gap:,}** units, які ще не компенсував. "
-                            f"Топ-ASIN зі gap'ом — внизу. Відкривай кейси у Seller Central."
-                        )
-
-                    # таблиця топ-ASIN з gap'ом
-                    st.markdown("**🎯 Топ ASIN з найбільшим gap'ом (перші 30)**")
-                    by_asin_sorted = by_asin[by_asin["gap_units"] > 0].sort_values("gap_units", ascending=False).head(30)
-                    if by_asin_sorted.empty:
-                        st.success("✅ Всі втрати компенсовані. Немає gap'у.")
-                    else:
-                        st.dataframe(
-                            by_asin_sorted,
-                            use_container_width=True, hide_index=True,
-                        )
-                        # CSV export
-                        csv = by_asin_sorted.to_csv(index=False).encode()
-                        st.download_button(
-                            "⬇️ Скачати gap-list (CSV) — для відкриття кейсів",
-                            csv,
-                            file_name=f"reimbursement_gap_{datetime.now().strftime('%Y%m%d')}.csv",
-                            mime="text/csv",
-                        )
-
-                    # графік: gap по причинах
-                    st.divider()
-                    st.markdown("**📊 Втрати по причинах (з ledger)**")
-                    by_reason = df_loss.groupby(reason_col)[qty_col].sum().reset_index(name="units")
-                    by_reason = by_reason.sort_values("units", ascending=False)
-                    if not by_reason.empty:
-                        import plotly.express as px
-                        fig = px.bar(by_reason, x=reason_col, y="units",
-                                     title="Втрати по причинах (всі час)",
-                                     color="units", color_continuous_scale="Reds")
-                        fig.update_layout(height=350, margin=dict(t=40,b=20,l=10,r=10))
-                        st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info(f"В таблиці inventory_ledger немає колонки `asin/fnsku/sku` — не можемо групувати.")
-            else:
-                st.warning(
-                    f"В inventory_ledger не знайдено стандартних колонок: "
-                    f"reason_col={reason_col}, qty_col={qty_col}. "
-                    f"Доступні колонки: {list(df_ledger.columns)[:20]}"
-                )
-
-    # ──────────────────────────────────────────────────────────────────────
-    # SUB-TAB 2: History
-    # ──────────────────────────────────────────────────────────────────────
-    with sub2:
-        st.markdown("##### 💰 Історія виплат + clawbacks")
-        st.caption(
-            "Все що Amazon уже виплатив (`fba_reimbursements`) — позитивні суми. "
-            "Якщо є записи з негативною сумою (`amount_total < 0`) — це **clawback** "
-            "(Amazon забрав назад, бо знайшов товар або визнав помилку)."
-        )
-
-        if df_reimb.empty:
-            st.info("Немає даних в fba_reimbursements.")
-        else:
-            amt_col = next((c for c in ["amount_total","amount","amount_per_unit"] if c in df_reimb.columns), None)
-            date_col = next((c for c in ["approval_date","posted_date","date"] if c in df_reimb.columns), None)
-            asin_col = next((c for c in ["asin","fnsku","sku"] if c in df_reimb.columns), None)
-            reason_col = next((c for c in ["reason","reason_code","disposition"] if c in df_reimb.columns), None)
-
-            # приводимо amount до числа (інакше .sum() може вибухнути на string)
-            if amt_col:
-                df_reimb = df_reimb.copy()
-                df_reimb[amt_col] = pd.to_numeric(df_reimb[amt_col], errors="coerce").fillna(0)
-
-            # KPI: загальна сума, кількість, clawbacks
-            total_paid = float(df_reimb[amt_col].sum()) if amt_col else 0
-            n_records = len(df_reimb)
-            if amt_col:
-                clawbacks_df = df_reimb[df_reimb[amt_col] < 0]
-                n_clawbacks = len(clawbacks_df)
-                clawback_amt = float(clawbacks_df[amt_col].sum()) if not clawbacks_df.empty else 0
-            else:
-                n_clawbacks, clawback_amt = 0, 0
-
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("💰 Total paid (net)", _fmt(total_paid))
-            k2.metric("📋 Records", f"{n_records:,}")
-            k3.metric("⚠️ Clawbacks", f"{n_clawbacks:,}",
-                      delta=_fmt(clawback_amt) if clawback_amt else None,
-                      delta_color="inverse")
-            if amt_col and date_col:
-                # за останні 30 днів
-                df_reimb_dt = df_reimb.copy()
-                df_reimb_dt[date_col] = pd.to_datetime(df_reimb_dt[date_col], errors="coerce")
-                last30 = df_reimb_dt[df_reimb_dt[date_col] >= (datetime.now() - pd.Timedelta(days=30))]
-                last30_amt = float(last30[amt_col].sum()) if not last30.empty else 0
-                k4.metric("📅 Останні 30 днів", _fmt(last30_amt))
-            else:
-                k4.metric("📅 30d", "—")
-
-            # графік: динаміка по часу
-            if amt_col and date_col:
-                st.divider()
-                st.markdown("**📈 Динаміка виплат по місяцях**")
-                df_t = df_reimb.copy()
-                df_t[date_col] = pd.to_datetime(df_t[date_col], errors="coerce")
-                df_t = df_t.dropna(subset=[date_col])
-                df_t["month"] = df_t[date_col].dt.to_period("M").astype(str)
-                by_month = df_t.groupby("month")[amt_col].sum().reset_index(name="amount")
-                if not by_month.empty:
-                    import plotly.express as px
-                    fig = px.bar(by_month, x="month", y="amount",
-                                 title="Reimbursements по місяцях",
-                                 color="amount", color_continuous_scale="Greens")
-                    fig.update_layout(height=320, margin=dict(t=40,b=20,l=10,r=10))
-                    st.plotly_chart(fig, use_container_width=True)
-
-            # фільтри
-            st.divider()
-            st.markdown("**🔍 Фільтри**")
-            ff1, ff2, ff3 = st.columns(3)
-            with ff1:
-                f_asin = st.text_input("ASIN", key="reimb_f_asin", placeholder="B0...")
-            with ff2:
-                if reason_col:
-                    reasons = ["Всі"] + sorted(df_reimb[reason_col].dropna().unique().tolist())[:30]
-                    f_reason = st.selectbox("Reason", reasons, key="reimb_f_reason")
-                else:
-                    f_reason = "Всі"
-            with ff3:
-                f_only_clawback = st.checkbox("Тільки clawbacks (< 0)", key="reimb_f_clawback")
-
-            df_view = df_reimb.copy()
-            if f_asin and asin_col:
-                df_view = df_view[df_view[asin_col].fillna("").str.contains(f_asin, case=False, na=False)]
-            if f_reason != "Всі" and reason_col:
-                df_view = df_view[df_view[reason_col] == f_reason]
-            if f_only_clawback and amt_col:
-                df_view = df_view[df_view[amt_col] < 0]
-
-            st.caption(f"Показано **{len(df_view):,}** з {n_records:,} записів")
-            # головні колонки
-            show_cols = [c for c in [date_col, asin_col, reason_col, amt_col,
-                                     "quantity_reimbursed_total","quantity_reimbursed",
-                                     "case_id","reimbursement_id"] if c and c in df_view.columns]
-            if not show_cols:
-                show_cols = list(df_view.columns)[:8]
-            st.dataframe(
-                df_view[show_cols].head(500),
-                use_container_width=True, hide_index=True,
-            )
-
-            # експорт
-            csv = df_view.to_csv(index=False).encode()
-            st.download_button(
-                "⬇️ Скачати історію (CSV)",
-                csv,
-                file_name=f"fba_reimbursements_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-            )
+    csv = df_details.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        "📥 Export history to CSV",
+        csv,
+        f"reimbursement_history_{chosen_reason}.csv",
+        "text/csv",
+        key='reimb_history_dl',
+    )
 
 def show_settlements(t):
     st.markdown("### 💰 Фінанси (Settlements / Fees)")
@@ -12444,126 +12480,6 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
