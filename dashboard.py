@@ -3008,24 +3008,34 @@ def show_reimbursement(t=None):
     sub1, sub2 = st.tabs(["🔍 Money on the Table", "💰 History"])
 
     # ── завантаження таблиць (один раз для двох вкладок) ──
+    # без ORDER BY — колонки можуть називатись по-різному; сортуємо в pandas
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            df_ledger = pd.read_sql(
-                text("SELECT * FROM inventory_ledger ORDER BY date DESC LIMIT 50000"), conn
-            )
+            df_ledger = pd.read_sql(text("SELECT * FROM inventory_ledger LIMIT 50000"), conn)
     except Exception as e:
         df_ledger = pd.DataFrame()
         st.warning(f"⚠️ Не вдалося завантажити inventory_ledger: {e}")
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            df_reimb = pd.read_sql(
-                text("SELECT * FROM fba_reimbursements ORDER BY approval_date DESC LIMIT 50000"), conn
-            )
+            df_reimb = pd.read_sql(text("SELECT * FROM fba_reimbursements LIMIT 50000"), conn)
     except Exception as e:
         df_reimb = pd.DataFrame()
         st.warning(f"⚠️ Не вдалося завантажити fba_reimbursements: {e}")
+
+    # сортуємо по даті в pandas, якщо є відповідна колонка
+    for _df, _candidates in [
+        (df_ledger, ["date","event_date","posted_date","adjusted_date","snapshot_date"]),
+        (df_reimb, ["approval_date","posted_date","date","reimbursement_date"]),
+    ]:
+        if not _df.empty:
+            _dc = next((c for c in _candidates if c in _df.columns), None)
+            if _dc:
+                try:
+                    _df.sort_values(_dc, ascending=False, inplace=True, na_position="last")
+                except Exception:
+                    pass
 
     # ──────────────────────────────────────────────────────────────────────
     # SUB-TAB 1: Money on the Table
@@ -3045,7 +3055,16 @@ def show_reimbursement(t=None):
             qty_col = next((c for c in ["quantity","qty","units","amount"] if c in df_ledger.columns), None)
             reason_col = next((c for c in ["reason","disposition","event_type","reason_code"] if c in df_ledger.columns), None)
             asin_col = next((c for c in ["asin","fnsku","sku"] if c in df_ledger.columns), None)
-            date_col = next((c for c in ["date","event_date","posted_date"] if c in df_ledger.columns), None)
+            date_col = next((c for c in ["date","event_date","posted_date","adjusted_date"] if c in df_ledger.columns), None)
+
+            # приводимо qty до числа
+            if qty_col:
+                df_ledger = df_ledger.copy()
+                df_ledger[qty_col] = pd.to_numeric(df_ledger[qty_col], errors="coerce").fillna(0)
+            # reimb_qty / reimb_amt теж зробимо числовими тут, бо використовуються в JOIN'ах нижче
+            for _c_name in ["quantity_reimbursed_total","quantity_reimbursed","amount_total","amount_per_unit","amount"]:
+                if _c_name in df_reimb.columns:
+                    df_reimb[_c_name] = pd.to_numeric(df_reimb[_c_name], errors="coerce").fillna(0)
 
             # тільки негативні події (втрати)
             LOSS_REASONS = ["customer_damaged","damaged","lost","misplaced",
@@ -3177,6 +3196,11 @@ def show_reimbursement(t=None):
             date_col = next((c for c in ["approval_date","posted_date","date"] if c in df_reimb.columns), None)
             asin_col = next((c for c in ["asin","fnsku","sku"] if c in df_reimb.columns), None)
             reason_col = next((c for c in ["reason","reason_code","disposition"] if c in df_reimb.columns), None)
+
+            # приводимо amount до числа (інакше .sum() може вибухнути на string)
+            if amt_col:
+                df_reimb = df_reimb.copy()
+                df_reimb[amt_col] = pd.to_numeric(df_reimb[amt_col], errors="coerce").fillna(0)
 
             # KPI: загальна сума, кількість, clawbacks
             total_paid = float(df_reimb[amt_col].sum()) if amt_col else 0
@@ -12420,6 +12444,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
