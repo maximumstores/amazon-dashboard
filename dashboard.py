@@ -8247,6 +8247,266 @@ def show_custom_quality():
                            "asins.csv", "text/csv", key="dl_cq_asins_csv")
 
     # ══════════════════════════════════════════════════════════
+    # 📣 CUSTOMER FEEDBACK INSIGHTS (SP-API готовий аналіз)
+    # ══════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("#### 📣 Customer Feedback — готовий аналіз від Amazon")
+    st.caption(
+        "Amazon сам аналізує відгуки/повернення/Q&A і виділяє топіки + sentiment + star impact. "
+        "Тут ці дані для **поточних ASIN з фільтру** — без власного AI, готові інсайти від Amazon."
+    )
+
+    if not unique_asins:
+        st.info("Немає ASIN у фільтрі — нічого показувати.")
+    else:
+        try:
+            with engine.connect() as conn:
+                # дізнаємось який останній snapshot покриває хоч один з наших ASIN
+                snap_row = pd.read_sql(
+                    text("""
+                        SELECT MAX(snapshot_date) AS snap
+                        FROM cf_item_topics
+                        WHERE asin = ANY(:asins)
+                    """),
+                    conn, params={"asins": list(unique_asins)},
+                )
+            cf_snap = snap_row.iloc[0]["snap"] if not snap_row.empty else None
+        except Exception as e:
+            st.warning(f"⚠️ Таблиця `cf_item_topics` недоступна: {e}")
+            st.caption("Запусти SP-API Customer Feedback loader щоб з'явились дані.")
+            cf_snap = None
+
+        if cf_snap is None:
+            st.info(
+                "ℹ️ Немає Customer Feedback даних для цих ASIN. "
+                "Перевір що SP-API loader хоч раз згружав `cf_item_topics` для цих SKU."
+            )
+        else:
+            st.caption(f"📅 Snapshot: **{cf_snap}**")
+
+            # завантажуємо топіки для всіх відфільтрованих ASIN
+            try:
+                with engine.connect() as conn:
+                    df_cf = pd.read_sql(
+                        text("""
+                            SELECT
+                                asin, sentiment, topic_rank, topic,
+                                asin_mentions, asin_occurrence_pct,
+                                parent_star_impact, bn_star_impact,
+                                review_snippets, subtopics
+                            FROM cf_item_topics
+                            WHERE snapshot_date = :snap AND asin = ANY(:asins)
+                            ORDER BY sentiment DESC, asin_mentions DESC NULLS LAST
+                        """),
+                        conn, params={"snap": cf_snap, "asins": list(unique_asins)},
+                    )
+            except Exception as e:
+                df_cf = pd.DataFrame()
+                st.error(f"❌ {e}")
+
+            if df_cf.empty:
+                st.info("Для цих ASIN немає топіків у snapshot.")
+            else:
+                # KPI
+                neg_cnt = int((df_cf["sentiment"] == "negative").sum())
+                pos_cnt = int((df_cf["sentiment"] == "positive").sum())
+                cf_asins_count = df_cf["asin"].nunique()
+                # сумарний negative impact (зважений по mentions)
+                neg_df = df_cf[df_cf["sentiment"] == "negative"].copy()
+                neg_df["asin_mentions"] = pd.to_numeric(neg_df["asin_mentions"], errors="coerce").fillna(0)
+                neg_df["parent_star_impact"] = pd.to_numeric(neg_df["parent_star_impact"], errors="coerce").fillna(0)
+                worst_topic_row = neg_df.iloc[0] if not neg_df.empty else None
+
+                cfk1, cfk2, cfk3, cfk4 = st.columns(4)
+                cfk1.metric("🏷️ ASINs з даними", f"{cf_asins_count} / {len(unique_asins)}")
+                cfk2.metric("❌ Negative topics", neg_cnt)
+                cfk3.metric("✅ Positive topics", pos_cnt)
+                if worst_topic_row is not None:
+                    cfk4.metric(
+                        "🔥 Найгірший топік",
+                        worst_topic_row["topic"][:25],
+                        delta=f"{int(worst_topic_row['asin_mentions'])} mentions",
+                        delta_color="inverse",
+                    )
+
+                # ── фільтри ──
+                cf_f1, cf_f2 = st.columns([1, 2])
+                with cf_f1:
+                    cf_sent = st.radio(
+                        "Sentiment",
+                        ["❌ Negative", "✅ Positive", "Усі"],
+                        horizontal=True, key="cq_cf_sent",
+                    )
+                with cf_f2:
+                    cf_search = st.text_input(
+                        "🔍 Пошук по топіку (size, color, smell, fit, ...)",
+                        key="cq_cf_search",
+                        placeholder="наприклад: color, size, fit, smell, quality...",
+                    )
+
+                df_cf_f = df_cf.copy()
+                if cf_sent == "❌ Negative":
+                    df_cf_f = df_cf_f[df_cf_f["sentiment"] == "negative"]
+                elif cf_sent == "✅ Positive":
+                    df_cf_f = df_cf_f[df_cf_f["sentiment"] == "positive"]
+                if cf_search:
+                    df_cf_f = df_cf_f[
+                        df_cf_f["topic"].astype(str).str.contains(cf_search, case=False, na=False)
+                    ]
+
+                # ── агреговано по топіку (всі ASIN разом) ──
+                st.markdown("##### 📊 Топ-топіки по всіх вибраних ASIN")
+                df_cf_f_num = df_cf_f.copy()
+                for c in ["asin_mentions","asin_occurrence_pct","parent_star_impact","bn_star_impact"]:
+                    if c in df_cf_f_num.columns:
+                        df_cf_f_num[c] = pd.to_numeric(df_cf_f_num[c], errors="coerce").fillna(0)
+                if not df_cf_f_num.empty:
+                    by_topic = (
+                        df_cf_f_num.groupby(["topic","sentiment"], as_index=False)
+                        .agg(
+                            asins=("asin","nunique"),
+                            mentions=("asin_mentions","sum"),
+                            avg_occurrence_pct=("asin_occurrence_pct","mean"),
+                            avg_star_impact=("parent_star_impact","mean"),
+                        )
+                        .sort_values(["sentiment","mentions"], ascending=[True, False])
+                    )
+                    by_topic["mentions"] = by_topic["mentions"].astype(int)
+                    by_topic["avg_occurrence_pct"] = by_topic["avg_occurrence_pct"].round(1)
+                    by_topic["avg_star_impact"] = by_topic["avg_star_impact"].round(2)
+                    st.dataframe(
+                        by_topic.head(30),
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "topic": st.column_config.TextColumn("Топік", width="medium"),
+                            "sentiment": st.column_config.TextColumn("Sentiment", width="small"),
+                            "asins": st.column_config.NumberColumn("ASINs", help="Скільки наших ASIN мають цей топік"),
+                            "mentions": st.column_config.NumberColumn("Mentions"),
+                            "avg_occurrence_pct": st.column_config.NumberColumn("Occur. %", format="%.1f%%"),
+                            "avg_star_impact": st.column_config.NumberColumn(
+                                "⭐ impact",
+                                help="Середній вплив на рейтинг (від'ємний = тягне вниз)"
+                            ),
+                        },
+                    )
+
+                # ── деталі по ASIN з snippets ──
+                st.markdown("##### 🔍 Деталі по ASIN (з реальними цитатами покупців)")
+                cf_asin_options = sorted(df_cf_f["asin"].unique().tolist())
+                cf_picked = st.selectbox(
+                    "Виберіть ASIN",
+                    ["(всі)"] + cf_asin_options,
+                    key="cq_cf_asin_pick",
+                )
+                df_cf_show = df_cf_f if cf_picked == "(всі)" else df_cf_f[df_cf_f["asin"] == cf_picked]
+
+                # показуємо як expanders з snippets
+                for _, row in df_cf_show.head(20).iterrows():
+                    sent_emoji = "❌" if row["sentiment"] == "negative" else "✅"
+                    mentions = pd.to_numeric(row["asin_mentions"], errors="coerce") or 0
+                    star_imp = pd.to_numeric(row["parent_star_impact"], errors="coerce") or 0
+                    label = (
+                        f"{sent_emoji} **{row['topic']}** · {row['asin']} · "
+                        f"{int(mentions)} mentions · ⭐ impact {star_imp:+.2f}"
+                    )
+                    with st.expander(label, expanded=False):
+                        snippets_raw = row.get("review_snippets", "")
+                        # snippets можуть бути як JSON-array, як string з \n, або плейн
+                        if snippets_raw:
+                            try:
+                                import json as _j
+                                snips = _j.loads(snippets_raw) if isinstance(snippets_raw, str) and snippets_raw.startswith("[") else None
+                                if snips and isinstance(snips, list):
+                                    for sn in snips[:10]:
+                                        st.markdown(f"> _{sn}_")
+                                else:
+                                    st.markdown(str(snippets_raw)[:1000])
+                            except Exception:
+                                st.markdown(str(snippets_raw)[:1000])
+                        else:
+                            st.caption("_Немає snippets_")
+
+                        sub_raw = row.get("subtopics", "")
+                        if sub_raw:
+                            st.caption(f"**Subtopics:** {str(sub_raw)[:300]}")
+
+                # ── експорт ──
+                csv_cf = df_cf_f.to_csv(index=False).encode()
+                st.download_button(
+                    "📥 CSV (CF topics)",
+                    csv_cf,
+                    file_name=f"cf_topics_{cf_snap}.csv",
+                    mime="text/csv",
+                    key="dl_cq_cf",
+                )
+
+                # ── AI-аналіз CF даних (швидкий пресет) ──
+                st.markdown("##### 🤖 AI-висновки по Customer Feedback")
+                cfa1, cfa2 = st.columns([1, 4])
+                with cfa1:
+                    cf_run_ai = st.button(
+                        "🧠 Зробити висновки",
+                        type="primary",
+                        key="cq_cf_ai_run",
+                        use_container_width=True,
+                        disabled=df_cf_f.empty,
+                    )
+                with cfa2:
+                    st.caption(
+                        "AI прочитає всі топіки + snippets вище і дасть конкретні дії: "
+                        "що поправити в продукті/листингу. Швидко, бо вже структуровано."
+                    )
+
+                if cf_run_ai and not df_cf_f.empty:
+                    cf_ctx = []
+                    for _, row in df_cf_f.head(50).iterrows():
+                        snip = str(row.get("review_snippets",""))[:300]
+                        cf_ctx.append(
+                            f"- [{row['sentiment']}] {row['topic']} (ASIN {row['asin']}, "
+                            f"{row.get('asin_mentions','?')} mentions, "
+                            f"star_impact {row.get('parent_star_impact','?')}) — "
+                            f"snippets: {snip}"
+                        )
+                    cf_prompt = (
+                        f"Ти — senior Amazon FBA Quality аналітик. Маєш готовий аналіз від SP-API "
+                        f"Customer Feedback за {cf_asins_count} ASIN.\n\n"
+                        f"=== ТОПІКИ ===\n" + "\n".join(cf_ctx) + "\n\n"
+                        f"=== ЗАВДАННЯ ===\n"
+                        f"Дай висновки у форматі:\n\n"
+                        f"🔥 ГОЛОВНА ПРОБЛЕМА:\n[1-2 речення про найкритичніший топік + його цифри]\n\n"
+                        f"⚠️ ТОП-3 СКАРГИ:\n"
+                        f"[Нумеровано: топік - скільки ASIN/mentions - конкретна цитата з snippets - "
+                        f"що це означає (розмір? колір? якість матеріалу?)]\n\n"
+                        f"✅ ЩО ХВАЛЯТЬ:\n[1-3 пункти, коротко]\n\n"
+                        f"🎯 КОНКРЕТНІ ДІЇ:\n"
+                        f"[3 кроки: що поправити в продукті / листингу / sizing-гайді. "
+                        f"Кожен крок повинен мати ASIN-приклад.]\n\n"
+                        f"Мова: українська. Кожна секція максимум 5 рядків. "
+                        f"Не вигадуй дані — спирайся ТІЛЬКИ на топіки вище."
+                    )
+                    with st.spinner("🤖 AI аналізує..."):
+                        try:
+                            cf_ans = call_ai(cf_prompt)
+                        except Exception as _e:
+                            cf_ans = f"❌ AI помилка: {_e}"
+                    st.session_state["cq_cf_ai_result"] = cf_ans
+
+                if "cq_cf_ai_result" in st.session_state:
+                    res = st.session_state["cq_cf_ai_result"]
+                    if res.startswith("❌"):
+                        st.error(res)
+                    else:
+                        st.markdown(
+                            f"<div style='background:linear-gradient(135deg,#0f172a,#1e293b);"
+                            f"border:1px solid #334155;border-radius:12px;padding:18px 22px;"
+                            f"font-size:14px;line-height:1.6;color:#e2e8f0'>{res}</div>",
+                            unsafe_allow_html=True,
+                        )
+                        if st.button("🗑 Очистити CF-висновки", key="cq_cf_ai_clear"):
+                            st.session_state.pop("cq_cf_ai_result", None)
+                            st.rerun()
+
+    # ══════════════════════════════════════════════════════════
     # 🕷 Скрапер відгуків (для відфільтрованих ASIN)
     # ══════════════════════════════════════════════════════════
     st.markdown("---")
