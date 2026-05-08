@@ -9005,6 +9005,8 @@ def show_custom_quality():
                         text("""
                             SELECT asin, sentiment, topic_rank, topic,
                                    asin_mentions, asin_occurrence_pct,
+                                   parent_mentions, parent_occurrence_pct,
+                                   bn_occurrence_pct,
                                    parent_star_impact, bn_star_impact,
                                    review_snippets, subtopics
                             FROM cf_item_topics
@@ -9017,9 +9019,23 @@ def show_custom_quality():
                 st.error(f"❌ {e}")
 
             # числові колонки → numeric
-            for _c in ["asin_mentions","asin_occurrence_pct","parent_star_impact","bn_star_impact"]:
+            for _c in ["asin_mentions","asin_occurrence_pct",
+                       "parent_mentions","parent_occurrence_pct",
+                       "bn_occurrence_pct",
+                       "parent_star_impact","bn_star_impact"]:
                 if _c in df_cf.columns:
                     df_cf[_c] = pd.to_numeric(df_cf[_c], errors="coerce").fillna(0)
+
+            # ASIN → title mapping (з основного df_full)
+            try:
+                _asin_title_map = (
+                    df_full.dropna(subset=['asin1'])
+                    .drop_duplicates('asin1')
+                    .set_index('asin1')['item_name']
+                    .to_dict()
+                )
+            except Exception:
+                _asin_title_map = {}
 
             # ────────────────────────────────────────────────────────────
             # TAB 1: 📊 Overview
@@ -9209,77 +9225,210 @@ def show_custom_quality():
                         )
 
             # ────────────────────────────────────────────────────────────
-            # TAB 4: 🔥 ASINs × Теми (матриця для порівняння)
+            # TAB 4: 🔥 ASINs × Теми — порівняння (наш % vs категорія)
             # ────────────────────────────────────────────────────────────
             with cf_t4:
-                st.markdown("##### 🔥 Всі ASINs × Теми — порівняння")
-                st.caption(
-                    "Матриця: рядки = ASIN, стовпці = топіки, значення = кількість mentions. "
-                    "Видно у яких ASIN яка проблема найгостріша."
-                )
+                st.markdown("### 🔥 Всі ASINs × Теми — порівняння")
 
                 if df_cf.empty:
                     st.info("Немає даних.")
                 else:
-                    cf_t4_sent = st.radio(
-                        "Sentiment",
-                        ["❌ Negative", "✅ Positive"],
-                        horizontal=True, key="cq_cf_t4_sent",
+                    # ── controls (4 в ряд як на скріншоті) ──
+                    cc1, cc2, cc3, cc4 = st.columns([1, 1, 1.2, 1.4])
+                    with cc1:
+                        t4_sent = st.radio(
+                            "Sentiment", ["negative", "positive"],
+                            key="cq_cf_t4_sent",
+                        )
+                    with cc2:
+                        t4_view = st.radio(
+                            "Вигляд", ["Ranked list", "Bubble chart"],
+                            key="cq_cf_t4_view",
+                        )
+                    with cc3:
+                        t4_topn = st.slider(
+                            "Топ N тем", min_value=5, max_value=40, value=12, step=1,
+                            key="cq_cf_t4_topn",
+                        )
+                    with cc4:
+                        t4_metric = st.selectbox(
+                            "Метрика",
+                            ["Parent %", "ASIN %", "Category %", "⭐ impact"],
+                            key="cq_cf_t4_metric",
+                            help=(
+                                "Parent % — на parent-ASIN рівні · "
+                                "ASIN % — на конкретному ASIN · "
+                                "Category % — у категорії browse_node · "
+                                "⭐ impact — вплив на рейтинг"
+                            ),
+                        )
+
+                    st.caption(
+                        "Червона смуга = наш %, сіра = категорія (browse_node). "
+                        "Δ = відхилення від benchmark."
                     )
-                    sent_filter = "negative" if cf_t4_sent.startswith("❌") else "positive"
-                    df_m = df_cf[df_cf["sentiment"] == sent_filter].copy()
 
+                    # вибираємо колонку метрики
+                    metric_map = {
+                        "Parent %":   ("parent_occurrence_pct", "bn_occurrence_pct", "%"),
+                        "ASIN %":     ("asin_occurrence_pct",   "bn_occurrence_pct", "%"),
+                        "Category %": ("bn_occurrence_pct",     "bn_occurrence_pct", "%"),
+                        "⭐ impact":   ("parent_star_impact",    "bn_star_impact",    ""),
+                    }
+                    our_col, bench_col, suffix = metric_map[t4_metric]
+
+                    df_m = df_cf[df_cf["sentiment"] == t4_sent].copy()
                     if df_m.empty:
-                        st.info(f"Немає {sent_filter} топіків.")
+                        st.info(f"Немає {t4_sent} топіків.")
                     else:
-                        # топ-N топіків (інакше матриця буде мегабольшою)
-                        top_topics_df = (
-                            df_m.groupby("topic")["asin_mentions"].sum()
-                            .sort_values(ascending=False).head(15).index.tolist()
-                        )
-                        df_m = df_m[df_m["topic"].isin(top_topics_df)]
-                        # pivot
-                        pivot = df_m.pivot_table(
-                            index="asin", columns="topic",
-                            values="asin_mentions",
-                            aggfunc="sum", fill_value=0,
-                        ).astype(int)
-                        # сортуємо ASIN-и за сумою mentions
-                        pivot["_total"] = pivot.sum(axis=1)
-                        pivot = pivot.sort_values("_total", ascending=False).drop(columns=["_total"])
+                        # сортуємо: спочатку по нашому %, потім по mentions
+                        sort_col = our_col if our_col in df_m.columns else "asin_mentions"
+                        df_m = df_m.sort_values(sort_col, ascending=False).head(t4_topn).copy()
 
-                        # heatmap
-                        try:
-                            import plotly.express as px
-                            import plotly.graph_objects as go
-                            color_scale = "Reds" if sent_filter == "negative" else "Greens"
-                            fig = px.imshow(
-                                pivot.values,
-                                x=pivot.columns.tolist(),
-                                y=pivot.index.tolist(),
-                                color_continuous_scale=color_scale,
-                                aspect="auto",
-                                labels=dict(color="mentions"),
-                            )
-                            fig.update_layout(
-                                height=max(360, 24 * len(pivot)),
-                                margin=dict(t=20,b=20,l=10,r=10),
-                                xaxis=dict(tickangle=-30),
-                            )
-                            st.plotly_chart(fig, use_container_width=True)
-                        except Exception:
-                            st.dataframe(pivot, use_container_width=True)
+                        # рахуємо delta (наш - benchmark)
+                        df_m["our_val"]   = pd.to_numeric(df_m.get(our_col, 0), errors="coerce").fillna(0)
+                        df_m["bench_val"] = pd.to_numeric(df_m.get(bench_col, 0), errors="coerce").fillna(0)
+                        df_m["delta"]     = (df_m["our_val"] - df_m["bench_val"]).round(1)
 
-                        # таблиця-копія для CSV-експорту
-                        st.markdown("**Та сама матриця у вигляді таблиці:**")
-                        st.dataframe(pivot, use_container_width=True)
-                        st.download_button(
-                            "📥 CSV (ASIN × Topic)",
-                            pivot.to_csv().encode(),
-                            f"cf_matrix_{sent_filter}_{cf_snap}.csv",
-                            "text/csv",
-                            key="dl_cq_cf_matrix",
-                        )
+                        # масштаб для візуалізації — максимальне значення
+                        max_v = max(df_m["our_val"].max(), df_m["bench_val"].max(), 1)
+
+                        # ─── VIEW 1: Ranked list (з кастомною HTML-розміткою) ──
+                        if t4_view == "Ranked list":
+                            # хедер
+                            hh1, hh2, hh3, hh4, hh5, hh6 = st.columns([2, 1.2, 3, 0.8, 0.7, 0.7])
+                            hh1.markdown("**ASIN**")
+                            hh2.markdown("**Тема**")
+                            hh3.markdown("**Наш % vs Категорія**")
+                            hh4.markdown("**Наш**")
+                            hh5.markdown("**Δ**")
+                            hh6.markdown("**⭐**")
+
+                            for _, row in df_m.iterrows():
+                                asin_val = row["asin"]
+                                title = (_asin_title_map.get(asin_val) or "")[:50]
+                                topic_val = row["topic"]
+                                our_v = float(row["our_val"])
+                                bench_v = float(row["bench_val"])
+                                delta_v = float(row["delta"])
+                                star_imp = float(row.get("parent_star_impact", 0) or 0)
+
+                                # кольори бару
+                                bar_color = "#dc2626" if t4_sent == "negative" else "#16a34a"
+                                bench_color = "#94a3b8"
+
+                                # delta колір: для negative позитивна Δ погана, для positive — гарна
+                                if t4_sent == "negative":
+                                    delta_color = "#dc2626" if delta_v > 0 else "#16a34a"
+                                else:
+                                    delta_color = "#16a34a" if delta_v > 0 else "#dc2626"
+                                delta_sign = "+" if delta_v > 0 else ""
+
+                                # ширина бару у % від max
+                                our_pct  = min(100, (our_v / max_v) * 100) if max_v else 0
+                                bench_pct = min(100, (bench_v / max_v) * 100) if max_v else 0
+
+                                c1, c2, c3, c4, c5, c6 = st.columns([2, 1.2, 3, 0.8, 0.7, 0.7])
+                                with c1:
+                                    st.markdown(
+                                        f"<div style='font-family:monospace;font-weight:600;font-size:13px'>{asin_val}</div>"
+                                        f"<div style='font-size:11px;color:#94a3b8;margin-top:2px'>{title}…</div>",
+                                        unsafe_allow_html=True,
+                                    )
+                                with c2:
+                                    chip_bg = "#fee2e2" if t4_sent == "negative" else "#dcfce7"
+                                    chip_fg = "#991b1b" if t4_sent == "negative" else "#166534"
+                                    st.markdown(
+                                        f"<span style='background:{chip_bg};color:{chip_fg};"
+                                        f"padding:3px 10px;border-radius:12px;font-size:12px;"
+                                        f"font-weight:500;border:1px solid {chip_fg}33'>"
+                                        f"{topic_val}</span>",
+                                        unsafe_allow_html=True,
+                                    )
+                                with c3:
+                                    st.markdown(
+                                        f"<div style='display:flex;flex-direction:column;gap:3px;padding-top:4px'>"
+                                        f"  <div style='background:#f1f5f9;border-radius:6px;height:10px;overflow:hidden'>"
+                                        f"    <div style='width:{our_pct:.1f}%;background:{bar_color};height:100%'></div>"
+                                        f"  </div>"
+                                        f"  <div style='background:#f1f5f9;border-radius:6px;height:6px;overflow:hidden'>"
+                                        f"    <div style='width:{bench_pct:.1f}%;background:{bench_color};height:100%'></div>"
+                                        f"  </div>"
+                                        f"</div>",
+                                        unsafe_allow_html=True,
+                                    )
+                                with c4:
+                                    st.markdown(
+                                        f"<div style='text-align:right;font-weight:600;font-size:13px'>"
+                                        f"{our_v:.1f}{suffix}</div>",
+                                        unsafe_allow_html=True,
+                                    )
+                                with c5:
+                                    st.markdown(
+                                        f"<div style='text-align:right;color:{delta_color};"
+                                        f"font-weight:600;font-size:13px'>"
+                                        f"{delta_sign}{delta_v:.1f}</div>",
+                                        unsafe_allow_html=True,
+                                    )
+                                with c6:
+                                    star_color = "#dc2626" if star_imp < 0 else "#16a34a"
+                                    st.markdown(
+                                        f"<div style='text-align:right;color:{star_color};"
+                                        f"font-size:12px'>{star_imp:+.1f}</div>",
+                                        unsafe_allow_html=True,
+                                    )
+
+                            # експорт
+                            st.markdown("")
+                            export_df = df_m[[
+                                "asin","topic","our_val","bench_val","delta",
+                                "parent_star_impact","bn_star_impact","asin_mentions"
+                            ]].rename(columns={
+                                "our_val":"our_pct",
+                                "bench_val":"category_pct",
+                            })
+                            st.download_button(
+                                "📥 CSV (ASIN × Topic comparison)",
+                                export_df.to_csv(index=False).encode(),
+                                f"cf_compare_{t4_sent}_{cf_snap}.csv",
+                                "text/csv",
+                                key="dl_cq_cf_t4",
+                            )
+
+                        # ─── VIEW 2: Bubble chart ───────────────────────
+                        else:
+                            try:
+                                import plotly.express as px
+                                df_bubble = df_m.copy()
+                                df_bubble["asin_label"] = df_bubble["asin"].astype(str) + " · " + (
+                                    df_bubble["asin"].map(_asin_title_map).fillna("").astype(str).str.slice(0, 30)
+                                )
+                                fig = px.scatter(
+                                    df_bubble,
+                                    x="topic",
+                                    y="asin_label",
+                                    size="asin_mentions",
+                                    color="delta",
+                                    color_continuous_scale=("RdYlGn_r" if t4_sent == "negative" else "RdYlGn"),
+                                    hover_data={
+                                        "our_val":":.1f",
+                                        "bench_val":":.1f",
+                                        "delta":":.1f",
+                                        "asin_mentions":True,
+                                        "topic":False,
+                                        "asin_label":False,
+                                    },
+                                    size_max=42,
+                                    title=f"ASINs × Topics — {t4_sent} · метрика: {t4_metric}",
+                                )
+                                fig.update_layout(
+                                    height=max(420, 28 * df_bubble["asin"].nunique()),
+                                    margin=dict(t=60, b=40, l=10, r=10),
+                                    xaxis=dict(tickangle=-30),
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            except Exception as _ex:
+                                st.warning(f"Bubble chart недоступний: {_ex}")
 
             # ── AI-висновки під 4-ма вкладками ──
             st.markdown("---")
@@ -12899,6 +13048,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
