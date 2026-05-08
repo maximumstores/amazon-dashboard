@@ -8988,7 +8988,7 @@ def show_custom_quality():
             cf_snap = st.selectbox(
                 "📅 Snapshot",
                 cf_snaps, index=0, key="cq_cf_snap",
-                format_func=lambda d: f"{d}",
+                format_func=lambda d: f"{d}  ({(dt.date.today() - d).days} дн назад)",
             )
 
             cf_t1, cf_t2, cf_t3, cf_t4 = st.tabs([
@@ -9096,45 +9096,231 @@ def show_custom_quality():
                                        key="dl_cq_cf_ov")
 
             # ────────────────────────────────────────────────────────────
-            # TAB 2: 📦 По нашому ASIN
+            # TAB 2: 📦 По нашому ASIN — drill-down з категоріями
             # ────────────────────────────────────────────────────────────
             with cf_t2:
                 covered = sorted(df_cf["asin"].unique().tolist()) if not df_cf.empty else []
                 if not covered:
                     st.info("Немає ASIN з CF-даними у вибірці.")
                 else:
+                    # ── ASIN-вибір з підписом і кількістю топіків ──
+                    asin_with_meta = []
+                    for a in covered:
+                        title_a = (_asin_title_map.get(a) or "")[:45]
+                        n_neg = int(((df_cf["asin"] == a) & (df_cf["sentiment"] == "negative")).sum())
+                        n_pos = int(((df_cf["asin"] == a) & (df_cf["sentiment"] == "positive")).sum())
+                        asin_with_meta.append((a, f"{a} — {title_a} (❌ {n_neg} · ✅ {n_pos})"))
+                    asin_label_map = dict(asin_with_meta)
                     pick_asin = st.selectbox(
                         f"Виберіть ASIN ({len(covered)} з даними)",
-                        covered, key="cq_cf_t2_pick",
+                        [a for a, _ in asin_with_meta],
+                        format_func=lambda a: asin_label_map.get(a, a),
+                        key="cq_cf_t2_pick",
                     )
-                    df_a = df_cf[df_cf["asin"] == pick_asin].sort_values(
-                        ["sentiment","topic_rank"], ascending=[True, True]
-                    )
-                    col_n, col_p = st.columns(2)
-                    with col_n:
-                        st.markdown("#### ❌ Negative")
-                        neg_a = df_a[df_a["sentiment"] == "negative"]
-                        if neg_a.empty:
-                            st.caption("_немає_")
-                        for _, row in neg_a.iterrows():
-                            star_imp = float(row.get("parent_star_impact",0) or 0)
-                            mentions = int(row.get("asin_mentions",0) or 0)
-                            with st.expander(
-                                f"❌ **{row['topic']}** · {mentions} mentions · ⭐ {star_imp:+.2f}"
-                            ):
-                                _render_cf_snippets(row)
-                    with col_p:
-                        st.markdown("#### ✅ Positive")
-                        pos_a = df_a[df_a["sentiment"] == "positive"]
-                        if pos_a.empty:
-                            st.caption("_немає_")
-                        for _, row in pos_a.iterrows():
-                            star_imp = float(row.get("parent_star_impact",0) or 0)
-                            mentions = int(row.get("asin_mentions",0) or 0)
-                            with st.expander(
-                                f"✅ **{row['topic']}** · {mentions} mentions · ⭐ {star_imp:+.2f}"
-                            ):
-                                _render_cf_snippets(row)
+
+                    df_a = df_cf[df_cf["asin"] == pick_asin].copy()
+
+                    # ── категоризація топіків по ключових словах ──
+                    CF_CATEGORIES = {
+                        "📏 Size & Fit":       ["size", "fit", "small", "large", "tight", "loose",
+                                                "length", "long", "short", "narrow", "wide", "snug"],
+                        "🎨 Color & Look":      ["color", "colour", "dye", "shade", "look", "appearance",
+                                                "fade", "pattern", "design", "print"],
+                        "🛠 Durability & Quality": ["durability", "quality", "tear", "rip", "hole", "fall apart",
+                                                "stitch", "thread", "construction", "defect", "broken"],
+                        "🧵 Material & Comfort": ["material", "fabric", "wool", "merino", "soft", "itch",
+                                                "scratch", "comfort", "feel", "warmth", "warm", "cool",
+                                                "breathable", "thickness"],
+                        "💰 Value & Price":     ["value", "price", "money", "cost", "expensive", "cheap",
+                                                "worth", "afford"],
+                        "📦 Packaging & Delivery": ["packaging", "package", "box", "delivery", "shipping",
+                                                "arrived", "received"],
+                        "👃 Smell":             ["smell", "odor", "odour", "stink", "scent"],
+                        "💧 Care & Wash":       ["wash", "shrink", "shrunk", "dry", "care", "laundr"],
+                        "💬 Other":             [],
+                    }
+
+                    def _categorize(topic_str):
+                        t = str(topic_str or "").lower()
+                        for cat, kws in CF_CATEGORIES.items():
+                            if cat == "💬 Other":
+                                continue
+                            if any(kw in t for kw in kws):
+                                return cat
+                        return "💬 Other"
+
+                    df_a["_cat"] = df_a["topic"].apply(_categorize)
+
+                    # ── фільтри ──
+                    fc1, fc2, fc3 = st.columns([1, 2, 1.5])
+                    with fc1:
+                        sent_filter = st.radio(
+                            "Sentiment",
+                            ["❌ Negative", "✅ Positive", "Усі"],
+                            key="cq_cf_t2_sent",
+                            horizontal=False,
+                        )
+                    with fc2:
+                        # тільки категорії що мають топіки
+                        cats_present = sorted(df_a["_cat"].unique().tolist())
+                        cat_filter = st.multiselect(
+                            "📁 Категорії (пусто = всі)",
+                            cats_present,
+                            key="cq_cf_t2_cat",
+                            placeholder=f"Всі {len(cats_present)} категорій",
+                        )
+                    with fc3:
+                        search_q = st.text_input(
+                            "🔍 Пошук в топіку",
+                            key="cq_cf_t2_search",
+                            placeholder="size, color, smell...",
+                        )
+
+                    # ── застосовуємо фільтри ──
+                    df_show = df_a.copy()
+                    if sent_filter == "❌ Negative":
+                        df_show = df_show[df_show["sentiment"] == "negative"]
+                    elif sent_filter == "✅ Positive":
+                        df_show = df_show[df_show["sentiment"] == "positive"]
+                    if cat_filter:
+                        df_show = df_show[df_show["_cat"].isin(cat_filter)]
+                    if search_q:
+                        df_show = df_show[
+                            df_show["topic"].astype(str).str.contains(search_q, case=False, na=False)
+                            | df_show["review_snippets"].astype(str).str.contains(search_q, case=False, na=False)
+                        ]
+
+                    # ── KPI зверху ──
+                    if not df_show.empty:
+                        total_show = len(df_show)
+                        neg_show = int((df_show["sentiment"] == "negative").sum())
+                        pos_show = int((df_show["sentiment"] == "positive").sum())
+                        total_mentions = int(df_show["asin_mentions"].sum())
+                        worst_imp = df_show["parent_star_impact"].min()
+                        kk1, kk2, kk3, kk4 = st.columns(4)
+                        kk1.metric("📊 Топіків", total_show)
+                        kk2.metric("❌ / ✅", f"{neg_show} / {pos_show}")
+                        kk3.metric("💬 Mentions", f"{total_mentions:,}")
+                        kk4.metric("🔥 Найгірший ⭐", f"{worst_imp:+.2f}")
+                    else:
+                        st.info("Немає топіків під фільтри.")
+
+                    st.markdown("---")
+
+                    # ── розподіл по категоріях ──
+                    if not df_a.empty:
+                        cat_summary = (
+                            df_a.groupby(["_cat","sentiment"])
+                            .agg(n=("topic","count"), mentions=("asin_mentions","sum"))
+                            .reset_index()
+                        )
+                        st.markdown("##### 📊 Розподіл топіків по категоріях")
+                        cat_pivot = cat_summary.pivot_table(
+                            index="_cat", columns="sentiment",
+                            values="n", aggfunc="sum", fill_value=0
+                        )
+                        for col in ["negative", "positive"]:
+                            if col not in cat_pivot.columns:
+                                cat_pivot[col] = 0
+                        cat_pivot["total"] = cat_pivot["negative"] + cat_pivot["positive"]
+                        cat_pivot = cat_pivot.sort_values("negative", ascending=False)
+                        st.dataframe(
+                            cat_pivot.reset_index().rename(columns={
+                                "_cat": "Категорія",
+                                "negative": "❌",
+                                "positive": "✅",
+                                "total": "∑",
+                            }),
+                            use_container_width=True, hide_index=True, height=280,
+                        )
+
+                    st.markdown("---")
+
+                    # ── сортування результатів ──
+                    sort_col1, sort_col2 = st.columns([2, 5])
+                    with sort_col1:
+                        sort_by = st.radio(
+                            "Сортувати",
+                            ["За mentions", "За ⭐ impact (найгірші)", "За topic_rank"],
+                            key="cq_cf_t2_sort",
+                            horizontal=False,
+                        )
+
+                    if sort_by == "За mentions":
+                        df_show = df_show.sort_values("asin_mentions", ascending=False)
+                    elif sort_by.startswith("За ⭐"):
+                        # для negative найгірші — найменший impact (найбільш від'ємний)
+                        df_show = df_show.sort_values("parent_star_impact", ascending=True)
+                    else:
+                        df_show = df_show.sort_values(["sentiment","topic_rank"])
+
+                    # ── рендер карток ──
+                    st.markdown(f"##### 🔍 Деталі ({len(df_show)} топіків)")
+
+                    for _, row in df_show.iterrows():
+                        sent = row["sentiment"]
+                        sent_emoji = "❌" if sent == "negative" else "✅"
+                        cat = row["_cat"]
+                        topic = row["topic"]
+                        mentions = int(row.get("asin_mentions", 0) or 0)
+                        star_imp = float(row.get("parent_star_impact", 0) or 0)
+                        occur = float(row.get("asin_occurrence_pct", 0) or 0)
+                        bn_occur = float(row.get("bn_occurrence_pct", 0) or 0)
+                        delta = occur - bn_occur
+
+                        # ⭐ impact колір
+                        if star_imp <= -0.1:
+                            imp_color = "#dc2626"
+                        elif star_imp >= 0.1:
+                            imp_color = "#16a34a"
+                        else:
+                            imp_color = "#94a3b8"
+
+                        # delta vs категорія
+                        if sent == "negative":
+                            delta_color = "#dc2626" if delta > 0 else "#16a34a"
+                        else:
+                            delta_color = "#16a34a" if delta > 0 else "#dc2626"
+                        delta_sign = "+" if delta > 0 else ""
+
+                        with st.expander(
+                            f"{sent_emoji} **{topic}** · {cat} · "
+                            f"{mentions} mentions · ⭐ {star_imp:+.2f} · "
+                            f"{occur:.1f}% (vs кат {bn_occur:.1f}%, Δ {delta_sign}{delta:.1f})",
+                            expanded=False,
+                        ):
+                            mc1, mc2, mc3, mc4 = st.columns(4)
+                            mc1.metric("💬 Mentions", mentions)
+                            mc2.metric("📊 Наш %", f"{occur:.1f}%")
+                            mc3.metric("📊 Категорія %", f"{bn_occur:.1f}%",
+                                       delta=f"{delta_sign}{delta:.1f} pp",
+                                       delta_color="inverse" if sent == "negative" else "normal")
+                            mc4.metric("⭐ Star impact", f"{star_imp:+.2f}",
+                                       delta_color="inverse" if star_imp < 0 else "normal")
+
+                            st.markdown("**🗣 Що пишуть покупці:**")
+                            _render_cf_snippets(row)
+
+                            st.caption(
+                                f"💡 ASIN: `{pick_asin}` · "
+                                f"Topic rank: {int(row.get('topic_rank', 0) or 0)} · "
+                                f"Sentiment: {sent}"
+                            )
+
+                    # ── експорт ──
+                    if not df_show.empty:
+                        export_cols = ["asin","_cat","sentiment","topic","topic_rank",
+                                       "asin_mentions","asin_occurrence_pct",
+                                       "bn_occurrence_pct","parent_star_impact",
+                                       "review_snippets","subtopics"]
+                        export_df = df_show[[c for c in export_cols if c in df_show.columns]]
+                        st.download_button(
+                            f"📥 CSV ({len(export_df)} топіків для {pick_asin})",
+                            export_df.to_csv(index=False).encode(),
+                            f"cf_drilldown_{pick_asin}_{cf_snap}.csv",
+                            "text/csv",
+                            key="dl_cq_cf_t2",
+                        )
 
             # ────────────────────────────────────────────────────────────
             # TAB 3: 🏷 По категорії (browse_node)
@@ -9233,8 +9419,22 @@ def show_custom_quality():
                 if df_cf.empty:
                     st.info("Немає даних.")
                 else:
-                    # ── controls (4 в ряд як на скріншоті) ──
-                    cc1, cc2, cc3, cc4 = st.columns([1, 1, 1.2, 1.4])
+                    # ── ASIN-фільтр (multiselect) ──
+                    _asin_options_cf = sorted(df_cf["asin"].unique().tolist())
+                    _asin_labels = {
+                        a: f"{a} — {(_asin_title_map.get(a) or '')[:40]}"
+                        for a in _asin_options_cf
+                    }
+                    sel_asins_cf = st.multiselect(
+                        f"🏷 Фільтр ASIN ({len(_asin_options_cf)} доступно · пусто = всі)",
+                        _asin_options_cf,
+                        format_func=lambda a: _asin_labels.get(a, a),
+                        key="cq_cf_t4_asin_filter",
+                        placeholder="Виберіть конкретні ASIN або залиш пусто для всіх...",
+                    )
+
+                    # ── controls (5 в ряд) ──
+                    cc1, cc2, cc3, cc4, cc5 = st.columns([1, 1, 1, 1.2, 1.4])
                     with cc1:
                         t4_sent = st.radio(
                             "Sentiment", ["negative", "positive"],
@@ -9246,11 +9446,21 @@ def show_custom_quality():
                             key="cq_cf_t4_view",
                         )
                     with cc3:
-                        t4_topn = st.slider(
-                            "Топ N тем", min_value=5, max_value=40, value=12, step=1,
-                            key="cq_cf_t4_topn",
+                        t4_group = st.radio(
+                            "Групування",
+                            ["По темах", "По ASIN"],
+                            key="cq_cf_t4_group",
+                            help=(
+                                "По темах — топ N топіків (можуть дублюватись ASIN). "
+                                "По ASIN — по 1 найгіршому топіку на кожен ASIN (більше різних ASIN видно)."
+                            ),
                         )
                     with cc4:
+                        t4_topn = st.slider(
+                            "Топ N", min_value=5, max_value=200, value=20, step=5,
+                            key="cq_cf_t4_topn",
+                        )
+                    with cc5:
                         t4_metric = st.selectbox(
                             "Метрика",
                             ["Parent %", "ASIN %", "Category %", "⭐ impact"],
@@ -9258,7 +9468,7 @@ def show_custom_quality():
                             help=(
                                 "Parent % — на parent-ASIN рівні · "
                                 "ASIN % — на конкретному ASIN · "
-                                "Category % — у категорії browse_node · "
+                                "Category % — у категорії · "
                                 "⭐ impact — вплив на рейтинг"
                             ),
                         )
@@ -9278,12 +9488,31 @@ def show_custom_quality():
                     our_col, bench_col, suffix = metric_map[t4_metric]
 
                     df_m = df_cf[df_cf["sentiment"] == t4_sent].copy()
+                    # застосовуємо ASIN-фільтр якщо вибраний
+                    if sel_asins_cf:
+                        df_m = df_m[df_m["asin"].isin(sel_asins_cf)]
                     if df_m.empty:
-                        st.info(f"Немає {t4_sent} топіків.")
+                        st.info(f"Немає {t4_sent} топіків для вибраних ASIN.")
                     else:
-                        # сортуємо: спочатку по нашому %, потім по mentions
                         sort_col = our_col if our_col in df_m.columns else "asin_mentions"
-                        df_m = df_m.sort_values(sort_col, ascending=False).head(t4_topn).copy()
+                        # ── Групування ──
+                        if t4_group == "По ASIN":
+                            # Для кожного ASIN беремо ТОП-1 топік (з найвищим our_col / asin_mentions)
+                            df_m = (
+                                df_m.sort_values(sort_col, ascending=False)
+                                .drop_duplicates(subset=["asin"], keep="first")
+                                .head(t4_topn)
+                                .copy()
+                            )
+                            st.caption(
+                                f"📌 Показано **{len(df_m)} різних ASIN** — для кожного найгірший {t4_sent} топік."
+                            )
+                        else:
+                            df_m = df_m.sort_values(sort_col, ascending=False).head(t4_topn).copy()
+                            st.caption(
+                                f"📌 Показано **{len(df_m)} топіків** "
+                                f"({df_m['asin'].nunique()} різних ASIN)."
+                            )
 
                         # рахуємо delta (наш - benchmark)
                         df_m["our_val"]   = pd.to_numeric(df_m.get(our_col, 0), errors="coerce").fillna(0)
@@ -13048,6 +13277,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
