@@ -9326,89 +9326,238 @@ def show_custom_quality():
             # TAB 3: 🏷 По категорії (browse_node)
             # ────────────────────────────────────────────────────────────
             with cf_t3:
-                # дізнаємось browse_nodes наших ASIN
+                # ── 1. Завантажуємо ВСІ категорії з cf_node_topics для snapshot ──
                 try:
                     with engine.connect() as conn:
-                        df_bn = pd.read_sql(
+                        df_nodes = pd.read_sql(
                             text("""
-                                SELECT DISTINCT browse_node_id
-                                FROM cf_item_topics
-                                WHERE snapshot_date=:snap AND asin=ANY(:asins)
+                                SELECT DISTINCT browse_node_id, node_name
+                                FROM cf_node_topics
+                                WHERE snapshot_date = :snap
                                   AND COALESCE(browse_node_id,'') <> ''
+                                ORDER BY node_name
                             """),
-                            conn, params={"snap": cf_snap, "asins": list(unique_asins)},
+                            conn, params={"snap": cf_snap},
                         )
-                    bnodes = df_bn["browse_node_id"].dropna().astype(str).tolist()
-                except Exception:
-                    bnodes = []
+                except Exception as e:
+                    df_nodes = pd.DataFrame()
+                    st.warning(f"⚠️ cf_node_topics: {e}")
 
-                if not bnodes:
-                    st.info("У відфільтрованих ASIN немає browse_node_id — категорійна аналітика недоступна.")
-                else:
-                    pick_bn = st.selectbox(
-                        f"Browse Node ({len(bnodes)} в наших ASIN)",
-                        bnodes, key="cq_cf_t3_pick",
+                if df_nodes.empty:
+                    st.info(
+                        "ℹ️ Немає категорій у `cf_node_topics` для цього snapshot. "
+                        "Запусти `17_customer_feedback_loader.py` щоб наповнити node-level дані."
                     )
+                else:
+                    # ── 2. Помічаємо які категорії стосуються наших ASIN ──
+                    try:
+                        with engine.connect() as conn:
+                            df_our_nodes = pd.read_sql(
+                                text("""
+                                    SELECT DISTINCT browse_node_id
+                                    FROM cf_item_topics
+                                    WHERE snapshot_date = :snap
+                                      AND asin = ANY(:asins)
+                                      AND COALESCE(browse_node_id,'') <> ''
+                                """),
+                                conn, params={"snap": cf_snap, "asins": list(unique_asins)},
+                            )
+                        _our_set = set(df_our_nodes["browse_node_id"].astype(str).tolist())
+                    except Exception:
+                        _our_set = set()
+
+                    # ── label з підказкою чи є наші ASIN у категорії ──
+                    df_nodes["is_ours"] = df_nodes["browse_node_id"].astype(str).isin(_our_set)
+                    df_nodes = df_nodes.sort_values(["is_ours", "node_name"], ascending=[False, True])
+                    df_nodes["label"] = df_nodes.apply(
+                        lambda r: (
+                            f"⭐ {r['node_name']} ({r['browse_node_id']})"
+                            if r["is_ours"]
+                            else f"{r['node_name']} ({r['browse_node_id']})"
+                        ),
+                        axis=1,
+                    )
+
+                    pick_label = st.selectbox(
+                        f"Виберіть категорію ({len(df_nodes)} доступно · ⭐ = наші ASIN присутні)",
+                        df_nodes["label"].tolist(),
+                        key="cq_cf_t3_pick",
+                    )
+                    pick_row = df_nodes[df_nodes["label"] == pick_label].iloc[0]
+                    pick_bn   = str(pick_row["browse_node_id"])
+                    node_name = pick_row["node_name"]
+
+                    st.caption(f"**{node_name}** · node_id `{pick_bn}`"
+                               + (" · ⭐ наші ASIN тут присутні" if pick_row["is_ours"] else ""))
+
+                    # ── 3. Завантажуємо topics + returns + trends ──
                     try:
                         with engine.connect() as conn:
                             df_bn_topics = pd.read_sql(
                                 text("""
                                     SELECT sentiment, topic_rank, topic,
-                                           bn_occurrence_pct, bn_star_impact, review_snippets
+                                           all_products_occurrence_pct,
+                                           all_products_star_impact,
+                                           top25_occurrence_pct,
+                                           top25_star_impact,
+                                           review_snippets, subtopics
                                     FROM cf_node_topics
-                                    WHERE snapshot_date=:snap AND browse_node_id=:bn
+                                    WHERE snapshot_date = :snap
+                                      AND browse_node_id = :bn
                                     ORDER BY sentiment DESC, topic_rank
                                 """),
                                 conn, params={"snap": cf_snap, "bn": pick_bn},
                             )
                             df_bn_returns = pd.read_sql(
                                 text("""
-                                    SELECT return_reason, return_pct
+                                    SELECT topic_rank, topic, occurrence_pct
                                     FROM cf_node_returns
-                                    WHERE snapshot_date=:snap AND browse_node_id=:bn
-                                    ORDER BY return_pct DESC NULLS LAST
+                                    WHERE snapshot_date = :snap
+                                      AND browse_node_id = :bn
+                                    ORDER BY topic_rank
                                 """),
                                 conn, params={"snap": cf_snap, "bn": pick_bn},
                             )
                     except Exception as e:
-                        df_bn_topics, df_bn_returns = pd.DataFrame(), pd.DataFrame()
+                        df_bn_topics  = pd.DataFrame()
+                        df_bn_returns = pd.DataFrame()
                         st.warning(f"⚠️ {e}")
 
-                    for _c in ["bn_occurrence_pct","bn_star_impact"]:
+                    for _c in ["all_products_occurrence_pct", "all_products_star_impact",
+                               "top25_occurrence_pct", "top25_star_impact"]:
                         if _c in df_bn_topics.columns:
                             df_bn_topics[_c] = pd.to_numeric(df_bn_topics[_c], errors="coerce").fillna(0)
 
-                    if not df_bn_topics.empty:
-                        st.markdown("##### Топіки категорії")
+                    # ── 💰 Причини повернень (як в оригіналі) ──
+                    st.markdown("### 💰 Причини повернень у категорії")
+                    if df_bn_returns.empty:
+                        st.info("Немає даних про повернення у цій категорії")
+                    else:
+                        df_bn_returns["occurrence_pct"] = pd.to_numeric(
+                            df_bn_returns["occurrence_pct"], errors="coerce"
+                        ).fillna(0).round(2)
+                        try:
+                            import plotly.express as px
+                            fig_ret = px.bar(
+                                df_bn_returns, x="occurrence_pct", y="topic",
+                                orientation="h", text="occurrence_pct",
+                                color="occurrence_pct", color_continuous_scale="Reds",
+                            )
+                            fig_ret.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+                            fig_ret.update_layout(
+                                height=max(360, len(df_bn_returns) * 30),
+                                yaxis=dict(autorange="reversed"),
+                                xaxis_title="% повернень", yaxis_title="",
+                                margin=dict(l=10, r=40, t=10, b=10),
+                                coloraxis_showscale=False,
+                            )
+                            st.plotly_chart(fig_ret, use_container_width=True)
+                        except Exception:
+                            st.dataframe(df_bn_returns, use_container_width=True, hide_index=True)
+
+                    st.markdown("---")
+
+                    # ── 🏷 Топіки категорії ──
+                    st.markdown("### 🏷 Топіки категорії")
+                    if df_bn_topics.empty:
+                        st.info("Немає топіків для цієї категорії.")
+                    else:
                         col_n, col_p = st.columns(2)
                         with col_n:
                             st.markdown("#### ❌ Negative")
-                            for _, row in df_bn_topics[df_bn_topics["sentiment"] == "negative"].iterrows():
-                                with st.expander(
-                                    f"❌ **{row['topic']}** · "
-                                    f"{float(row.get('bn_occurrence_pct',0)):.1f}% · "
-                                    f"⭐ {float(row.get('bn_star_impact',0)):+.2f}"
-                                ):
-                                    _render_cf_snippets(row)
+                            neg = df_bn_topics[df_bn_topics["sentiment"] == "negative"]
+                            if neg.empty:
+                                st.caption("_немає_")
+                            else:
+                                for _, row in neg.iterrows():
+                                    star_imp = float(row.get("all_products_star_impact", 0) or 0)
+                                    occ = float(row.get("all_products_occurrence_pct", 0) or 0)
+                                    top25_occ = float(row.get("top25_occurrence_pct", 0) or 0)
+                                    label = (
+                                        f"❌ **{row['topic']}** · "
+                                        f"{occ:.1f}% (top25: {top25_occ:.1f}%) · "
+                                        f"⭐ {star_imp:+.2f}"
+                                    )
+                                    with st.expander(label):
+                                        _render_cf_snippets(row)
                         with col_p:
                             st.markdown("#### ✅ Positive")
-                            for _, row in df_bn_topics[df_bn_topics["sentiment"] == "positive"].iterrows():
-                                with st.expander(
-                                    f"✅ **{row['topic']}** · "
-                                    f"{float(row.get('bn_occurrence_pct',0)):.1f}% · "
-                                    f"⭐ {float(row.get('bn_star_impact',0)):+.2f}"
-                                ):
-                                    _render_cf_snippets(row)
+                            pos = df_bn_topics[df_bn_topics["sentiment"] == "positive"]
+                            if pos.empty:
+                                st.caption("_немає_")
+                            else:
+                                for _, row in pos.iterrows():
+                                    star_imp = float(row.get("all_products_star_impact", 0) or 0)
+                                    occ = float(row.get("all_products_occurrence_pct", 0) or 0)
+                                    top25_occ = float(row.get("top25_occurrence_pct", 0) or 0)
+                                    label = (
+                                        f"✅ **{row['topic']}** · "
+                                        f"{occ:.1f}% (top25: {top25_occ:.1f}%) · "
+                                        f"⭐ {star_imp:+.2f}"
+                                    )
+                                    with st.expander(label):
+                                        _render_cf_snippets(row)
 
-                    if not df_bn_returns.empty:
-                        st.markdown("##### 🔙 Причини повернень у категорії")
-                        df_bn_returns["return_pct"] = pd.to_numeric(
-                            df_bn_returns["return_pct"], errors="coerce"
-                        ).fillna(0).round(2)
-                        st.dataframe(
-                            df_bn_returns.head(20),
-                            use_container_width=True, hide_index=True,
+                    # ── 📈 Тренди категорії ──
+                    st.markdown("---")
+                    st.markdown("### 📈 Тренди категорії (по місяцях)")
+                    try:
+                        with engine.connect() as conn:
+                            df_bn_trends = pd.read_sql(
+                                text("""
+                                    SELECT sentiment, topic, period_start,
+                                           all_products_occurrence_pct,
+                                           top25_occurrence_pct
+                                    FROM cf_node_review_trends
+                                    WHERE snapshot_date = :snap
+                                      AND browse_node_id = :bn
+                                    ORDER BY period_start
+                                """),
+                                conn, params={"snap": cf_snap, "bn": pick_bn},
+                            )
+                    except Exception:
+                        df_bn_trends = pd.DataFrame()
+
+                    if df_bn_trends.empty:
+                        st.info("Немає даних трендів для цієї категорії.")
+                    else:
+                        for _c in ["all_products_occurrence_pct", "top25_occurrence_pct"]:
+                            df_bn_trends[_c] = pd.to_numeric(df_bn_trends[_c], errors="coerce").fillna(0)
+
+                        sent_pick = st.radio(
+                            "Sentiment", ["negative", "positive"],
+                            horizontal=True, key="cq_cf_t3_trend_sent",
                         )
+                        sel = df_bn_trends[df_bn_trends["sentiment"] == sent_pick]
+                        if sel.empty:
+                            st.caption(f"Немає трендів ({sent_pick})")
+                        else:
+                            topic_pick = st.selectbox(
+                                "Топік", sel["topic"].unique().tolist(),
+                                key="cq_cf_t3_trend_topic",
+                            )
+                            t_df = sel[sel["topic"] == topic_pick]
+                            try:
+                                import plotly.graph_objects as go
+                                fig_tr = go.Figure()
+                                fig_tr.add_trace(go.Scatter(
+                                    x=t_df["period_start"], y=t_df["all_products_occurrence_pct"],
+                                    mode="lines+markers", name="Всі товари",
+                                    line=dict(width=2, color="#94a3b8"),
+                                ))
+                                fig_tr.add_trace(go.Scatter(
+                                    x=t_df["period_start"], y=t_df["top25_occurrence_pct"],
+                                    mode="lines+markers", name="Top 25%",
+                                    line=dict(width=3, color="#4A90E2"),
+                                ))
+                                fig_tr.update_layout(
+                                    height=360, yaxis_title="% згадок",
+                                    hovermode="x unified",
+                                    margin=dict(l=10, r=10, t=30, b=10),
+                                )
+                                st.plotly_chart(fig_tr, use_container_width=True)
+                            except Exception as _ex:
+                                st.dataframe(t_df, use_container_width=True, hide_index=True)
 
             # ────────────────────────────────────────────────────────────
             # TAB 4: 🔥 ASINs × Теми — порівняння (наш % vs категорія)
@@ -13277,6 +13426,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
