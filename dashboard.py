@@ -10576,8 +10576,9 @@ def show_buybox_monitor():
     m5.metric("👥 Конкуруємо", f"{total - int((df_bb['total_offer_count']==1).sum()):,}")
 
     # TABS
-    tab1, tab_held, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab_just_lost, tab_held, tab2, tab3, tab4, tab5 = st.tabs([
         "🔴 Втрачені BB",
+        "💔 Щойно втратили",
         "✅ Тримаємо BB",
         "⚫ Suppressed",
         "🏆 Конкуренти",
@@ -10681,6 +10682,94 @@ def show_buybox_monitor():
                 "text/csv",
                 key="bb_dl_lost",
             )
+
+    # ── TAB JUST LOST: TRANSITIONED FROM OURS TO NOT-OURS ──
+    with tab_just_lost:
+        st.subheader("💔 ASIN де ми щойно втратили Buy Box")
+        st.caption("Перехід стану між двома останніми snapshot-ами: були наші → тепер не наші. "
+                   "Це **події LOST**, а не статичний список — побачиш точно що змінилось.")
+
+        if events_df.empty:
+            st.info("ℹ️ Подій немає — для порівняння потрібно мін 2 snapshot-и в `pricing_buybox_winners`.")
+        else:
+            lost_events = events_df[events_df["event"] == "LOST"].copy()
+            if lost_events.empty:
+                st.success("🎉 За період між двома snapshot-ами ми **нічого не втратили**.")
+            else:
+                lost_events["_asin_url"]   = lost_events["asin"].apply(_bb_amazon_link)
+                lost_events["_winner_url"] = lost_events["now_winner"].fillna("").apply(
+                    lambda s: _bb_seller_link(s) if s else ""
+                )
+                lost_events["price_delta"] = (
+                    lost_events["now_our_price"].astype(float)
+                    - lost_events["now_bb_price"].astype(float)
+                ).round(2)
+
+                view = lost_events[[
+                    "_asin_url", "_winner_url",
+                    "prev_bb_price", "now_bb_price",
+                    "now_our_price", "price_delta",
+                    "now_offers", "now_ts",
+                ]].rename(columns={
+                    "_asin_url":      "ASIN",
+                    "_winner_url":    "Тепер у Winner",
+                    "prev_bb_price":  "Було $",
+                    "now_bb_price":   "Стало $",
+                    "now_our_price":  "Наша $",
+                    "price_delta":    "Δ до BB",
+                    "now_offers":     "Offers",
+                    "now_ts":         "Втрата зафіксована",
+                }).sort_values("Δ до BB", ascending=False)
+
+                prev_ts = events_df.iloc[0]["prev_ts"]
+                now_ts  = events_df.iloc[0]["now_ts"]
+                st.warning(
+                    f"⚠️ Втрачено **{len(lost_events)}** ASIN між "
+                    f"`{prev_ts.strftime('%Y-%m-%d %H:%M')}` → "
+                    f"`{now_ts.strftime('%Y-%m-%d %H:%M')}`"
+                )
+
+                st.dataframe(
+                    view,
+                    use_container_width=True,
+                    height=500,
+                    column_config={
+                        "ASIN": st.column_config.LinkColumn(
+                            "ASIN",
+                            display_text=r"https://www\.amazon\.com/dp/(.+)",
+                            help="Клік → відкриє сторінку товару на Amazon",
+                            width="small",
+                        ),
+                        "Тепер у Winner": st.column_config.LinkColumn(
+                            "Тепер у Winner",
+                            display_text=r"seller=(.+)",
+                            help="Клік → відкриє профіль того хто забрав BB",
+                            width="medium",
+                        ),
+                        "Було $":   st.column_config.NumberColumn(format="$%.2f"),
+                        "Стало $":  st.column_config.NumberColumn(format="$%.2f"),
+                        "Наша $":   st.column_config.NumberColumn(format="$%.2f"),
+                        "Δ до BB":  st.column_config.NumberColumn(
+                            format="$%.2f",
+                            help="Наша ціна мінус ціна BB. Позитивне = ми дорожчі.",
+                        ),
+                    },
+                )
+
+                csv_lost = view.copy()
+                csv_lost["ASIN"]            = csv_lost["ASIN"].str.replace(
+                    r"https://www\.amazon\.com/dp/", "", regex=True
+                )
+                csv_lost["Тепер у Winner"] = csv_lost["Тепер у Winner"].str.replace(
+                    r"https://www\.amazon\.com/sp\?seller=", "", regex=True
+                )
+                st.download_button(
+                    "📥 Download CSV",
+                    csv_lost.to_csv(index=False).encode(),
+                    f"buybox_just_lost_{now_ts.strftime('%Y%m%d_%H%M')}.csv",
+                    "text/csv",
+                    key="bb_dl_just_lost",
+                )
 
     # ── TAB HELD: WE HOLD THE BUY BOX ──
     with tab_held:
@@ -14244,7 +14333,6 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
-
 
 
 
