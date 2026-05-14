@@ -10255,11 +10255,13 @@ def _bb_recent_events():
     NO_CHANGE — без змін (відфільтровуємо)
     """
     return _bb_query("""
-        WITH ranked AS (
+        WITH our AS (
+            SELECT unnest(%s::text[]) AS sid
+        ),
+        ranked AS (
             SELECT
                 asin, snapshot_time,
-                own_is_buybox, has_buybox,
-                buybox_seller_id, own_seller_id,
+                has_buybox, buybox_seller_id,
                 own_landed, buybox_landed,
                 total_offer_count,
                 ROW_NUMBER() OVER (PARTITION BY asin ORDER BY snapshot_time DESC) AS rn
@@ -10271,8 +10273,10 @@ def _bb_recent_events():
             c.asin,
             c.snapshot_time AS now_ts,
             p.snapshot_time AS prev_ts,
-            COALESCE(p.own_is_buybox, FALSE) AS was_ours,
-            COALESCE(c.own_is_buybox, FALSE) AS is_ours,
+            (p.buybox_seller_id IS NOT NULL
+                AND EXISTS (SELECT 1 FROM our WHERE sid = p.buybox_seller_id)) AS was_ours,
+            (c.buybox_seller_id IS NOT NULL
+                AND EXISTS (SELECT 1 FROM our WHERE sid = c.buybox_seller_id)) AS is_ours,
             p.has_buybox AS prev_has_bb,
             c.has_buybox AS now_has_bb,
             p.buybox_seller_id AS prev_winner,
@@ -10283,28 +10287,36 @@ def _bb_recent_events():
             c.buybox_landed AS now_bb_price,
             c.total_offer_count AS now_offers,
             CASE
-                WHEN COALESCE(p.own_is_buybox, FALSE)
-                     AND NOT COALESCE(c.own_is_buybox, FALSE)
+                -- LOST: був наш BB → тепер BB у конкурента
+                WHEN p.has_buybox
+                     AND EXISTS (SELECT 1 FROM our WHERE sid = p.buybox_seller_id)
                      AND c.has_buybox
+                     AND NOT EXISTS (SELECT 1 FROM our WHERE sid = c.buybox_seller_id)
                      THEN 'LOST'
-                WHEN NOT COALESCE(p.own_is_buybox, FALSE)
-                     AND COALESCE(c.own_is_buybox, FALSE)
+                -- WON: був BB у конкурента → тепер наш
+                WHEN p.has_buybox
+                     AND NOT EXISTS (SELECT 1 FROM our WHERE sid = p.buybox_seller_id)
+                     AND c.has_buybox
+                     AND EXISTS (SELECT 1 FROM our WHERE sid = c.buybox_seller_id)
                      THEN 'WON'
+                -- SUPPRESSED: BB був → зник
                 WHEN p.has_buybox AND NOT c.has_buybox
                      THEN 'SUPPRESSED'
+                -- RECOVERED: BB був suppressed → з'явився і наш
                 WHEN NOT p.has_buybox AND c.has_buybox
-                     AND COALESCE(c.own_is_buybox, FALSE)
+                     AND EXISTS (SELECT 1 FROM our WHERE sid = c.buybox_seller_id)
                      THEN 'RECOVERED'
-                WHEN p.buybox_seller_id IS DISTINCT FROM c.buybox_seller_id
-                     AND c.has_buybox AND p.has_buybox
-                     AND NOT COALESCE(p.own_is_buybox, FALSE)
-                     AND NOT COALESCE(c.own_is_buybox, FALSE)
+                -- WINNER_CHANGED: BB перейшов між двома конкурентами (нас не стосується)
+                WHEN p.has_buybox AND c.has_buybox
+                     AND p.buybox_seller_id IS DISTINCT FROM c.buybox_seller_id
+                     AND NOT EXISTS (SELECT 1 FROM our WHERE sid = p.buybox_seller_id)
+                     AND NOT EXISTS (SELECT 1 FROM our WHERE sid = c.buybox_seller_id)
                      THEN 'WINNER_CHANGED'
                 ELSE 'NO_CHANGE'
             END AS event
         FROM curr c
         INNER JOIN prev p USING (asin)
-    """)
+    """, (MERINO_SELLER_IDS,))
 
 
 def _bb_amazon_link(asin):
@@ -14131,9 +14143,6 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
-
-
-
 
 
 
