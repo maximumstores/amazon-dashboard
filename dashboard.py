@@ -10199,10 +10199,12 @@ def _bb_current_state():
             has_buybox, buybox_seller_id, buybox_price, buybox_landed, buybox_is_fba,
             own_seller_id, own_is_buybox, own_price, own_landed, own_is_fba,
             total_offer_count, fba_offer_count, fbm_offer_count,
-            all_offers_json
+            all_offers_json,
+            -- Чесна перевірка "BB у нас": seller_id matches наших, а не зламаний own_is_buybox
+            (has_buybox AND buybox_seller_id = ANY(%s)) AS is_ours
         FROM public.pricing_buybox_winners
         ORDER BY asin, snapshot_time DESC
-    """)
+    """, (MERINO_SELLER_IDS,))
 
 
 @st.cache_data(ttl=300)
@@ -10211,15 +10213,21 @@ def _bb_history(days=7):
         SELECT
             DATE_TRUNC('hour', snapshot_time) AS hour,
             COUNT(*) AS total_asins,
-            COUNT(*) FILTER (WHERE own_is_buybox = TRUE) AS we_hold,
-            COUNT(*) FILTER (WHERE has_buybox AND own_is_buybox = FALSE
-                             AND own_seller_id IS NOT NULL) AS we_lost,
+            COUNT(*) FILTER (
+                WHERE has_buybox AND buybox_seller_id = ANY(%s)
+            ) AS we_hold,
+            COUNT(*) FILTER (
+                WHERE has_buybox
+                  AND buybox_seller_id IS NOT NULL
+                  AND buybox_seller_id <> ALL(%s)
+                  AND own_seller_id IS NOT NULL
+            ) AS we_lost,
             COUNT(*) FILTER (WHERE NOT has_buybox) AS suppressed
         FROM public.pricing_buybox_winners
         WHERE snapshot_time > NOW() - INTERVAL '{days} days'
         GROUP BY hour
         ORDER BY hour
-    """)
+    """, (MERINO_SELLER_IDS, MERINO_SELLER_IDS))
 
 
 @st.cache_data(ttl=300)
@@ -10478,9 +10486,9 @@ def show_buybox_monitor():
     total = len(df_bb)
     has_bb = int(df_bb["has_buybox"].sum())
     suppressed = total - has_bb
-    we_hold = int(df_bb["own_is_buybox"].fillna(False).sum())
+    we_hold = int(df_bb["is_ours"].fillna(False).sum())
     we_in_offers = int(df_bb["own_seller_id"].notna().sum())
-    we_lost = int(((~df_bb["own_is_buybox"].fillna(False))
+    we_lost = int(((~df_bb["is_ours"].fillna(False))
                    & (df_bb["has_buybox"])
                    & (df_bb["own_seller_id"].notna())).sum())
 
@@ -10568,8 +10576,9 @@ def show_buybox_monitor():
     m5.metric("👥 Конкуруємо", f"{total - int((df_bb['total_offer_count']==1).sum()):,}")
 
     # TABS
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab_held, tab2, tab3, tab4, tab5 = st.tabs([
         "🔴 Втрачені BB",
+        "✅ Тримаємо BB",
         "⚫ Suppressed",
         "🏆 Конкуренти",
         "📈 Історія",
@@ -10583,7 +10592,7 @@ def show_buybox_monitor():
 
         lost = df_bb[
             (df_bb["has_buybox"])
-            & (~df_bb["own_is_buybox"].fillna(False))
+            & (~df_bb["is_ours"].fillna(False))
             & (df_bb["own_seller_id"].notna())
         ].copy()
 
@@ -10671,6 +10680,97 @@ def show_buybox_monitor():
                 f"buybox_lost_{dt.datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                 "text/csv",
                 key="bb_dl_lost",
+            )
+
+    # ── TAB HELD: WE HOLD THE BUY BOX ──
+    with tab_held:
+        st.subheader("✅ ASIN де ми тримаємо Buy Box")
+        st.caption("Наш seller_id = winner. Це **активні продажі через BB** — джерело основного revenue.")
+
+        held = df_bb[df_bb["is_ours"].fillna(False)].copy()
+
+        if held.empty:
+            st.error("⚠️ Зараз ми не тримаємо жодного Buy Box. Перевір метрики вище.")
+        else:
+            # Назва бренда замість сирого ID
+            held["winner_name"] = held["buybox_seller_id"].map(
+                lambda s: BB_SELLER_NAMES.get(s, s) if pd.notna(s) else ""
+            )
+            held["_asin_url"] = held["asin"].apply(_bb_amazon_link)
+
+            held_view = held[[
+                "_asin_url", "winner_name", "buybox_landed", "total_offer_count",
+                "fba_offer_count", "fbm_offer_count", "buybox_is_fba",
+            ]].rename(columns={
+                "_asin_url":         "ASIN",
+                "winner_name":       "Наш бренд",
+                "buybox_landed":     "Our BB $",
+                "total_offer_count": "Offers",
+                "fba_offer_count":   "FBA",
+                "fbm_offer_count":   "FBM",
+                "buybox_is_fba":     "BB FBA",
+            }).sort_values("Our BB $", ascending=False)
+
+            # Розподіл по нашим продавцям
+            by_seller = held.groupby("buybox_seller_id").size().to_dict()
+            chips = " · ".join(
+                f"**{BB_SELLER_NAMES.get(sid, sid)}**: {cnt}"
+                for sid, cnt in sorted(by_seller.items(), key=lambda x: -x[1])
+            )
+            st.markdown(f"📊 Розподіл: {chips}")
+
+            # Фільтри
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                brand_filter = st.selectbox(
+                    "Бренд",
+                    ["(всі)"] + sorted(held["winner_name"].unique().tolist()),
+                    key="bb_held_brand",
+                )
+            with c2:
+                only_competitive = st.checkbox(
+                    "Тільки де є конкуренти (Offers ≥ 2)",
+                    value=False, key="bb_held_competitive",
+                )
+            with c3:
+                min_price = st.number_input(
+                    "Мінімум Our BB $", value=0.0, step=1.0, key="bb_held_min_price",
+                )
+
+            f = held_view.copy()
+            if brand_filter != "(всі)":
+                f = f[f["Наш бренд"] == brand_filter]
+            if only_competitive:
+                f = f[f["Offers"] >= 2]
+            f = f[f["Our BB $"].fillna(0) >= min_price]
+
+            st.caption(f"Показано: **{len(f)}** з **{len(held_view)}**")
+
+            st.dataframe(
+                f,
+                use_container_width=True,
+                height=500,
+                column_config={
+                    "ASIN": st.column_config.LinkColumn(
+                        "ASIN",
+                        display_text=r"https://www\.amazon\.com/dp/(.+)",
+                        help="Клік → відкриє сторінку товару на Amazon",
+                        width="small",
+                    ),
+                    "Our BB $": st.column_config.NumberColumn(format="$%.2f"),
+                },
+            )
+
+            csv_held = f.copy()
+            csv_held["ASIN"] = csv_held["ASIN"].str.replace(
+                r"https://www\.amazon\.com/dp/", "", regex=True
+            )
+            st.download_button(
+                "📥 Download CSV",
+                csv_held.to_csv(index=False).encode(),
+                f"buybox_held_{dt.datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                "text/csv",
+                key="bb_dl_held",
             )
 
     # ── TAB 2: SUPPRESSED ──
@@ -10789,7 +10889,7 @@ def show_buybox_monitor():
         if not search_asin:
             candidates = df_bb[
                 (df_bb["has_buybox"])
-                & (~df_bb["own_is_buybox"].fillna(False))
+                & (~df_bb["is_ours"].fillna(False))
                 & (df_bb["own_seller_id"].notna())
             ].head(20)["asin"].tolist()
             if candidates:
@@ -10807,7 +10907,7 @@ def show_buybox_monitor():
 
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Buy Box",
-                          "✅ У нас" if r["own_is_buybox"]
+                          "✅ У нас" if r["is_ours"]
                           else "🔴 Конкурент" if r["has_buybox"]
                           else "⚫ Suppressed")
                 c2.metric("Buy Box $",
@@ -10848,12 +10948,13 @@ def show_buybox_monitor():
                 st.markdown("**Історія snapshot-ів:**")
                 history = _bb_query("""
                     SELECT snapshot_time, has_buybox, buybox_seller_id,
-                           buybox_landed, own_landed, own_is_buybox
+                           buybox_landed, own_landed,
+                           (has_buybox AND buybox_seller_id = ANY(%s)) AS is_ours
                     FROM public.pricing_buybox_winners
                     WHERE asin = %s
                     ORDER BY snapshot_time DESC
                     LIMIT 50
-                """, (search_asin,))
+                """, (MERINO_SELLER_IDS, search_asin))
 
                 if len(history) > 1:
                     st.dataframe(
@@ -14143,6 +14244,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
