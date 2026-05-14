@@ -10160,6 +10160,708 @@ def show_pricing():
         "Які ASIN варто знизити ціну для виграшу Buy Box?",
     ], "pricing")
 
+
+# ============================================
+# 🎯 BUY BOX MONITOR
+# ============================================
+MERINO_SELLER_IDS = [s.strip() for s in os.getenv(
+    "MERINO_SELLER_IDS",
+    "A37H2U93KUS3PG,A1CIEK2S8OQ2KI,A2U82Y816KDFW2"
+).split(",") if s.strip()]
+
+BB_SELLER_NAMES = {
+    "A37H2U93KUS3PG": "MR.EQUIPP",
+    "A1CIEK2S8OQ2KI": "MERINO-TECH",
+    "A2U82Y816KDFW2": "eLeaf",
+}
+
+
+@st.cache_data(ttl=300)
+def _bb_query(sql, params=None):
+    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+    try:
+        return pd.read_sql(sql, conn, params=params)
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=300)
+def _bb_latest_snapshot():
+    df = _bb_query("SELECT MAX(snapshot_time) AS ts FROM public.pricing_buybox_winners")
+    return df.iloc[0]["ts"] if not df.empty else None
+
+
+@st.cache_data(ttl=300)
+def _bb_current_state():
+    return _bb_query("""
+        SELECT DISTINCT ON (asin)
+            asin, snapshot_time,
+            has_buybox, buybox_seller_id, buybox_price, buybox_landed, buybox_is_fba,
+            own_seller_id, own_is_buybox, own_price, own_landed, own_is_fba,
+            total_offer_count, fba_offer_count, fbm_offer_count,
+            all_offers_json
+        FROM public.pricing_buybox_winners
+        ORDER BY asin, snapshot_time DESC
+    """)
+
+
+@st.cache_data(ttl=300)
+def _bb_history(days=7):
+    return _bb_query(f"""
+        SELECT
+            DATE_TRUNC('hour', snapshot_time) AS hour,
+            COUNT(*) AS total_asins,
+            COUNT(*) FILTER (WHERE own_is_buybox = TRUE) AS we_hold,
+            COUNT(*) FILTER (WHERE has_buybox AND own_is_buybox = FALSE
+                             AND own_seller_id IS NOT NULL) AS we_lost,
+            COUNT(*) FILTER (WHERE NOT has_buybox) AS suppressed
+        FROM public.pricing_buybox_winners
+        WHERE snapshot_time > NOW() - INTERVAL '{days} days'
+        GROUP BY hour
+        ORDER BY hour
+    """)
+
+
+@st.cache_data(ttl=300)
+def _bb_competitors():
+    return _bb_query("""
+        SELECT
+            buybox_seller_id AS seller,
+            COUNT(*) AS asins_holding,
+            AVG(buybox_price)::numeric(10,2) AS avg_price,
+            COUNT(*) FILTER (WHERE buybox_is_fba) AS fba_count
+        FROM (
+            SELECT DISTINCT ON (asin)
+                asin, buybox_seller_id, buybox_price, buybox_is_fba
+            FROM public.pricing_buybox_winners
+            WHERE buybox_seller_id IS NOT NULL
+              AND buybox_seller_id <> ALL(%s)
+            ORDER BY asin, snapshot_time DESC
+        ) latest
+        GROUP BY buybox_seller_id
+        ORDER BY asins_holding DESC
+        LIMIT 15
+    """, (MERINO_SELLER_IDS,))
+
+
+@st.cache_data(ttl=300)
+def _bb_recent_events():
+    """Порівнює 2 останні snapshot-и по кожному ASIN і визначає тип події:
+    LOST   — ми тримали BB → тепер у конкурента
+    WON    — конкурент тримав BB → тепер у нас
+    SUPPRESSED   — BB був → зник у всіх
+    RECOVERED    — BB був suppressed → з'явився і він наш
+    WINNER_CHANGED — BB перейшов між двома конкурентами (нас не стосується)
+    NO_CHANGE — без змін (відфільтровуємо)
+    """
+    return _bb_query("""
+        WITH ranked AS (
+            SELECT
+                asin, snapshot_time,
+                own_is_buybox, has_buybox,
+                buybox_seller_id, own_seller_id,
+                own_landed, buybox_landed,
+                total_offer_count,
+                ROW_NUMBER() OVER (PARTITION BY asin ORDER BY snapshot_time DESC) AS rn
+            FROM public.pricing_buybox_winners
+        ),
+        curr AS (SELECT * FROM ranked WHERE rn = 1),
+        prev AS (SELECT * FROM ranked WHERE rn = 2)
+        SELECT
+            c.asin,
+            c.snapshot_time AS now_ts,
+            p.snapshot_time AS prev_ts,
+            COALESCE(p.own_is_buybox, FALSE) AS was_ours,
+            COALESCE(c.own_is_buybox, FALSE) AS is_ours,
+            p.has_buybox AS prev_has_bb,
+            c.has_buybox AS now_has_bb,
+            p.buybox_seller_id AS prev_winner,
+            c.buybox_seller_id AS now_winner,
+            p.own_landed AS prev_our_price,
+            c.own_landed AS now_our_price,
+            p.buybox_landed AS prev_bb_price,
+            c.buybox_landed AS now_bb_price,
+            c.total_offer_count AS now_offers,
+            CASE
+                WHEN COALESCE(p.own_is_buybox, FALSE)
+                     AND NOT COALESCE(c.own_is_buybox, FALSE)
+                     AND c.has_buybox
+                     THEN 'LOST'
+                WHEN NOT COALESCE(p.own_is_buybox, FALSE)
+                     AND COALESCE(c.own_is_buybox, FALSE)
+                     THEN 'WON'
+                WHEN p.has_buybox AND NOT c.has_buybox
+                     THEN 'SUPPRESSED'
+                WHEN NOT p.has_buybox AND c.has_buybox
+                     AND COALESCE(c.own_is_buybox, FALSE)
+                     THEN 'RECOVERED'
+                WHEN p.buybox_seller_id IS DISTINCT FROM c.buybox_seller_id
+                     AND c.has_buybox AND p.has_buybox
+                     AND NOT COALESCE(p.own_is_buybox, FALSE)
+                     AND NOT COALESCE(c.own_is_buybox, FALSE)
+                     THEN 'WINNER_CHANGED'
+                ELSE 'NO_CHANGE'
+            END AS event
+        FROM curr c
+        INNER JOIN prev p USING (asin)
+    """)
+
+
+def _bb_amazon_link(asin):
+    return f"https://www.amazon.com/dp/{asin}"
+
+
+def _bb_seller_link(seller_id):
+    return f"https://www.amazon.com/sp?seller={seller_id}"
+
+
+def show_buybox_monitor():
+    """🎯 Buy Box Monitor — детальний моніторинг через pricing_buybox_winners."""
+    import json as _bb_json
+
+    st.markdown("## 🎯 Buy Box Monitor")
+    seller_str = " • ".join([f"{BB_SELLER_NAMES.get(s, s)} (`{s}`)" for s in MERINO_SELLER_IDS])
+    st.caption(f"merino.tech • Our sellers: {seller_str} • Marketplace: US")
+
+    last_ts = _bb_latest_snapshot()
+    if last_ts is None:
+        st.error("⚠️ Немає даних у `pricing_buybox_winners`. Запусти: `python 11_pricing_loader.py offers_full`")
+        return
+
+    age = dt.datetime.now(last_ts.tzinfo) - last_ts
+    age_str = (f"{int(age.total_seconds() // 60)}m ago"
+               if age.total_seconds() < 3600
+               else f"{int(age.total_seconds() // 3600)}h ago")
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.caption(f"📡 Останній snapshot: **{last_ts.strftime('%Y-%m-%d %H:%M')}** ({age_str})")
+    with col2:
+        if st.button("🔄 Refresh", key="bb_refresh"):
+            st.cache_data.clear()
+            st.rerun()
+
+    # ══════════════════════════════════════════════════════
+    # 🔔 СОБЫТИЯ: переход состояния між 2 останніми snapshot-ами
+    # ══════════════════════════════════════════════════════
+    events_df = _bb_recent_events()
+    if events_df.empty:
+        st.info("ℹ️ Подій немає — для порівняння потрібно мін 2 snapshot-и. "
+                "Зачекай наступний запуск loader-а (~через 4 год).")
+    else:
+        changes = events_df[events_df["event"] != "NO_CHANGE"].copy()
+        prev_ts = events_df.iloc[0]["prev_ts"]
+        now_ts  = events_df.iloc[0]["now_ts"]
+        gap_min = (now_ts - prev_ts).total_seconds() / 60
+
+        st.markdown("### 🔔 Зміни з минулого snapshot")
+        st.caption(
+            f"Порівняння: **{prev_ts.strftime('%Y-%m-%d %H:%M')}** → "
+            f"**{now_ts.strftime('%Y-%m-%d %H:%M')}** "
+            f"(гап {gap_min:.0f} хв · {len(events_df):,} ASIN перевірено)"
+        )
+
+        if changes.empty:
+            st.success(
+                f"✅ Стабільно — жодних змін Buy Box з минулого snapshot. "
+                f"Все що було — те й є."
+            )
+        else:
+            lost_evt   = changes[changes["event"] == "LOST"]
+            won_evt    = changes[changes["event"] == "WON"]
+            sup_evt    = changes[changes["event"] == "SUPPRESSED"]
+            rec_evt    = changes[changes["event"] == "RECOVERED"]
+            wch_evt    = changes[changes["event"] == "WINNER_CHANGED"]
+
+            # Метрики подій
+            e1, e2, e3, e4, e5 = st.columns(5)
+            e1.metric("🔴 LOST", len(lost_evt),
+                      help="Ми тримали BB → конкурент перебив")
+            e2.metric("🟢 WON", len(won_evt),
+                      help="Перебили конкурента або вийшли з suppressed")
+            e3.metric("⚫ SUPPRESSED", len(sup_evt),
+                      help="BB був, тепер нікому не присвоєний")
+            e4.metric("🔁 RECOVERED", len(rec_evt),
+                      help="BB був suppressed → з'явився і він наш")
+            e5.metric("🔀 Winner changed", len(wch_evt),
+                      help="BB перейшов між двома конкурентами (без нашої участі)")
+
+            # ── LOST events (найкритичніше — показуємо першими) ──
+            if not lost_evt.empty:
+                st.markdown(f"#### 🔴 Щойно ВТРАТИЛИ Buy Box ({len(lost_evt)}):")
+                for _, e in lost_evt.iterrows():
+                    asin = e["asin"]
+                    winner = e["now_winner"] or "—"
+                    p_price = float(e["prev_our_price"] or 0)
+                    n_bb    = float(e["now_bb_price"] or 0)
+                    n_ours  = float(e["now_our_price"] or 0)
+                    gap     = n_ours - n_bb if (n_ours and n_bb) else 0
+                    gap_pct = (gap / n_bb * 100) if n_bb else 0
+                    st.error(
+                        f"**[`{asin}`]({_bb_amazon_link(asin)})** · "
+                        f"був наш по `${p_price:.2f}` → "
+                        f"перейшов до **[`{winner}`]({_bb_seller_link(winner)})** "
+                        f"по `${n_bb:.2f}` · "
+                        f"наша зараз `${n_ours:.2f}` "
+                        f"(Δ `${gap:+.2f}` / `{gap_pct:+.1f}%`)"
+                    )
+
+            # ── WON events ──
+            if not won_evt.empty:
+                st.markdown(f"#### 🟢 Щойно ВИГРАЛИ Buy Box ({len(won_evt)}):")
+                for _, e in won_evt.iterrows():
+                    asin = e["asin"]
+                    p_winner = e["prev_winner"] or "—"
+                    n_ours = float(e["now_our_price"] or 0)
+                    p_bb   = float(e["prev_bb_price"] or 0)
+                    st.success(
+                        f"**[`{asin}`]({_bb_amazon_link(asin)})** · "
+                        f"був у [`{p_winner}`]({_bb_seller_link(p_winner)}) по `${p_bb:.2f}` → "
+                        f"тепер наш по `${n_ours:.2f}`"
+                    )
+
+            # ── RECOVERED events ──
+            if not rec_evt.empty:
+                st.markdown(f"#### 🔁 BB повернувся (RECOVERED) ({len(rec_evt)}):")
+                for _, e in rec_evt.iterrows():
+                    asin = e["asin"]
+                    n_ours = float(e["now_our_price"] or 0)
+                    st.info(
+                        f"**[`{asin}`]({_bb_amazon_link(asin)})** · "
+                        f"BB був suppressed → з'явився і він наш по `${n_ours:.2f}`"
+                    )
+
+            # ── SUPPRESSED events ──
+            if not sup_evt.empty:
+                with st.expander(f"⚫ Стали SUPPRESSED ({len(sup_evt)}) — BB зник у всіх", expanded=False):
+                    for _, e in sup_evt.iterrows():
+                        asin = e["asin"]
+                        was_ours = "✅ був наш" if e["was_ours"] else f"був у `{e['prev_winner']}`"
+                        st.caption(f"**[`{asin}`]({_bb_amazon_link(asin)})** · {was_ours}")
+
+            # ── WINNER_CHANGED (інформативно, нас не стосується) ──
+            if not wch_evt.empty:
+                with st.expander(f"🔀 BB перейшов між конкурентами ({len(wch_evt)})", expanded=False):
+                    for _, e in wch_evt.iterrows():
+                        asin = e["asin"]
+                        st.caption(
+                            f"**[`{asin}`]({_bb_amazon_link(asin)})** · "
+                            f"[`{e['prev_winner']}`]({_bb_seller_link(e['prev_winner'])}) → "
+                            f"[`{e['now_winner']}`]({_bb_seller_link(e['now_winner'])})"
+                        )
+
+            # CSV експорт всіх змін
+            st.download_button(
+                f"📥 CSV всіх подій ({len(changes)})",
+                changes.to_csv(index=False).encode(),
+                f"buybox_events_{now_ts.strftime('%Y%m%d_%H%M')}.csv",
+                "text/csv",
+                key="bb_dl_events",
+            )
+
+        st.divider()
+
+    # METRICS
+    df_bb = _bb_current_state()
+    total = len(df_bb)
+    has_bb = int(df_bb["has_buybox"].sum())
+    suppressed = total - has_bb
+    we_hold = int(df_bb["own_is_buybox"].fillna(False).sum())
+    we_in_offers = int(df_bb["own_seller_id"].notna().sum())
+    we_lost = int(((~df_bb["own_is_buybox"].fillna(False))
+                   & (df_bb["has_buybox"])
+                   & (df_bb["own_seller_id"].notna())).sum())
+
+    bb_pct = (we_hold / we_in_offers * 100) if we_in_offers else 0
+
+    # ── Світлофор ──
+    st.divider()
+    if we_lost == 0:
+        status_color = "#22c55e"; status_emoji = "🟢"
+        status_text = "ВСЕ ПІД КОНТРОЛЕМ"
+        status_sub = "Не упускаємо жодного Buy Box"
+    elif we_lost <= 10:
+        status_color = "#eab308"; status_emoji = "🟡"
+        status_text = "УВАГА"
+        status_sub = f"Упускаємо Buy Box на {we_lost} ASIN"
+    else:
+        status_color = "#ef4444"; status_emoji = "🔴"
+        status_text = "ВТРАЧАЄМО ГРОШІ"
+        status_sub = f"Упускаємо Buy Box на {we_lost} ASIN — терміново глянь Tab '🔴 Втрачені BB'"
+
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(135deg, {status_color}22 0%, {status_color}11 100%);
+            border-left: 8px solid {status_color};
+            padding: 30px 40px; border-radius: 12px; margin: 20px 0;">
+            <div style="font-size: 14px; color: #888; letter-spacing: 2px; margin-bottom: 8px;">
+                СТАТУС BUY BOX MERINO.TECH
+            </div>
+            <div style="font-size: 48px; font-weight: 800; color: {status_color}; line-height: 1;">
+                {status_emoji} {status_text}
+            </div>
+            <div style="font-size: 20px; color: #aaa; margin-top: 12px;">
+                {status_sub}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    big1, big2 = st.columns(2)
+    with big1:
+        st.markdown(
+            f"""
+            <div style="background:#0d2b1e;border:2px solid #22c55e;padding:30px;
+                        border-radius:12px;text-align:center">
+                <div style="font-size:16px;color:#86efac;font-weight:600;letter-spacing:1px">
+                    ✅ ТРИМАЄМО BUY BOX
+                </div>
+                <div style="font-size:72px;font-weight:800;color:#22c55e;line-height:1;margin:16px 0">
+                    {we_hold:,}
+                </div>
+                <div style="font-size:18px;color:#86efac">
+                    {bb_pct:.0f}% від ASIN де ми конкуруємо
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    with big2:
+        lost_color = "#ef4444" if we_lost > 0 else "#888"
+        lost_bg = "#2b0d0d" if we_lost > 0 else "#1a1a2e"
+        lost_label = "#fca5a5" if we_lost > 0 else "#aaa"
+        st.markdown(
+            f"""
+            <div style="background:{lost_bg};border:2px solid {lost_color};padding:30px;
+                        border-radius:12px;text-align:center">
+                <div style="font-size:16px;color:{lost_label};font-weight:600;letter-spacing:1px">
+                    🔴 УПУСКАЄМО КЛІЄНТА
+                </div>
+                <div style="font-size:72px;font-weight:800;color:{lost_color};line-height:1;margin:16px 0">
+                    {we_lost:,}
+                </div>
+                <div style="font-size:18px;color:{lost_label}">
+                    ASIN де конкурент забирає покупця
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Всього ASIN", f"{total:,}")
+    m2.metric("✅ Тримаємо BB", f"{we_hold:,}", f"{bb_pct:.1f}% від наших")
+    m3.metric("🔴 Втратили BB", f"{we_lost:,}", delta_color="inverse")
+    m4.metric("⚫ Suppressed", f"{suppressed:,}", f"{suppressed/total*100:.0f}%" if total else "—")
+    m5.metric("👥 Конкуруємо", f"{total - int((df_bb['total_offer_count']==1).sum()):,}")
+
+    # TABS
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🔴 Втрачені BB",
+        "⚫ Suppressed",
+        "🏆 Конкуренти",
+        "📈 Історія",
+        "🔍 Деталі ASIN",
+    ])
+
+    # ── TAB 1: LOST ──
+    with tab1:
+        st.subheader("🔴 ASIN де конкурент тримає Buy Box")
+        st.caption("Ми є в Offers, але не виграємо BB. Це **реальні втрати** — є що чинити.")
+
+        lost = df_bb[
+            (df_bb["has_buybox"])
+            & (~df_bb["own_is_buybox"].fillna(False))
+            & (df_bb["own_seller_id"].notna())
+        ].copy()
+
+        if lost.empty:
+            st.success("🎉 Немає втрачених Buy Box — тримаємо всі де конкуруємо!")
+        else:
+            lost["price_gap_pct"] = ((lost["own_landed"] - lost["buybox_landed"])
+                                     / lost["buybox_landed"] * 100).round(1)
+            lost["price_gap_$"] = (lost["own_landed"] - lost["buybox_landed"]).round(2)
+
+            # URL-колонки для клікабельних посилань (показуються через LinkColumn)
+            lost["_asin_url"]   = lost["asin"].apply(_bb_amazon_link)
+            lost["_winner_url"] = lost["buybox_seller_id"].fillna("").apply(
+                lambda s: _bb_seller_link(s) if s else ""
+            )
+
+            lost_view = lost[[
+                "_asin_url", "_winner_url", "buybox_landed", "own_landed",
+                "price_gap_$", "price_gap_pct", "total_offer_count",
+                "buybox_is_fba", "own_is_fba",
+            ]].rename(columns={
+                "_asin_url": "ASIN",
+                "_winner_url": "Winner",
+                "buybox_landed": "Winner $",
+                "own_landed": "Our $",
+                "price_gap_$": "Δ $",
+                "price_gap_pct": "Δ %",
+                "total_offer_count": "Offers",
+                "buybox_is_fba": "Winner FBA",
+                "own_is_fba": "Our FBA",
+            }).sort_values("Δ %", ascending=False)
+
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                min_gap = st.number_input("Мінімум Δ %", value=0.0, step=1.0, key="bb_min_gap")
+            with c2:
+                only_fba_lost = st.checkbox("Конкурент FBA", value=False, key="bb_only_fba")
+            with c3:
+                min_offers = st.number_input("Мінімум офферів", value=0, step=1, key="bb_min_offers")
+
+            filtered = lost_view[
+                (lost_view["Δ %"] >= min_gap)
+                & (lost_view["Offers"] >= min_offers)
+            ]
+            if only_fba_lost:
+                filtered = filtered[filtered["Winner FBA"]]
+
+            st.caption(f"Показано: **{len(filtered)}** з **{len(lost_view)}**")
+
+            st.dataframe(
+                filtered,
+                use_container_width=True,
+                height=500,
+                column_config={
+                    "ASIN": st.column_config.LinkColumn(
+                        "ASIN",
+                        display_text=r"https://www\.amazon\.com/dp/(.+)",
+                        help="Клік → відкриє сторінку товару на Amazon",
+                        width="small",
+                    ),
+                    "Winner": st.column_config.LinkColumn(
+                        "Winner",
+                        display_text=r"seller=(.+)",
+                        help="Клік → відкриє профіль продавця на Amazon",
+                        width="medium",
+                    ),
+                    "Winner $": st.column_config.NumberColumn(format="$%.2f"),
+                    "Our $": st.column_config.NumberColumn(format="$%.2f"),
+                    "Δ $": st.column_config.NumberColumn(format="$%.2f"),
+                    "Δ %": st.column_config.NumberColumn(format="%.1f%%"),
+                },
+            )
+
+            # CSV з чистими ASIN/seller (без URL) — для зовнішнього використання
+            csv_export = filtered.copy()
+            csv_export["ASIN"]   = csv_export["ASIN"].str.replace(
+                r"https://www\.amazon\.com/dp/", "", regex=True
+            )
+            csv_export["Winner"] = csv_export["Winner"].str.replace(
+                r"https://www\.amazon\.com/sp\?seller=", "", regex=True
+            )
+            st.download_button(
+                "📥 Download CSV",
+                csv_export.to_csv(index=False).encode(),
+                f"buybox_lost_{dt.datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                "text/csv",
+                key="bb_dl_lost",
+            )
+
+    # ── TAB 2: SUPPRESSED ──
+    with tab2:
+        st.subheader("⚫ Suppressed Buy Box")
+        st.caption("Buy Box не присвоєний нікому. Зазвичай: out-of-stock, compliance issues, "
+                   "pricing fair value violation, або втрачена eligibility.")
+
+        sup = df_bb[~df_bb["has_buybox"]].copy()
+        st.metric("Всього suppressed", f"{len(sup):,}",
+                  f"{len(sup)/total*100:.0f}% від всіх ASIN" if total else "—")
+
+        sup_with_own = sup[sup["own_seller_id"].notna()]
+        sup_no_own = sup[sup["own_seller_id"].isna()]
+
+        c1, c2 = st.columns(2)
+        c1.metric("Ми є в Offers, але BB suppressed", f"{len(sup_with_own):,}")
+        c2.metric("Нас взагалі немає в Offers", f"{len(sup_no_own):,}",
+                  help="Можливо out-of-stock / inactive SKU")
+
+        if not sup_with_own.empty:
+            st.markdown("**ASIN з нашими офферами але без Buy Box:**")
+            sup_view = sup_with_own[[
+                "asin", "own_landed", "total_offer_count",
+                "fba_offer_count", "fbm_offer_count",
+            ]].rename(columns={
+                "asin": "ASIN",
+                "own_landed": "Our $",
+                "total_offer_count": "Offers",
+                "fba_offer_count": "FBA",
+                "fbm_offer_count": "FBM",
+            }).sort_values("Our $", ascending=False)
+
+            st.dataframe(
+                sup_view,
+                use_container_width=True,
+                height=400,
+                column_config={
+                    "Our $": st.column_config.NumberColumn(format="$%.2f"),
+                },
+            )
+
+    # ── TAB 3: COMPETITORS ──
+    with tab3:
+        st.subheader("🏆 Топ конкурентів (хто частіше тримає Buy Box)")
+        competitors = _bb_competitors()
+
+        if competitors.empty:
+            st.info("Немає даних про конкурентів")
+        else:
+            c1, c2 = st.columns([2, 3])
+            with c1:
+                for _, row in competitors.head(10).iterrows():
+                    fba_share = (row["fba_count"] / row["asins_holding"] * 100) if row["asins_holding"] else 0
+                    st.markdown(
+                        f"**[`{row['seller']}`]({_bb_seller_link(row['seller'])})** — "
+                        f"**{row['asins_holding']}** ASIN • avg `${row['avg_price']}` • "
+                        f"FBA: {fba_share:.0f}%"
+                    )
+            with c2:
+                fig = px.bar(
+                    competitors.head(10),
+                    y="seller", x="asins_holding",
+                    orientation="h", text="asins_holding",
+                    title="ASIN під Buy Box у конкурента",
+                )
+                fig.update_layout(yaxis={"categoryorder": "total ascending"}, height=400)
+                st.plotly_chart(fig, use_container_width=True)
+
+    # ── TAB 4: HISTORY ──
+    with tab4:
+        st.subheader("📈 Динаміка Buy Box по часу")
+
+        days = st.slider("Період (днів)", 1, 30, 7, key="bb_hist_days")
+        hist = _bb_history(days)
+
+        if hist.empty or len(hist) < 2:
+            st.info(f"Поки тільки 1 snapshot — історія з'явиться після наступних запусків loader")
+        else:
+            denom = (hist["we_hold"] + hist["we_lost"]).replace(0, float("nan"))
+            hist["bb_held_pct"] = (hist["we_hold"] / denom * 100).round(1).fillna(0)
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=hist["hour"], y=hist["we_hold"],
+                name="Тримаємо BB", fill="tozeroy", line_color="#22c55e"))
+            fig.add_trace(go.Scatter(x=hist["hour"], y=hist["we_lost"],
+                name="Втратили", fill="tozeroy", line_color="#ef4444"))
+            fig.add_trace(go.Scatter(x=hist["hour"], y=hist["suppressed"],
+                name="Suppressed", fill="tozeroy", line_color="#6b7280"))
+            fig.update_layout(
+                title="Buy Box ownership timeline",
+                xaxis_title="Час", yaxis_title="Кількість ASIN",
+                height=400, hovermode="x unified",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            fig2 = px.line(
+                hist, x="hour", y="bb_held_pct",
+                title="% Buy Box held (від ASIN де ми конкуруємо)",
+                markers=True,
+            )
+            fig2.update_layout(height=300, yaxis_title="%")
+            fig2.update_traces(line_color="#3b82f6")
+            st.plotly_chart(fig2, use_container_width=True)
+
+    # ── TAB 5: ASIN DETAIL ──
+    with tab5:
+        st.subheader("🔍 Детальний аналіз ASIN")
+
+        # Дефолт з глобального gf_asin якщо є
+        _default_asin = st.session_state.get("gf_asin", "") or ""
+        search_asin = st.text_input("ASIN", value=_default_asin,
+                                    placeholder="B0XXXXXXXX або вибери нижче",
+                                    key="bb_search_asin")
+
+        if not search_asin:
+            candidates = df_bb[
+                (df_bb["has_buybox"])
+                & (~df_bb["own_is_buybox"].fillna(False))
+                & (df_bb["own_seller_id"].notna())
+            ].head(20)["asin"].tolist()
+            if candidates:
+                search_asin = st.selectbox("Або вибери з втрачених BB:",
+                                           [""] + candidates, key="bb_pick_asin")
+
+        if search_asin:
+            row = df_bb[df_bb["asin"] == search_asin]
+            if row.empty:
+                st.error(f"ASIN {search_asin} не знайдено")
+            else:
+                r = row.iloc[0]
+
+                st.markdown(f"### [{search_asin}]({_bb_amazon_link(search_asin)})")
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Buy Box",
+                          "✅ У нас" if r["own_is_buybox"]
+                          else "🔴 Конкурент" if r["has_buybox"]
+                          else "⚫ Suppressed")
+                c2.metric("Buy Box $",
+                          f"${r['buybox_landed']:.2f}" if r["buybox_landed"] else "—")
+                c3.metric("Наша $",
+                          f"${r['own_landed']:.2f}" if r["own_landed"] else "Нас немає в Offers")
+                c4.metric("Офферів",
+                          int(r["total_offer_count"]) if r["total_offer_count"] else 0)
+
+                st.markdown("**Всі офери:**")
+                offers_json = r["all_offers_json"]
+                if offers_json:
+                    offers = _bb_json.loads(offers_json) if isinstance(offers_json, str) else offers_json
+                    offers_df = pd.DataFrame(offers)
+                    if not offers_df.empty:
+                        offers_df["is_own"] = offers_df["seller_id"].isin(MERINO_SELLER_IDS)
+                        offers_df = offers_df.sort_values(
+                            ["is_buybox", "price"], ascending=[False, True]
+                        )
+                        for _, o in offers_df.iterrows():
+                            bb = "🏆 " if o.get("is_buybox") else "   "
+                            seller_id = o.get("seller_id")
+                            own_marker = ""
+                            if o.get("is_own"):
+                                brand = BB_SELLER_NAMES.get(seller_id, "OUR")
+                                own_marker = f" ⭐ {brand}"
+                            fba = "FBA" if o.get("is_fba") else "FBM"
+                            prime = " ✓Prime" if o.get("is_prime") else ""
+                            ships = f" from {o.get('ships_from')}" if o.get("ships_from") else ""
+                            price_str = f"${o.get('price', 0):.2f}"
+                            ship_str = f" + ${o.get('shipping', 0):.2f} ship" if o.get("shipping") else ""
+
+                            st.markdown(
+                                f"{bb}**`{seller_id}`**{own_marker} — "
+                                f"{price_str}{ship_str} • {fba}{prime}{ships}"
+                            )
+
+                st.markdown("**Історія snapshot-ів:**")
+                history = _bb_query("""
+                    SELECT snapshot_time, has_buybox, buybox_seller_id,
+                           buybox_landed, own_landed, own_is_buybox
+                    FROM public.pricing_buybox_winners
+                    WHERE asin = %s
+                    ORDER BY snapshot_time DESC
+                    LIMIT 50
+                """, (search_asin,))
+
+                if len(history) > 1:
+                    st.dataframe(
+                        history,
+                        use_container_width=True,
+                        column_config={
+                            "buybox_landed": st.column_config.NumberColumn(format="$%.2f"),
+                            "own_landed": st.column_config.NumberColumn(format="$%.2f"),
+                        },
+                    )
+                else:
+                    st.caption("Поки тільки 1 snapshot — історія з'явиться після наступних запусків loader")
+
+    st.divider()
+    st.caption(
+        "💲 Data: `public.pricing_buybox_winners` • "
+        "Loader: `11_pricing_loader.py offers_full` (8:00, 12:00, 16:00 Kyiv)"
+    )
+
+
 def show_fba_operations():
     st.markdown("### 📦 FBA Operations")
     engine = get_engine()
@@ -13305,6 +14007,7 @@ NAV_I18N = {
     "🎯 Custom Quality":               {"UA": "🎯 Custom Quality",     "EN": "🎯 Custom Quality",   "RU": "🎯 Custom Quality"},
     "📨 Review Requests":              {"UA": "📨 Запити на відгуки",  "EN": "📨 Review Requests",  "RU": "📨 Запросы на отзывы"},
     "💲 Pricing / BuyBox":             {"UA": "💲 Ціни / BuyBox",      "EN": "💲 Pricing / BuyBox", "RU": "💲 Цены / BuyBox"},
+    "🎯 BuyBox Monitor":               {"UA": "🎯 BuyBox Monitor",      "EN": "🎯 BuyBox Monitor",   "RU": "🎯 BuyBox Монитор"},
     "📦 FBA Operations":               {"UA": "📦 FBA Операції",       "EN": "📦 FBA Operations",   "RU": "📦 FBA Операции"},
     "📋 Податки (Tax)":                {"UA": "📋 Податки",            "EN": "📋 Tax",              "RU": "📋 Налоги"},
     "⭐ Amazon Reviews":               {"UA": "⭐ Відгуки",             "EN": "⭐ Reviews",          "RU": "⭐ Отзывы"},
@@ -13335,6 +14038,7 @@ main_nav = [
     "🎯 Custom Quality",
     "📨 Review Requests",
     "💲 Pricing / BuyBox",
+    "🎯 BuyBox Monitor",
     "📦 FBA Operations",
     "📋 Податки (Tax)",
     "⭐ Amazon Reviews",
@@ -13408,6 +14112,7 @@ elif report_choice == "📨 Review Requests":
     if RR_OK: show_review_requests_tab(get_engine())
     else:     st.error(f"❌ review_requests_tab недоступний: {RR_ERR}")
 elif report_choice == "💲 Pricing / BuyBox":         show_pricing()
+elif report_choice == "🎯 BuyBox Monitor":           show_buybox_monitor()
 elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "📋 Податки (Tax)":            show_tax(t)
 elif report_choice == "🧠 AI Дашборд":               show_ai_dashboard()
@@ -13426,8 +14131,6 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
-
-
 
 
 
