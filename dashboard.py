@@ -10365,6 +10365,8 @@ def show_buybox_monitor():
     # 🔔 СОБЫТИЯ: переход состояния між 2 останніми snapshot-ами
     # ══════════════════════════════════════════════════════
     events_df = _bb_recent_events()
+    rec_evt = (events_df[events_df["event"] == "RECOVERED"].copy()
+               if not events_df.empty else pd.DataFrame())
     if events_df.empty:
         st.info("ℹ️ Подій немає — для порівняння потрібно мін 2 snapshot-и. "
                 "Зачекай наступний запуск loader-а (~через 4 год).")
@@ -10440,27 +10442,7 @@ def show_buybox_monitor():
                         f"тепер наш по `${n_ours:.2f}`"
                     )
 
-            # ── RECOVERED events ──
-            if not rec_evt.empty:
-                st.markdown(f"#### 🔁 BB повернувся (RECOVERED) ({len(rec_evt)}):")
-                rec_view = pd.DataFrame({
-                    "ASIN": rec_evt["asin"].values,
-                    "Amazon": [_bb_amazon_link(a) for a in rec_evt["asin"]],
-                    "Наша ціна": pd.to_numeric(rec_evt["now_our_price"], errors="coerce").fillna(0).values,
-                    "Статус": ["BB був suppressed → з'явився і він наш"] * len(rec_evt),
-                })
-                st.dataframe(
-                    rec_view,
-                    width="stretch",
-                    hide_index=True,
-                    height=min(400, 38 * (len(rec_view) + 1)),
-                    column_config={
-                        "ASIN": st.column_config.TextColumn("ASIN", width="small"),
-                        "Amazon": st.column_config.LinkColumn("Посилання", display_text="🔗 Відкрити", width="small"),
-                        "Наша ціна": st.column_config.NumberColumn("Наша ціна", format="$%.2f", width="small"),
-                        "Статус": st.column_config.TextColumn("Статус", width="large"),
-                    },
-                )
+            # ── RECOVERED events → перенесено у Tab '🔁 BB повернувся' ──
 
             # ── SUPPRESSED events ──
             if not sup_evt.empty:
@@ -10587,9 +10569,10 @@ def show_buybox_monitor():
     m5.metric("👥 Конкуруємо", f"{total - int((df_bb['total_offer_count']==1).sum()):,}")
 
     # TABS
-    tab1, tab_just_lost, tab_held, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab_just_lost, tab_recovered, tab_held, tab2, tab3, tab4, tab5 = st.tabs([
         "🔴 Втрачені BB",
         "💔 Щойно втратили",
+        f"🔁 BB повернувся ({len(rec_evt)})" if not rec_evt.empty else "🔁 BB повернувся",
         "✅ Тримаємо BB",
         "⚫ Suppressed",
         "🏆 Конкуренти",
@@ -10794,6 +10777,40 @@ def show_buybox_monitor():
                     "text/csv",
                     key="bb_dl_just_lost",
                 )
+
+    # ── TAB RECOVERED: BB ПОВЕРНУВСЯ ──
+    with tab_recovered:
+        st.subheader("🔁 BB повернувся (RECOVERED)")
+        st.caption("BB був suppressed у попередньому snapshot → з'явився, і він наш.")
+
+        if rec_evt.empty:
+            st.info("ℹ️ З минулого snapshot жоден BB не повернувся з suppressed.")
+        else:
+            rec_view = pd.DataFrame({
+                "ASIN": rec_evt["asin"].values,
+                "Amazon": [_bb_amazon_link(a) for a in rec_evt["asin"]],
+                "Наша ціна": pd.to_numeric(rec_evt["now_our_price"], errors="coerce").fillna(0).values,
+                "Статус": ["BB був suppressed → з'явився і він наш"] * len(rec_evt),
+            })
+            st.dataframe(
+                rec_view,
+                width="stretch",
+                hide_index=True,
+                height=min(600, 38 * (len(rec_view) + 1)),
+                column_config={
+                    "ASIN": st.column_config.TextColumn("ASIN", width="small"),
+                    "Amazon": st.column_config.LinkColumn("Посилання", display_text="🔗 Відкрити", width="small"),
+                    "Наша ціна": st.column_config.NumberColumn("Наша ціна", format="$%.2f", width="small"),
+                    "Статус": st.column_config.TextColumn("Статус", width="large"),
+                },
+            )
+            st.download_button(
+                f"📥 CSV ({len(rec_view)})",
+                rec_view.drop(columns=["Amazon"]).to_csv(index=False).encode(),
+                f"buybox_recovered_{dt.datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                "text/csv",
+                key="bb_dl_recovered",
+            )
 
     # ── TAB HELD: WE HOLD THE BUY BOX ──
     with tab_held:
@@ -14357,7 +14374,6 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
-
 
 
 
