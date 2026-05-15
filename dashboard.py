@@ -10609,35 +10609,48 @@ def show_buybox_monitor():
             lost["_winner_url"] = lost["buybox_seller_id"].fillna("").apply(
                 lambda s: _bb_seller_link(s) if s else ""
             )
+            # Який саме з наших акаунтів пропонує цей ASIN
+            lost["_our_brand"] = lost["own_seller_id"].map(
+                lambda s: BB_SELLER_NAMES.get(s, s) if pd.notna(s) else ""
+            )
 
             lost_view = lost[[
-                "_asin_url", "_winner_url", "buybox_landed", "own_landed",
+                "_asin_url", "_our_brand", "_winner_url",
+                "buybox_landed", "own_landed",
                 "price_gap_$", "price_gap_pct", "total_offer_count",
                 "buybox_is_fba", "own_is_fba",
             ]].rename(columns={
-                "_asin_url": "ASIN",
-                "_winner_url": "Winner",
-                "buybox_landed": "Winner $",
-                "own_landed": "Our $",
-                "price_gap_$": "Δ $",
-                "price_gap_pct": "Δ %",
+                "_asin_url":         "ASIN",
+                "_our_brand":        "Наш бренд",
+                "_winner_url":       "Winner",
+                "buybox_landed":     "Winner $",
+                "own_landed":        "Our $",
+                "price_gap_$":       "Δ $",
+                "price_gap_pct":     "Δ %",
                 "total_offer_count": "Offers",
-                "buybox_is_fba": "Winner FBA",
-                "own_is_fba": "Our FBA",
+                "buybox_is_fba":     "Winner FBA",
+                "own_is_fba":        "Our FBA",
             }).sort_values("Δ %", ascending=False)
 
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             with c1:
-                min_gap = st.number_input("Мінімум Δ %", value=0.0, step=1.0, key="bb_min_gap")
+                brand_options = ["(всі)"] + sorted(
+                    [b for b in lost_view["Наш бренд"].unique().tolist() if b]
+                )
+                lost_brand = st.selectbox("Наш бренд", brand_options, key="bb_lost_brand")
             with c2:
-                only_fba_lost = st.checkbox("Конкурент FBA", value=False, key="bb_only_fba")
+                min_gap = st.number_input("Мінімум Δ %", value=0.0, step=1.0, key="bb_min_gap")
             with c3:
+                only_fba_lost = st.checkbox("Конкурент FBA", value=False, key="bb_only_fba")
+            with c4:
                 min_offers = st.number_input("Мінімум офферів", value=0, step=1, key="bb_min_offers")
 
             filtered = lost_view[
                 (lost_view["Δ %"] >= min_gap)
                 & (lost_view["Offers"] >= min_offers)
             ]
+            if lost_brand != "(всі)":
+                filtered = filtered[filtered["Наш бренд"] == lost_brand]
             if only_fba_lost:
                 filtered = filtered[filtered["Winner FBA"]]
 
@@ -14333,7 +14346,6 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
-
 
 
 
