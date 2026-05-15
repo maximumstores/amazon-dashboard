@@ -10166,14 +10166,33 @@ def show_pricing():
 # ============================================
 MERINO_SELLER_IDS = [s.strip() for s in os.getenv(
     "MERINO_SELLER_IDS",
-    "A37H2U93KUS3PG,A1CIEK2S8OQ2KI,A2U82Y816KDFW2"
+    "A37H2U93KUS3PG,A1CIEK2S8OQ2KI,A2U82Y816KDFW2,A1PVHTCXB8GYOZ"
 ).split(",") if s.strip()]
 
+# Резеллери-арбітражники: не наші акаунти, але не конкурентні бренди (продають наш товар через свої канали)
+RESELLER_SELLER_IDS = {"A2Y6GR7W4L633D", "ACZNV91B6U7W2"}
+
 BB_SELLER_NAMES = {
+    # Наші 4 акаунти (family merino.tech)
     "A37H2U93KUS3PG": "MR.EQUIPP",
     "A1CIEK2S8OQ2KI": "MERINO-TECH",
     "A2U82Y816KDFW2": "eLeaf",
+    "A1PVHTCXB8GYOZ": "Account #4",
+    # Резеллери (не загрози)
+    "A2Y6GR7W4L633D": "eLiquidation (drop-ship)",
+    "ACZNV91B6U7W2":  "TopSale Direct (FBA)",
 }
+
+# Хелпер: класифікація BB winner для одного seller_id
+def _bb_classify_winner(seller_id, has_bb):
+    """→ 'ours' | 'reseller' | 'external' | 'suppressed'"""
+    if not has_bb or not seller_id:
+        return "suppressed"
+    if seller_id in MERINO_SELLER_IDS:
+        return "ours"
+    if seller_id in RESELLER_SELLER_IDS:
+        return "reseller"
+    return "external"
 
 
 @st.cache_data(ttl=300)
@@ -10506,22 +10525,32 @@ def show_buybox_monitor():
                    & (df_bb["has_buybox"])
                    & (df_bb["own_seller_id"].notna())).sum())
 
+    # Класифікація BB winners
+    winner_class = df_bb.apply(
+        lambda r: _bb_classify_winner(r.get("buybox_seller_id"), r.get("has_buybox")),
+        axis=1,
+    )
+    n_external  = int((winner_class == "external").sum())
+    n_reseller  = int((winner_class == "reseller").sum())
+    # n_ours      = int((winner_class == "ours").sum())  # == we_hold
+
     bb_pct = (we_hold / we_in_offers * 100) if we_in_offers else 0
 
-    # ── Світлофор ──
+    # ── Світлофор (за реальними external конкурентами, без резеллерів) ──
     st.divider()
-    if we_lost == 0:
+    if n_external == 0:
         status_color = "#22c55e"; status_emoji = "🟢"
         status_text = "ВСЕ ПІД КОНТРОЛЕМ"
-        status_sub = "Не упускаємо жодного Buy Box"
-    elif we_lost <= 10:
+        status_sub = "Жоден зовнішній конкурент не тримає Buy Box"
+    elif n_external <= 10:
         status_color = "#eab308"; status_emoji = "🟡"
         status_text = "УВАГА"
-        status_sub = f"Упускаємо Buy Box на {we_lost} ASIN"
+        status_sub = f"Зовнішній конкурент тримає BB на {n_external} ASIN"
     else:
         status_color = "#ef4444"; status_emoji = "🔴"
         status_text = "ВТРАЧАЄМО ГРОШІ"
-        status_sub = f"Упускаємо Buy Box на {we_lost} ASIN — терміново глянь Tab '🔴 Втрачені BB'"
+        status_sub = (f"Зовнішній конкурент тримає BB на {n_external} ASIN — "
+                      f"терміново глянь Tab '🔴 Втрачені BB'")
 
     st.markdown(
         f"""
@@ -10576,7 +10605,7 @@ def show_buybox_monitor():
                     {not_ours:,}
                 </div>
                 <div style="font-size:18px;color:{lost_label}">
-                    Конкурент: {we_lost} · Suppressed: {suppressed}
+                    🔴 {n_external} зовнішніх · ⚠️ {n_reseller} резеллерів · ⚫ {suppressed} suppressed
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -10629,10 +10658,25 @@ def show_buybox_monitor():
             lost["_our_brand"] = lost["own_seller_id"].map(
                 lambda s: BB_SELLER_NAMES.get(s, s) if pd.notna(s) else ""
             )
+            # Класифікація типу загрози по winner
+            def _threat_label(sid):
+                if pd.isna(sid) or not sid:
+                    return ""
+                if sid in MERINO_SELLER_IDS:
+                    return "✅ свій акаунт"
+                if sid in RESELLER_SELLER_IDS:
+                    return "🟡 резеллер"
+                return "🔴 чужий"
+            lost["_threat"] = lost["buybox_seller_id"].apply(_threat_label)
+            # Назва winner: бренд зі словника або сирий ID
+            lost["_winner_name"] = lost["buybox_seller_id"].apply(
+                lambda s: BB_SELLER_NAMES.get(s, s) if pd.notna(s) else ""
+            )
 
             lost_view = lost[[
                 "main_image_url", "item_name",
-                "_asin_url", "_our_brand", "_winner_url",
+                "_asin_url", "_threat", "_our_brand",
+                "_winner_name", "_winner_url",
                 "buybox_landed", "own_landed",
                 "price_gap_$", "price_gap_pct", "total_offer_count",
                 "buybox_is_fba", "own_is_fba",
@@ -10640,7 +10684,9 @@ def show_buybox_monitor():
                 "main_image_url":    "Фото",
                 "item_name":         "Назва",
                 "_asin_url":         "ASIN",
+                "_threat":           "Тип загрози",
                 "_our_brand":        "Наш бренд",
+                "_winner_name":      "Winner name",
                 "_winner_url":       "Winner",
                 "buybox_landed":     "Winner $",
                 "own_landed":        "Our $",
@@ -10651,29 +10697,37 @@ def show_buybox_monitor():
                 "own_is_fba":        "Our FBA",
             }).sort_values("Δ %", ascending=False)
 
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3, c4, c5 = st.columns(5)
             with c1:
+                threat_options = ["(всі)", "🔴 чужий", "🟡 резеллер", "✅ свій акаунт"]
+                lost_threat = st.selectbox("Тип загрози", threat_options, key="bb_lost_threat")
+            with c2:
                 brand_options = ["(всі)"] + sorted(
                     [b for b in lost_view["Наш бренд"].unique().tolist() if b]
                 )
                 lost_brand = st.selectbox("Наш бренд", brand_options, key="bb_lost_brand")
-            with c2:
-                min_gap = st.number_input("Мінімум Δ %", value=0.0, step=1.0, key="bb_min_gap")
             with c3:
-                only_fba_lost = st.checkbox("Конкурент FBA", value=False, key="bb_only_fba")
+                min_gap = st.number_input("Мінімум Δ %", value=0.0, step=1.0, key="bb_min_gap")
             with c4:
+                only_fba_lost = st.checkbox("Конкурент FBA", value=False, key="bb_only_fba")
+            with c5:
                 min_offers = st.number_input("Мінімум офферів", value=0, step=1, key="bb_min_offers")
 
             filtered = lost_view[
                 (lost_view["Δ %"] >= min_gap)
                 & (lost_view["Offers"] >= min_offers)
             ]
+            if lost_threat != "(всі)":
+                filtered = filtered[filtered["Тип загрози"] == lost_threat]
             if lost_brand != "(всі)":
                 filtered = filtered[filtered["Наш бренд"] == lost_brand]
             if only_fba_lost:
                 filtered = filtered[filtered["Winner FBA"]]
 
-            st.caption(f"Показано: **{len(filtered)}** з **{len(lost_view)}**")
+            # Розподіл по типу загрози — короткий чіп
+            _t_counts = lost_view["Тип загрози"].value_counts()
+            _t_str = " · ".join(f"{k}: {v}" for k, v in _t_counts.items())
+            st.caption(f"Показано: **{len(filtered)}** з **{len(lost_view)}** · розподіл: {_t_str}")
 
             st.dataframe(
                 filtered,
@@ -10688,8 +10742,10 @@ def show_buybox_monitor():
                         help="Клік → відкриє сторінку товару на Amazon",
                         width="small",
                     ),
+                    "Тип загрози": st.column_config.TextColumn("Тип загрози", width="small"),
+                    "Winner name": st.column_config.TextColumn("Winner name", width="medium"),
                     "Winner": st.column_config.LinkColumn(
-                        "Winner",
+                        "Winner ID",
                         display_text=r"seller=(.+)",
                         help="Клік → відкриє профіль продавця на Amazon",
                         width="medium",
@@ -11005,24 +11061,62 @@ def show_buybox_monitor():
         if competitors.empty:
             st.info("Немає даних про конкурентів")
         else:
-            c1, c2 = st.columns([2, 3])
-            with c1:
-                for _, row in competitors.head(10).iterrows():
-                    fba_share = (row["fba_count"] / row["asins_holding"] * 100) if row["asins_holding"] else 0
+            # Класифікація: external vs reseller (наших тут вже немає — фільтр у _bb_competitors)
+            competitors = competitors.copy()
+            competitors["category"] = competitors["seller"].apply(
+                lambda s: "reseller" if s in RESELLER_SELLER_IDS else "external"
+            )
+            competitors["seller_name"] = competitors["seller"].apply(
+                lambda s: BB_SELLER_NAMES.get(s, s)
+            )
+            competitors["fba_share_pct"] = (
+                competitors["fba_count"] / competitors["asins_holding"] * 100
+            ).round(0)
+
+            def _render_section(df_sec, title, empty_text):
+                st.markdown(f"### {title}")
+                if df_sec.empty:
+                    st.caption(empty_text); return
+                for _, row in df_sec.iterrows():
+                    is_fba_full = row["fba_share_pct"] >= 100
+                    fba_marker = "📦 FBA" if is_fba_full else f"FBA {int(row['fba_share_pct'])}%"
                     st.markdown(
-                        f"**[`{row['seller']}`]({_bb_seller_link(row['seller'])})** — "
-                        f"**{row['asins_holding']}** ASIN • avg `${row['avg_price']}` • "
-                        f"FBA: {fba_share:.0f}%"
+                        f"- **{row['seller_name']}** "
+                        f"([`{row['seller']}`]({_bb_seller_link(row['seller'])})) — "
+                        f"**{row['asins_holding']}** ASIN · avg `${row['avg_price']}` · {fba_marker}"
                     )
-            with c2:
-                fig = px.bar(
-                    competitors.head(10),
-                    y="seller", x="asins_holding",
-                    orientation="h", text="asins_holding",
-                    title="ASIN під Buy Box у конкурента",
-                )
-                fig.update_layout(yaxis={"categoryorder": "total ascending"}, height=400)
-                st.plotly_chart(fig, use_container_width=True)
+
+            resellers   = competitors[competitors["category"] == "reseller"]
+            externals   = competitors[competitors["category"] == "external"]
+            external_fba = externals[externals["fba_share_pct"] >= 50]
+            external_oth = externals[externals["fba_share_pct"] <  50]
+
+            _render_section(
+                external_fba,
+                "🔴 Реальні зовнішні конкуренти (FBA — справжня загроза)",
+                "Немає зовнішніх FBA-конкурентів.",
+            )
+            _render_section(
+                external_oth,
+                "⚠️ Зовнішні конкуренти без FBA (низький пріоритет)",
+                "Немає зовнішніх FBM-конкурентів.",
+            )
+            _render_section(
+                resellers,
+                "🟡 Резеллери (наш товар через інші канали — не загроза)",
+                "Немає резеллерів у вибірці.",
+            )
+
+            st.divider()
+            fig = px.bar(
+                competitors.head(15),
+                y="seller_name", x="asins_holding",
+                orientation="h", text="asins_holding", color="category",
+                color_discrete_map={"external": "#ef4444", "reseller": "#eab308"},
+                title="ASIN під Buy Box (топ-15)",
+            )
+            fig.update_layout(yaxis={"categoryorder": "total ascending"}, height=420)
+            st.plotly_chart(fig, use_container_width=True)
 
     # ── TAB 4: HISTORY ──
     with tab4:
@@ -14440,7 +14534,6 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
-
 
 
 
