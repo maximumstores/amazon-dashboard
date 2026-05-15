@@ -10194,16 +10194,27 @@ def _bb_latest_snapshot():
 @st.cache_data(ttl=300)
 def _bb_current_state():
     return _bb_query("""
-        SELECT DISTINCT ON (asin)
-            asin, snapshot_time,
-            has_buybox, buybox_seller_id, buybox_price, buybox_landed, buybox_is_fba,
-            own_seller_id, own_is_buybox, own_price, own_landed, own_is_fba,
-            total_offer_count, fba_offer_count, fbm_offer_count,
-            all_offers_json,
-            -- Чесна перевірка "BB у нас": seller_id matches наших, а не зламаний own_is_buybox
-            (has_buybox AND buybox_seller_id = ANY(%s)) AS is_ours
-        FROM public.pricing_buybox_winners
-        ORDER BY asin, snapshot_time DESC
+        WITH latest AS (
+            SELECT DISTINCT ON (asin)
+                asin, snapshot_time,
+                has_buybox, buybox_seller_id, buybox_price, buybox_landed, buybox_is_fba,
+                own_seller_id, own_is_buybox, own_price, own_landed, own_is_fba,
+                total_offer_count, fba_offer_count, fbm_offer_count,
+                all_offers_json,
+                -- Чесна перевірка "BB у нас": seller_id matches наших, а не зламаний own_is_buybox
+                (has_buybox AND buybox_seller_id = ANY(%s)) AS is_ours
+            FROM public.pricing_buybox_winners
+            ORDER BY asin, snapshot_time DESC
+        ),
+        cat AS (
+            SELECT DISTINCT ON (asin)
+                asin, item_name, brand, main_image_url
+            FROM public.catalog_items
+            ORDER BY asin, created_at DESC NULLS LAST
+        )
+        SELECT l.*, c.item_name, c.brand, c.main_image_url
+        FROM latest l
+        LEFT JOIN cat c USING (asin)
     """, (MERINO_SELLER_IDS,))
 
 
@@ -10321,9 +10332,19 @@ def _bb_recent_events():
                      AND NOT EXISTS (SELECT 1 FROM our WHERE sid = c.buybox_seller_id)
                      THEN 'WINNER_CHANGED'
                 ELSE 'NO_CHANGE'
-            END AS event
+            END AS event,
+            ci.item_name,
+            ci.brand,
+            ci.main_image_url
         FROM curr c
         INNER JOIN prev p USING (asin)
+        LEFT JOIN LATERAL (
+            SELECT item_name, brand, main_image_url
+            FROM public.catalog_items
+            WHERE asin = c.asin
+            ORDER BY created_at DESC NULLS LAST
+            LIMIT 1
+        ) ci ON TRUE
     """, (MERINO_SELLER_IDS,))
 
 
@@ -10540,33 +10561,34 @@ def show_buybox_monitor():
             </div>
             """, unsafe_allow_html=True)
     with big2:
-        lost_color = "#ef4444" if we_lost > 0 else "#888"
-        lost_bg = "#2b0d0d" if we_lost > 0 else "#1a1a2e"
-        lost_label = "#fca5a5" if we_lost > 0 else "#aaa"
+        not_ours = total - we_hold  # БЕЗ НАШОГО BB (конкурент + suppressed)
+        lost_color = "#ef4444" if not_ours > 0 else "#888"
+        lost_bg = "#2b0d0d" if not_ours > 0 else "#1a1a2e"
+        lost_label = "#fca5a5" if not_ours > 0 else "#aaa"
         st.markdown(
             f"""
             <div style="background:{lost_bg};border:2px solid {lost_color};padding:30px;
                         border-radius:12px;text-align:center">
                 <div style="font-size:16px;color:{lost_label};font-weight:600;letter-spacing:1px">
-                    🔴 УПУСКАЄМО КЛІЄНТА
+                    🔴 БЕЗ НАШОГО BB
                 </div>
                 <div style="font-size:72px;font-weight:800;color:{lost_color};line-height:1;margin:16px 0">
-                    {we_lost:,}
+                    {not_ours:,}
                 </div>
                 <div style="font-size:18px;color:{lost_label}">
-                    ASIN де конкурент забирає покупця
+                    Конкурент: {we_lost} · Suppressed: {suppressed}
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Всього ASIN", f"{total:,}")
-    m2.metric("✅ Тримаємо BB", f"{we_hold:,}", f"{bb_pct:.1f}% від наших")
-    m3.metric("🔴 Втратили BB", f"{we_lost:,}", delta_color="inverse")
-    m4.metric("⚫ Suppressed", f"{suppressed:,}", f"{suppressed/total*100:.0f}%" if total else "—")
-    m5.metric("👥 Конкуруємо", f"{total - int((df_bb['total_offer_count']==1).sum()):,}")
+    m1, m2 = st.columns(2)
+    m1.metric("✅ З нашим BB", f"{we_hold:,}",
+              f"{(we_hold/total*100):.1f}% від {total:,} ASIN" if total else "—")
+    m2.metric("🔴 Без нашого BB", f"{not_ours:,}",
+              f"конкурент: {we_lost} · suppressed: {suppressed}",
+              delta_color="off")
 
     # TABS
     tab1, tab_just_lost, tab_recovered, tab_held, tab2, tab3, tab4, tab5 = st.tabs([
@@ -10609,11 +10631,14 @@ def show_buybox_monitor():
             )
 
             lost_view = lost[[
+                "main_image_url", "item_name",
                 "_asin_url", "_our_brand", "_winner_url",
                 "buybox_landed", "own_landed",
                 "price_gap_$", "price_gap_pct", "total_offer_count",
                 "buybox_is_fba", "own_is_fba",
             ]].rename(columns={
+                "main_image_url":    "Фото",
+                "item_name":         "Назва",
                 "_asin_url":         "ASIN",
                 "_our_brand":        "Наш бренд",
                 "_winner_url":       "Winner",
@@ -10655,6 +10680,8 @@ def show_buybox_monitor():
                 use_container_width=True,
                 height=500,
                 column_config={
+                    "Фото": st.column_config.ImageColumn("Фото", width="small"),
+                    "Назва": st.column_config.TextColumn("Назва", width="large"),
                     "ASIN": st.column_config.LinkColumn(
                         "ASIN",
                         display_text=r"https://www\.amazon\.com/dp/(.+)",
@@ -10713,11 +10740,14 @@ def show_buybox_monitor():
                 ).round(2)
 
                 view = lost_events[[
+                    "main_image_url", "item_name",
                     "_asin_url", "_winner_url",
                     "prev_bb_price", "now_bb_price",
                     "now_our_price", "price_delta",
                     "now_offers", "now_ts",
                 ]].rename(columns={
+                    "main_image_url": "Фото",
+                    "item_name":      "Назва",
                     "_asin_url":      "ASIN",
                     "_winner_url":    "Тепер у Winner",
                     "prev_bb_price":  "Було $",
@@ -10741,6 +10771,8 @@ def show_buybox_monitor():
                     use_container_width=True,
                     height=500,
                     column_config={
+                        "Фото": st.column_config.ImageColumn("Фото", width="small"),
+                        "Назва": st.column_config.TextColumn("Назва", width="large"),
                         "ASIN": st.column_config.LinkColumn(
                             "ASIN",
                             display_text=r"https://www\.amazon\.com/dp/(.+)",
@@ -10787,6 +10819,8 @@ def show_buybox_monitor():
             st.info("ℹ️ З минулого snapshot жоден BB не повернувся з suppressed.")
         else:
             rec_view = pd.DataFrame({
+                "Фото": rec_evt["main_image_url"].fillna("").values if "main_image_url" in rec_evt.columns else [""] * len(rec_evt),
+                "Назва": rec_evt["item_name"].fillna("").values if "item_name" in rec_evt.columns else [""] * len(rec_evt),
                 "ASIN": rec_evt["asin"].values,
                 "Amazon": [_bb_amazon_link(a) for a in rec_evt["asin"]],
                 "Наша ціна": pd.to_numeric(rec_evt["now_our_price"], errors="coerce").fillna(0).values,
@@ -10798,6 +10832,8 @@ def show_buybox_monitor():
                 hide_index=True,
                 height=min(600, 38 * (len(rec_view) + 1)),
                 column_config={
+                    "Фото": st.column_config.ImageColumn("Фото", width="small"),
+                    "Назва": st.column_config.TextColumn("Назва", width="large"),
                     "ASIN": st.column_config.TextColumn("ASIN", width="small"),
                     "Amazon": st.column_config.LinkColumn("Посилання", display_text="🔗 Відкрити", width="small"),
                     "Наша ціна": st.column_config.NumberColumn("Наша ціна", format="$%.2f", width="small"),
@@ -10829,9 +10865,12 @@ def show_buybox_monitor():
             held["_asin_url"] = held["asin"].apply(_bb_amazon_link)
 
             held_view = held[[
+                "main_image_url", "item_name",
                 "_asin_url", "winner_name", "buybox_landed", "total_offer_count",
                 "fba_offer_count", "fbm_offer_count", "buybox_is_fba",
             ]].rename(columns={
+                "main_image_url":    "Фото",
+                "item_name":         "Назва",
                 "_asin_url":         "ASIN",
                 "winner_name":       "Наш бренд",
                 "buybox_landed":     "Our BB $",
@@ -10881,6 +10920,8 @@ def show_buybox_monitor():
                 use_container_width=True,
                 height=500,
                 column_config={
+                    "Фото": st.column_config.ImageColumn("Фото", width="small"),
+                    "Назва": st.column_config.TextColumn("Назва", width="large"),
                     "ASIN": st.column_config.LinkColumn(
                         "ASIN",
                         display_text=r"https://www\.amazon\.com/dp/(.+)",
@@ -10923,15 +10964,20 @@ def show_buybox_monitor():
 
         if not sup_with_own.empty:
             st.markdown("**ASIN з нашими офферами але без Buy Box:**")
+            sup_with_own = sup_with_own.copy()
+            sup_with_own["_asin_url"] = sup_with_own["asin"].apply(_bb_amazon_link)
             sup_view = sup_with_own[[
-                "asin", "own_landed", "total_offer_count",
+                "main_image_url", "item_name",
+                "_asin_url", "own_landed", "total_offer_count",
                 "fba_offer_count", "fbm_offer_count",
             ]].rename(columns={
-                "asin": "ASIN",
-                "own_landed": "Our $",
+                "main_image_url":    "Фото",
+                "item_name":         "Назва",
+                "_asin_url":         "ASIN",
+                "own_landed":        "Our $",
                 "total_offer_count": "Offers",
-                "fba_offer_count": "FBA",
-                "fbm_offer_count": "FBM",
+                "fba_offer_count":   "FBA",
+                "fbm_offer_count":   "FBM",
             }).sort_values("Our $", ascending=False)
 
             st.dataframe(
@@ -10939,6 +10985,14 @@ def show_buybox_monitor():
                 use_container_width=True,
                 height=400,
                 column_config={
+                    "Фото": st.column_config.ImageColumn("Фото", width="small"),
+                    "Назва": st.column_config.TextColumn("Назва", width="large"),
+                    "ASIN": st.column_config.LinkColumn(
+                        "ASIN",
+                        display_text=r"https://www\.amazon\.com/dp/(.+)",
+                        help="Клік → відкриє сторінку товару на Amazon",
+                        width="small",
+                    ),
                     "Our $": st.column_config.NumberColumn(format="$%.2f"),
                 },
             )
@@ -11033,7 +11087,19 @@ def show_buybox_monitor():
             else:
                 r = row.iloc[0]
 
-                st.markdown(f"### [{search_asin}]({_bb_amazon_link(search_asin)})")
+                _img = r.get("main_image_url") or ""
+                _name = r.get("item_name") or ""
+                _brand = r.get("brand") or ""
+                head_l, head_r = st.columns([1, 5])
+                with head_l:
+                    if _img:
+                        st.image(_img, width=120)
+                with head_r:
+                    st.markdown(f"### [{search_asin}]({_bb_amazon_link(search_asin)})")
+                    if _name:
+                        st.markdown(f"**{_name}**")
+                    if _brand:
+                        st.caption(f"Бренд: {_brand}")
 
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Buy Box",
@@ -14374,6 +14440,7 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
 
 
 
