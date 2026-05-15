@@ -10443,13 +10443,24 @@ def show_buybox_monitor():
             # ── RECOVERED events ──
             if not rec_evt.empty:
                 st.markdown(f"#### 🔁 BB повернувся (RECOVERED) ({len(rec_evt)}):")
-                for _, e in rec_evt.iterrows():
-                    asin = e["asin"]
-                    n_ours = float(e["now_our_price"] or 0)
-                    st.info(
-                        f"**[`{asin}`]({_bb_amazon_link(asin)})** · "
-                        f"BB був suppressed → з'явився і він наш по `${n_ours:.2f}`"
-                    )
+                rec_view = pd.DataFrame({
+                    "ASIN": rec_evt["asin"].values,
+                    "Amazon": [_bb_amazon_link(a) for a in rec_evt["asin"]],
+                    "Наша ціна": pd.to_numeric(rec_evt["now_our_price"], errors="coerce").fillna(0).values,
+                    "Статус": ["BB був suppressed → з'явився і він наш"] * len(rec_evt),
+                })
+                st.dataframe(
+                    rec_view,
+                    width="stretch",
+                    hide_index=True,
+                    height=min(400, 38 * (len(rec_view) + 1)),
+                    column_config={
+                        "ASIN": st.column_config.TextColumn("ASIN", width="small"),
+                        "Amazon": st.column_config.LinkColumn("Посилання", display_text="🔗 Відкрити", width="small"),
+                        "Наша ціна": st.column_config.NumberColumn("Наша ціна", format="$%.2f", width="small"),
+                        "Статус": st.column_config.TextColumn("Статус", width="large"),
+                    },
+                )
 
             # ── SUPPRESSED events ──
             if not sup_evt.empty:
