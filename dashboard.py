@@ -10379,9 +10379,28 @@ def show_buybox_monitor():
     """🎯 Buy Box Monitor — детальний моніторинг через pricing_buybox_winners."""
     import json as _bb_json
 
+    # ── Deep-link через ?asin=B0XXXXXXXX ──
+    # Підставляємо ASIN у поле фільтра вкладки '🔍 Деталі ASIN'.
+    # Streamlit не дозволяє програмно перемкнути вкладку, тому показуємо banner.
+    qp = st.query_params
+    url_asin = qp.get("asin", "")
+    if isinstance(url_asin, list):
+        url_asin = url_asin[0] if url_asin else ""
+    url_asin = (url_asin or "").upper().strip()
+    if url_asin and st.session_state.get("_bb_url_asin_loaded") != url_asin:
+        st.session_state["gf_asin"]         = url_asin
+        st.session_state["bb_search_asin"]  = url_asin
+        st.session_state["_bb_url_asin_loaded"] = url_asin
+
     st.markdown("## 🎯 Buy Box Monitor")
     seller_str = " • ".join([f"{BB_SELLER_NAMES.get(s, s)} (`{s}`)" for s in MERINO_SELLER_IDS])
     st.caption(f"merino.tech • Our sellers: {seller_str} • Marketplace: US")
+
+    if url_asin:
+        st.success(
+            f"🔗 Завантажено з URL: ASIN **`{url_asin}`** — відкрий вкладку "
+            f"**🔍 Деталі ASIN** нижче ↓ (поле вже заповнено)"
+        )
 
     last_ts = _bb_latest_snapshot()
     if last_ts is None:
