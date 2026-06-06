@@ -37,6 +37,14 @@ except Exception as _e:
     CF_ERR = f"{type(_e).__name__}: {_e}"
 
 try:
+    from keepa_problem_listings import show_keepa_problems
+    KEEPA_OK = True
+    KEEPA_ERR = None
+except Exception as _e:
+    KEEPA_OK = False
+    KEEPA_ERR = f"{type(_e).__name__}: {_e}"
+
+try:
     from review_requests_tab import show_review_requests_tab
     RR_OK = True
     RR_ERR = None
@@ -14434,6 +14442,7 @@ NAV_I18N = {
     "📋 Податки (Tax)":                {"UA": "📋 Податки",            "EN": "📋 Tax",              "RU": "📋 Налоги"},
     "⭐ Amazon Reviews":               {"UA": "⭐ Відгуки",             "EN": "⭐ Reviews",          "RU": "⭐ Отзывы"},
     "📣 Customer Feedback":            {"UA": "📣 Customer Feedback",  "EN": "📣 Customer Feedback","RU": "📣 Customer Feedback"},
+    "🔍 Keepa Listings":               {"UA": "🔍 Keepa листинги",     "EN": "🔍 Keepa Listings",   "RU": "🔍 Keepa листинги"},
     "📊 Brand Analytics":              {"UA": "📊 Brand Analytics",    "EN": "📊 Brand Analytics",  "RU": "📊 Brand Analytics"},
     "── AI Агенти ──":                 {"UA": "── AI Агенти ──",       "EN": "── AI Agents ──",     "RU": "── AI Агенты ──"},
     "🧠 AI Дашборд":                   {"UA": "🧠 AI Дашборд",          "EN": "🧠 AI Dashboard",     "RU": "🧠 AI Дашборд"},
@@ -14457,6 +14466,7 @@ main_nav = [
     "📦 Склад (Inventory)",
     "🔙 Повернення (Returns)",
     "📝 Листинги (Listings)",
+    "🔍 Keepa Listings",
     "🎯 Custom Quality",
     "📨 Review Requests",
     "💲 Pricing / BuyBox",
@@ -14545,6 +14555,9 @@ elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📣 Customer Feedback":
     if CF_OK: show_customer_feedback()
     else:     st.error(f"❌ customer_feedback_page недоступний: {CF_ERR}")
+elif report_choice == "🔍 Keepa Listings":
+    if KEEPA_OK: show_keepa_problems()
+    else:        st.error(f"❌ keepa_problem_listings недоступний: {KEEPA_ERR}")
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 elif report_choice in ("⚙️ Кабінет", "👑 User Management"): show_admin_panel()
@@ -14553,6 +14566,17 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
+
+
 
 
 
