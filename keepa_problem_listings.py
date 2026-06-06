@@ -129,7 +129,10 @@ def get_all_asins(api_key, domain=1):
             data = resp.json()
             s = (data.get("sellers") or {}).get(sid, {})
             page_asins = s.get("asinList") or []
-            total = s.get("totalStorefrontAsins")
+            try:
+                total = int(s.get("totalStorefrontAsins"))
+            except (TypeError, ValueError):
+                total = None
             all_asins.update(page_asins)
             _sleep_for_tokens(data, 100)
             if len(page_asins) < 100 or (total and len(all_asins) >= total):
@@ -229,4 +232,3 @@ def show_keepa_problems():
     st.download_button("⬇️ CSV", df.to_csv(index=False).encode("utf-8"),
                        "keepa_problems.csv", "text/csv",
                        key="keepa_csv")
- 
