@@ -111,12 +111,11 @@ def _sleep_for_tokens(data, need):
         time.sleep(min(refill / 1000 + 1, 120))
 
 
-# ---------- сбор данных (кэш через st.cache_data) ----------
-@st.cache_data(ttl=24 * 3600, show_spinner=False)
-def get_all_asins(api_key, domain=1):
-    """Тянет полный asinList всех 9 продавцов с пагинацией storefront."""
+# ---------- сбор данных (генераторы, чтобы стримить прогресс) ----------
+def iter_seller_asins(api_key, domain=1):
+    """Идёт по 9 продавцам; yield (имя_магазина, накопленный_set) после каждой страницы."""
     all_asins = set()
-    for sid in SELLERS.values():
+    for name, sid in SELLERS.items():
         page = 0
         while True:
             params = {"key": api_key, "domain": domain, "seller": sid,
@@ -134,18 +133,17 @@ def get_all_asins(api_key, domain=1):
             except (TypeError, ValueError):
                 total = None
             all_asins.update(page_asins)
+            yield name, all_asins
             _sleep_for_tokens(data, 100)
             if len(page_asins) < 100 or (total and len(all_asins) >= total):
                 break
             page += 1
-    return sorted(all_asins)
 
 
-@st.cache_data(ttl=3 * 3600, show_spinner=False)
-def fetch_products(api_key, asins, domain=1):
-    """Грузит товары пачками по 100 ASIN."""
-    out = []
-    for i in range(0, len(asins), 100):
+def iter_products(api_key, asins, domain=1):
+    """Грузит товары пачками по 100; yield (номер_пачки, всего_пачек, список_товаров_пачки)."""
+    total_chunks = (len(asins) + 99) // 100
+    for idx, i in enumerate(range(0, len(asins), 100), start=1):
         chunk = asins[i:i + 100]
         params = {"key": api_key, "domain": domain,
                   "asin": ",".join(chunk), "stats": 1}
@@ -156,10 +154,9 @@ def fetch_products(api_key, asins, domain=1):
                 continue
             resp.raise_for_status()
             data = resp.json()
-            out.extend(data.get("products", []))
+            yield idx, total_chunks, data.get("products", [])
             _sleep_for_tokens(data, 100)
             break
-    return out
 
 
 # ---------- UI ----------
@@ -185,50 +182,98 @@ def show_keepa_problems():
     crit = c3.number_input("🔴 critical, дней", 1, 365, CRITICAL_AGE_DAYS,
                            key="keepa_crit")
 
-    if st.button("🔄 Обновить (сброс кэша)", key="keepa_refresh"):
-        get_all_asins.clear()
-        fetch_products.clear()
+    run = st.button("▶️ Запустить проверку", key="keepa_run", type="primary")
 
-    with st.spinner("Собираю ASIN по 9 магазинам..."):
-        asins = get_all_asins(api_key, domain)
-    st.caption(f"Уникальных ASIN: {len(asins)}")
+    # показать прошлый результат, если есть и не запускаем заново
+    if not run and "keepa_last_df" in st.session_state:
+        st.caption("Последний результат (нажми «Запустить проверку» для обновления):")
+        _render_result(st.session_state["keepa_last_df"], domain)
+        return
+    if not run:
+        st.info("Нажми «Запустить проверку» — результаты будут появляться по ходу.")
+        return
+
+    # ---- этап 1: сбор ASIN, прогресс по магазинам ----
+    asin_status = st.empty()
+    asins_set = set()
+    for name, acc in iter_seller_asins(api_key, domain):
+        asins_set = acc
+        asin_status.write(f"📥 Собираю ASIN… последний магазин: **{name}** · "
+                          f"всего уникальных: **{len(asins_set)}**")
+    asins = sorted(asins_set)
+    asin_status.write(f"✅ Собрано уникальных ASIN: **{len(asins)}**")
     if not asins:
         st.warning("Список ASIN пуст — Keepa ничего не вернул.")
         return
 
-    with st.spinner(f"Тяну {len(asins)} товаров из Keepa..."):
-        products = fetch_products(api_key, asins, domain)
+    # ---- этап 2: проверка пачками, результат растёт по ходу ----
+    prog = st.progress(0.0, text="Проверяю товары…")
+    metrics_box = st.empty()
+    table_box = st.empty()
 
-    problems = [r for p in products if (r := classify(p, warn, crit))]
+    problems = []
+    for idx, total_chunks, prod_chunk in iter_products(api_key, asins, domain):
+        for p in prod_chunk:
+            r = classify(p, warn, crit)
+            if r:
+                problems.append(r)
+        prog.progress(idx / total_chunks,
+                      text=f"Проверяю товары… пачка {idx}/{total_chunks} · "
+                           f"найдено проблемных: {len(problems)}")
+        if problems:
+            df = pd.DataFrame(problems).sort_values(
+                ["level", "age_days"], ascending=[True, False])
+            crit_n = int(df["level"].str.contains("critical").sum())
+            with metrics_box.container():
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Всего проблемных", len(df))
+                m2.metric("🔴 Critical", crit_n)
+                m3.metric("🟡 Warn", len(df) - crit_n)
+            df["link"] = ("https://keepa.com/#!product/"
+                          + str(domain) + "-" + df["asin"])
+            table_box.dataframe(
+                df[["level", "seller", "asin", "age_days", "reasons", "title", "link"]],
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "link": st.column_config.LinkColumn("Keepa", display_text="открыть"),
+                    "age_days": st.column_config.NumberColumn("возраст, д"),
+                },
+            )
+
+    prog.progress(1.0, text="Готово ✅")
     if not problems:
         st.success("Проблемных листингов не найдено ✅")
+        st.session_state.pop("keepa_last_df", None)
         return
 
     df = pd.DataFrame(problems).sort_values(
-        ["level", "age_days"], ascending=[True, False])
+        ["level", "age_days"], ascending=[True, False]).reset_index(drop=True)
+    st.session_state["keepa_last_df"] = df
+    st.download_button("⬇️ CSV", df.to_csv(index=False).encode("utf-8"),
+                       "keepa_problems.csv", "text/csv", key="keepa_csv")
 
+
+def _render_result(df, domain):
+    """Отрисовка сохранённого результата (метрики + фильтр + таблица + CSV)."""
     crit_n = int(df["level"].str.contains("critical").sum())
-    warn_n = len(df) - crit_n
     m1, m2, m3 = st.columns(3)
     m1.metric("Всего проблемных", len(df))
     m2.metric("🔴 Critical", crit_n)
-    m3.metric("🟡 Warn", warn_n)
+    m3.metric("🟡 Warn", len(df) - crit_n)
 
     flt = st.multiselect("Магазин", sorted(df["seller"].unique()),
                          key="keepa_seller_filter")
-    if flt:
-        df = df[df["seller"].isin(flt)]
+    view = df[df["seller"].isin(flt)] if flt else df
 
-    df["link"] = "https://keepa.com/#!product/" + str(domain) + "-" + df["asin"]
+    view = view.copy()
+    view["link"] = "https://keepa.com/#!product/" + str(domain) + "-" + view["asin"]
     st.dataframe(
-        df[["level", "seller", "asin", "age_days", "reasons", "title", "link"]],
+        view[["level", "seller", "asin", "age_days", "reasons", "title", "link"]],
         use_container_width=True, hide_index=True,
         column_config={
             "link": st.column_config.LinkColumn("Keepa", display_text="открыть"),
             "age_days": st.column_config.NumberColumn("возраст, д"),
         },
     )
-
-    st.download_button("⬇️ CSV", df.to_csv(index=False).encode("utf-8"),
-                       "keepa_problems.csv", "text/csv",
-                       key="keepa_csv")
+    st.download_button("⬇️ CSV", view.to_csv(index=False).encode("utf-8"),
+                       "keepa_problems.csv", "text/csv", key="keepa_csv_saved")
