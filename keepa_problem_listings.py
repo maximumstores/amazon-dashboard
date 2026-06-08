@@ -103,36 +103,45 @@ def classify(product, warn, crit):
     }
 
 
-def _sleep_for_tokens(data, need):
+def _sleep_for_tokens(data, need, log=None):
     """Если токенов мало — ждём пополнения (refillIn в мс)."""
     import sys
     left = data.get("tokensLeft")
     refill = data.get("refillIn", 0)
     if left is not None and left < need and refill:
         wait = min(refill / 1000 + 1, 120)
-        print(f"[keepa] LOW TOKENS left={left} need={need} — sleep {wait:.0f}s",
-              file=sys.stderr, flush=True)
+        msg = f"   ⏳ мало токенов (осталось {left}, нужно {need}) — жду {wait:.0f} c…"
+        print(msg, file=sys.stderr, flush=True)
+        if log:
+            log(msg)
         time.sleep(wait)
 
 
 # ---------- сбор данных (генераторы, чтобы стримить прогресс) ----------
-def iter_seller_asins(api_key, domain=1):
-    """Идёт по 9 продавцам; yield (имя_магазина, накопленный_set) после каждой страницы."""
+def iter_seller_asins(api_key, domain=1, log=None):
+    """Идёт по 9 продавцам; yield (имя_магазина, накопленный_set) после каждой страницы.
+    log(текст) — callback для вывода прогресса на страницу."""
     import sys
+    def _log(msg):
+        print(msg, file=sys.stderr, flush=True)
+        if log:
+            log(msg)
+
     all_asins = set()
     for name, sid in SELLERS.items():
-        print(f"[keepa] seller START {name} ({sid})", file=sys.stderr, flush=True)
+        _log(f"▶ Магазин START: {name} ({sid})")
         page = 0
         while True:
             params = {"key": api_key, "domain": domain, "seller": sid,
                       "storefront": 1, "page": page}
+            _log(f"   запрос витрины {name}, страница {page}…")
             try:
                 resp = requests.get(KEEPA_SELLER, params=params, timeout=60)
             except Exception as e:
-                print(f"[keepa] seller {name} REQ ERROR: {e}", file=sys.stderr, flush=True)
+                _log(f"   ❌ ошибка запроса {name}: {e}")
                 break
             if resp.status_code == 429:
-                print(f"[keepa] seller {name} 429 — sleep 60", file=sys.stderr, flush=True)
+                _log(f"   ⏳ 429 (лимит) по {name} — жду 60 c…")
                 time.sleep(60)
                 continue
             resp.raise_for_status()
@@ -144,34 +153,46 @@ def iter_seller_asins(api_key, domain=1):
             except (TypeError, ValueError):
                 total = None
             all_asins.update(page_asins)
-            print(f"[keepa] seller {name} page {page}: +{len(page_asins)} "
-                  f"(total_acc={len(all_asins)}, store_total={total}, "
-                  f"tokensLeft={data.get('tokensLeft')})",
-                  file=sys.stderr, flush=True)
+            tl = data.get("tokensLeft")
+            _log(f"   ✓ {name} стр.{page}: +{len(page_asins)} "
+                 f"(всего {len(all_asins)}, в витрине {total}, токенов {tl})")
             yield name, all_asins
-            _sleep_for_tokens(data, 100)
+            _sleep_for_tokens(data, 100, log=_log)
             if len(page_asins) < 100 or (total and len(all_asins) >= total):
                 break
             page += 1
-        print(f"[keepa] seller DONE {name}", file=sys.stderr, flush=True)
+        _log(f"✔ Магазин DONE: {name}")
 
 
-def iter_products(api_key, asins, domain=1):
+def iter_products(api_key, asins, domain=1, log=None):
     """Грузит товары пачками по 100; yield (номер_пачки, всего_пачек, список_товаров_пачки)."""
+    import sys
+    def _log(msg):
+        print(msg, file=sys.stderr, flush=True)
+        if log:
+            log(msg)
+
     total_chunks = (len(asins) + 99) // 100
     for idx, i in enumerate(range(0, len(asins), 100), start=1):
         chunk = asins[i:i + 100]
         params = {"key": api_key, "domain": domain,
                   "asin": ",".join(chunk), "stats": 1}
+        _log(f"   🔎 проверяю пачку {idx}/{total_chunks} ({len(chunk)} ASIN)…")
         while True:
-            resp = requests.get(KEEPA_PRODUCT, params=params, timeout=60)
+            try:
+                resp = requests.get(KEEPA_PRODUCT, params=params, timeout=60)
+            except Exception as e:
+                _log(f"   ❌ ошибка product-запроса: {e}")
+                yield idx, total_chunks, []
+                break
             if resp.status_code == 429:
+                _log("   ⏳ 429 (лимит) на product — жду 60 c…")
                 time.sleep(60)
                 continue
             resp.raise_for_status()
             data = resp.json()
             yield idx, total_chunks, data.get("products", [])
-            _sleep_for_tokens(data, 100)
+            _sleep_for_tokens(data, 100, log=_log)
             break
 
 
@@ -214,6 +235,16 @@ def show_keepa_problems():
     metrics_box = st.empty()
     table_box = st.empty()
 
+    # живой лог прямо на странице
+    log_lines = []
+    log_expander = st.expander("🪵 Лог выполнения (что происходит сейчас)", expanded=True)
+    log_box = log_expander.empty()
+
+    def log(msg):
+        log_lines.append(msg)
+        # показываем последние 200 строк, новые снизу
+        log_box.code("\n".join(log_lines[-200:]), language=None)
+
     seen = set()        # все ASIN, что уже видели в витринах
     checked = set()     # ASIN, что уже отправляли в /product
     problems = []
@@ -222,7 +253,7 @@ def show_keepa_problems():
         """Проверить пачку ASIN через Keepa и дописать проблемные в таблицу."""
         if not buf:
             return
-        for _, _, prod_chunk in iter_products(api_key, buf, domain):
+        for _, _, prod_chunk in iter_products(api_key, buf, domain, log=log):
             for p in prod_chunk:
                 r = classify(p, warn, crit)
                 if r:
@@ -253,8 +284,9 @@ def show_keepa_problems():
             },
         )
 
+    log("🚀 Старт. Собираю ASIN по 9 магазинам…")
     status.write("📥 Собираю ASIN по магазинам…")
-    for name, acc in iter_seller_asins(api_key, domain):
+    for name, acc in iter_seller_asins(api_key, domain, log=log):
         # появились новые ASIN — копим в очередь
         new = acc - seen
         seen |= acc
@@ -272,6 +304,7 @@ def show_keepa_problems():
     # добиваем хвост (всё, что осталось непроверенным)
     tail = sorted(seen - checked)
     if tail:
+        log(f"🏁 Добиваю остаток: {len(tail)} ASIN")
         checked.update(tail)
         _flush(tail)
 
@@ -279,6 +312,7 @@ def show_keepa_problems():
         st.warning("Список ASIN пуст — Keepa ничего не вернул.")
         return
 
+    log(f"✅ ГОТОВО. ASIN всего: {len(seen)}, проблемных: {len(problems)}")
     status.write(f"✅ Готово · ASIN: **{len(seen)}** · проблемных: **{len(problems)}**")
     if not problems:
         st.success("Проблемных листингов не найдено ✅")
@@ -315,4 +349,4 @@ def _render_result(df, domain):
         },
     )
     st.download_button("⬇️ CSV", view.to_csv(index=False).encode("utf-8"),
-                       "keepa_problems.csv", "text/csv", key="keepa_csv_saved") 
+                       "keepa_problems.csv", "text/csv", key="keepa_csv_saved")
