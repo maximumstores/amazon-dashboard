@@ -193,54 +193,77 @@ def show_keepa_problems():
         st.info("Нажми «Запустить проверку» — результаты будут появляться по ходу.")
         return
 
-    # ---- этап 1: сбор ASIN, прогресс по магазинам ----
-    asin_status = st.empty()
-    asins_set = set()
-    for name, acc in iter_seller_asins(api_key, domain):
-        asins_set = acc
-        asin_status.write(f"📥 Собираю ASIN… последний магазин: **{name}** · "
-                          f"всего уникальных: **{len(asins_set)}**")
-    asins = sorted(asins_set)
-    asin_status.write(f"✅ Собрано уникальных ASIN: **{len(asins)}**")
-    if not asins:
-        st.warning("Список ASIN пуст — Keepa ничего не вернул.")
-        return
-
-    # ---- этап 2: проверка пачками, результат растёт по ходу ----
-    prog = st.progress(0.0, text="Проверяю товары…")
+    # ---- конвейер: собираем ASIN и сразу проверяем пачками ----
+    status = st.empty()
     metrics_box = st.empty()
     table_box = st.empty()
 
+    seen = set()        # все ASIN, что уже видели в витринах
+    checked = set()     # ASIN, что уже отправляли в /product
     problems = []
-    for idx, total_chunks, prod_chunk in iter_products(api_key, asins, domain):
-        for p in prod_chunk:
-            r = classify(p, warn, crit)
-            if r:
-                problems.append(r)
-        prog.progress(idx / total_chunks,
-                      text=f"Проверяю товары… пачка {idx}/{total_chunks} · "
-                           f"найдено проблемных: {len(problems)}")
-        if problems:
-            df = pd.DataFrame(problems).sort_values(
-                ["level", "age_days"], ascending=[True, False])
-            crit_n = int(df["level"].str.contains("critical").sum())
-            with metrics_box.container():
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Всего проблемных", len(df))
-                m2.metric("🔴 Critical", crit_n)
-                m3.metric("🟡 Warn", len(df) - crit_n)
-            df["link"] = ("https://keepa.com/#!product/"
-                          + str(domain) + "-" + df["asin"])
-            table_box.dataframe(
-                df[["level", "seller", "asin", "age_days", "reasons", "title", "link"]],
-                use_container_width=True, hide_index=True,
-                column_config={
-                    "link": st.column_config.LinkColumn("Keepa", display_text="открыть"),
-                    "age_days": st.column_config.NumberColumn("возраст, д"),
-                },
-            )
 
-    prog.progress(1.0, text="Готово ✅")
+    def _flush(buf):
+        """Проверить пачку ASIN через Keepa и дописать проблемные в таблицу."""
+        if not buf:
+            return
+        for _, _, prod_chunk in iter_products(api_key, buf, domain):
+            for p in prod_chunk:
+                r = classify(p, warn, crit)
+                if r:
+                    problems.append(r)
+        _redraw()
+
+    def _redraw():
+        status.write(f"📥 Собрано ASIN: **{len(seen)}** · проверено: "
+                     f"**{len(checked)}** · найдено проблемных: **{len(problems)}**")
+        if not problems:
+            return
+        df = pd.DataFrame(problems).sort_values(
+            ["level", "age_days"], ascending=[True, False])
+        crit_n = int(df["level"].str.contains("critical").sum())
+        with metrics_box.container():
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Всего проблемных", len(df))
+            m2.metric("🔴 Critical", crit_n)
+            m3.metric("🟡 Warn", len(df) - crit_n)
+        df["link"] = ("https://keepa.com/#!product/"
+                      + str(domain) + "-" + df["asin"])
+        table_box.dataframe(
+            df[["level", "seller", "asin", "age_days", "reasons", "title", "link"]],
+            use_container_width=True, hide_index=True,
+            column_config={
+                "link": st.column_config.LinkColumn("Keepa", display_text="открыть"),
+                "age_days": st.column_config.NumberColumn("возраст, д"),
+            },
+        )
+
+    status.write("📥 Собираю ASIN по магазинам…")
+    for name, acc in iter_seller_asins(api_key, domain):
+        # появились новые ASIN — копим в очередь
+        new = acc - seen
+        seen |= acc
+        # как только непроверенных >= 100 — проверяем пачку сразу
+        pending = sorted(seen - checked)
+        while len(pending) >= 100:
+            batch = pending[:100]
+            checked.update(batch)
+            _flush(batch)
+            pending = sorted(seen - checked)
+        status.write(f"📥 Собираю ASIN… магазин: **{name}** · собрано: "
+                     f"**{len(seen)}** · проверено: **{len(checked)}** · "
+                     f"проблемных: **{len(problems)}**")
+
+    # добиваем хвост (всё, что осталось непроверенным)
+    tail = sorted(seen - checked)
+    if tail:
+        checked.update(tail)
+        _flush(tail)
+
+    if not seen:
+        st.warning("Список ASIN пуст — Keepa ничего не вернул.")
+        return
+
+    status.write(f"✅ Готово · ASIN: **{len(seen)}** · проблемных: **{len(problems)}**")
     if not problems:
         st.success("Проблемных листингов не найдено ✅")
         st.session_state.pop("keepa_last_df", None)
