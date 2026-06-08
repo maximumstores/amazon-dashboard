@@ -349,4 +349,4 @@ def _render_result(df, domain):
         },
     )
     st.download_button("⬇️ CSV", view.to_csv(index=False).encode("utf-8"),
-                       "keepa_problems.csv", "text/csv", key="keepa_csv_saved")
+                       "keepa_problems.csv", "text/csv", key="keepa_csv_saved") 
