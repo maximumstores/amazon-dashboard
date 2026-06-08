@@ -491,12 +491,16 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+@st.cache_resource
 def get_engine():
     return create_engine(
         DATABASE_URL,
         connect_args={"options": "-csearch_path=spapi,public", "connect_timeout": 10},
+        pool_size=3,
+        max_overflow=2,
         pool_timeout=10,
         pool_pre_ping=True,
+        pool_recycle=300,
     )
 
 # DATA LOADERS
@@ -14566,6 +14570,17 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
+
+
 
  
 
