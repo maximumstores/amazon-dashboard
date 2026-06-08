@@ -105,23 +105,34 @@ def classify(product, warn, crit):
 
 def _sleep_for_tokens(data, need):
     """Если токенов мало — ждём пополнения (refillIn в мс)."""
+    import sys
     left = data.get("tokensLeft")
     refill = data.get("refillIn", 0)
     if left is not None and left < need and refill:
-        time.sleep(min(refill / 1000 + 1, 120))
+        wait = min(refill / 1000 + 1, 120)
+        print(f"[keepa] LOW TOKENS left={left} need={need} — sleep {wait:.0f}s",
+              file=sys.stderr, flush=True)
+        time.sleep(wait)
 
 
 # ---------- сбор данных (генераторы, чтобы стримить прогресс) ----------
 def iter_seller_asins(api_key, domain=1):
     """Идёт по 9 продавцам; yield (имя_магазина, накопленный_set) после каждой страницы."""
+    import sys
     all_asins = set()
     for name, sid in SELLERS.items():
+        print(f"[keepa] seller START {name} ({sid})", file=sys.stderr, flush=True)
         page = 0
         while True:
             params = {"key": api_key, "domain": domain, "seller": sid,
                       "storefront": 1, "page": page}
-            resp = requests.get(KEEPA_SELLER, params=params, timeout=60)
+            try:
+                resp = requests.get(KEEPA_SELLER, params=params, timeout=60)
+            except Exception as e:
+                print(f"[keepa] seller {name} REQ ERROR: {e}", file=sys.stderr, flush=True)
+                break
             if resp.status_code == 429:
+                print(f"[keepa] seller {name} 429 — sleep 60", file=sys.stderr, flush=True)
                 time.sleep(60)
                 continue
             resp.raise_for_status()
@@ -133,11 +144,16 @@ def iter_seller_asins(api_key, domain=1):
             except (TypeError, ValueError):
                 total = None
             all_asins.update(page_asins)
+            print(f"[keepa] seller {name} page {page}: +{len(page_asins)} "
+                  f"(total_acc={len(all_asins)}, store_total={total}, "
+                  f"tokensLeft={data.get('tokensLeft')})",
+                  file=sys.stderr, flush=True)
             yield name, all_asins
             _sleep_for_tokens(data, 100)
             if len(page_asins) < 100 or (total and len(all_asins) >= total):
                 break
             page += 1
+        print(f"[keepa] seller DONE {name}", file=sys.stderr, flush=True)
 
 
 def iter_products(api_key, asins, domain=1):
