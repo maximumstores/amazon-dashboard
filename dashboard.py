@@ -29,6 +29,14 @@ except Exception as _e:
     TENDER_ERR = f"{type(_e).__name__}: {_e}"
 
 try:
+    from weather_tab import show_weather_tab
+    WEATHER_OK = True
+    WEATHER_ERR = None
+except Exception as _e:
+    WEATHER_OK = False
+    WEATHER_ERR = f"{type(_e).__name__}: {_e}"
+
+try:
     from customer_feedback_page import show_customer_feedback
     CF_OK = True
     CF_ERR = None
@@ -11385,7 +11393,7 @@ def show_fba_operations():
     st.markdown("---")
 
     # ── Таби ──
-    tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance", "🏥 Inventory Health", "📋 Tender"])
+    tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance", "🏥 Inventory Health", "📋 Tender", "🌦 Weather"])
 
     # ── TAB 0: Shipments ──
     with tabs[0]:
@@ -11774,6 +11782,18 @@ def show_fba_operations():
                 "Типові причини:\n"
                 "- `tender_tab.py` не запушений на GitHub (перевір що він поруч з `dashboard.py`)\n"
                 "- `openpyxl` відсутній у `requirements.txt`"
+            )
+
+    # ── TAB 6: Weather (карта по штатах з weather.weather_all) ──
+    with tabs[6]:
+        if WEATHER_OK:
+            show_weather_tab(get_engine())
+        else:
+            st.error(f"❌ weather_tab недоступний: {WEATHER_ERR}")
+            st.info(
+                "Типові причини:\n"
+                "- `weather_tab.py` не запушений на GitHub (перевір що він поруч з `dashboard.py`)\n"
+                "- `plotly` відсутній у `requirements.txt`"
             )
 
 
