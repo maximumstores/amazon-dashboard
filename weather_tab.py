@@ -317,6 +317,8 @@ def show_weather_tab(engine):
         extreme = extreme.sort_values("units", ascending=False)
         extreme["статус"] = (extreme["weather_emoji"].fillna("") + " "
                              + extreme["weather_desc"].fillna(""))
+        extreme["units"] = extreme["units"].fillna(0).astype(int)
+        extreme["orders"] = extreme["orders"].fillna(0).astype(int)
         show = extreme[["state_name", "статус", temp_col,
                         "precipitation_sum_mm", "units", "orders"]].rename(columns={
             "state_name": "Штат", temp_col: f"Макс {unit_label}",
@@ -377,15 +379,25 @@ def show_weather_tab(engine):
             )
             st.plotly_chart(fig_fc, use_container_width=True)
 
-            # подсветим самые холодные штаты на этот день (где есть продажи)
-            cold = fc_day[fc_day["units"] > 0].nsmallest(5, fc_temp_col)
-            if not cold.empty:
-                cold_str = ", ".join(
-                    f"{r['state_name']} ({r[fc_temp_col]:.0f}{unit_label})"
-                    for _, r in cold.iterrows()
+            # таблица: прогноз по штатам с продажами на выбранный день
+            st.markdown(f"**Прогноз на {sel_day.strftime('%a %d %b')} — штаты с продажами**")
+            fc_tbl = fc_day[fc_day["units"] > 0].copy()
+            if fc_tbl.empty:
+                st.info("Нет штатов с продажами на этот день.")
+            else:
+                fc_tbl = fc_tbl.sort_values(fc_temp_col)  # от холодных к тёплым
+                fc_tbl["статус"] = (fc_tbl["weather_emoji"].fillna("") + " "
+                                    + fc_tbl["weather_desc"].fillna(""))
+                fc_tbl["units"] = fc_tbl["units"].fillna(0).astype(int)
+                fc_show = fc_tbl[["state_name", "статус", fc_temp_col,
+                                  "precipitation_sum_mm", "units"]].rename(columns={
+                    "state_name": "Штат", fc_temp_col: f"Макс {unit_label}",
+                    "precipitation_sum_mm": "Осадки мм", "units": "Units 30д"})
+                st.dataframe(fc_show, use_container_width=True, hide_index=True)
+                st.caption(
+                    "Отсортировано от холодных к тёплым. Верх таблицы = где "
+                    "прохладнее всего в этот день при наличии продаж."
                 )
-                st.caption(f"🥶 Самые холодные штаты с продажами на "
-                           f"{sel_day.strftime('%d %b')}: {cold_str}")
 
     st.divider()
     st.caption("Данные обновляются ежедневно (loader #15). Кэш страницы — 30 мин.")
