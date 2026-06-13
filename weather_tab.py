@@ -324,26 +324,68 @@ def show_weather_tab(engine):
             "units": "Units 30д", "orders": "Заказы 30д"})
         st.dataframe(show, use_container_width=True, hide_index=True)
 
-    # ---------- прогноз ----------
-    with st.expander(f"🔮 Прогноз 16 дней — температура ({unit_label}) в топ-штатах"):
-        st.caption(
-            "Что показывает: прогноз макс. температуры на 16 дней вперёд по "
-            "топ-8 штатам твоих продаж. Резкое падение линии = приближается "
-            "похолодание (повод заранее проверить сток тёплых SKU)."
-        )
-        fc = _load_forecast(engine, days=16)
-        if fc.empty:
-            st.info("Прогнозных строк нет (forecast в weather_all пуст).")
+    # ---------- прогноз: КАРТА со слайдером дней ----------
+    st.divider()
+    st.subheader(f"🔮 Прогноз температуры ({unit_label}) — карта по дням")
+    st.caption(
+        "Что показывает: прогноз макс. температуры по всем штатам на выбранный "
+        "день. Двигай слайдер вперёд — видно, где и когда ожидается похолодание "
+        "(синие штаты). Повод заранее проверить сток тёплых SKU в этих регионах."
+    )
+    fc = _load_forecast(engine, days=16)
+    if fc.empty:
+        st.info("Прогнозных строк нет (forecast в weather_all пуст).")
+    else:
+        fc_temp_col = "temperature_2m_max_c" if is_c else "temperature_2m_max_f"
+        fc = fc.copy()
+        fc["date"] = pd.to_datetime(fc["date"])
+        days_avail = sorted(fc["date"].dt.date.unique())
+
+        if len(days_avail) == 0:
+            st.info("Нет дат в прогнозе.")
         else:
-            fc_temp_col = "temperature_2m_max_c" if is_c else "temperature_2m_max_f"
-            top_states = df.sort_values("units", ascending=False).head(8)["state_code"].tolist()
-            fc_top = fc[fc["state_code"].isin(top_states)].copy()
-            if fc_top.empty:
-                st.info("Нет прогноза по топ-штатам продаж.")
-            else:
-                pivot = fc_top.pivot_table(index="date", columns="state_code",
-                                           values=fc_temp_col, aggfunc="first")
-                st.line_chart(pivot)
+            # слайдер выбора дня прогноза
+            sel_day = st.select_slider(
+                "День прогноза",
+                options=days_avail,
+                value=days_avail[0],
+                format_func=lambda d: d.strftime("%a %d %b"),
+                key="weather_fc_day",
+            )
+            fc_day = fc[fc["date"].dt.date == sel_day].copy()
+
+            # объединим с продажами, чтобы в hover были units
+            fc_day = fc_day.merge(
+                df[["state_code", "units"]], on="state_code", how="left"
+            )
+            fc_day["units"] = fc_day["units"].fillna(0)
+
+            fig_fc = px.choropleth(
+                fc_day, locations="state_code", locationmode="USA-states",
+                color=fc_temp_col, scope="usa",
+                color_continuous_scale="RdYlBu_r",
+                hover_name="state_name",
+                hover_data={fc_temp_col: ":.0f", "weather_desc": True,
+                            "units": ":,", "state_code": False},
+                labels={fc_temp_col: f"Макс {unit_label}", "units": "Units 30д"},
+            )
+            fig_fc.update_layout(
+                margin=dict(l=0, r=0, t=0, b=0), height=480,
+                coloraxis_colorbar=dict(title=unit_label),
+                geo=dict(bgcolor="rgba(0,0,0,0)", lakecolor="rgba(0,0,0,0)"),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_fc, use_container_width=True)
+
+            # подсветим самые холодные штаты на этот день (где есть продажи)
+            cold = fc_day[fc_day["units"] > 0].nsmallest(5, fc_temp_col)
+            if not cold.empty:
+                cold_str = ", ".join(
+                    f"{r['state_name']} ({r[fc_temp_col]:.0f}{unit_label})"
+                    for _, r in cold.iterrows()
+                )
+                st.caption(f"🥶 Самые холодные штаты с продажами на "
+                           f"{sel_day.strftime('%d %b')}: {cold_str}")
 
     st.divider()
     st.caption("Данные обновляются ежедневно (loader #15). Кэш страницы — 30 мин.")
