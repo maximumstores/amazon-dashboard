@@ -177,42 +177,49 @@ def show_weather_tab(engine):
     src_kind = df["kind"].mode().iat[0] if not df["kind"].dropna().empty else "?"
     st.caption(f"Погода на сегодня (источник: {src_kind}). Единицы: {unit_label}.")
 
-    # ---------- карты температура + продажи ----------
-    col_l, col_r = st.columns(2)
-    with col_l:
-        st.subheader(f"🌡️ Температура сегодня ({unit_label})")
-        st.caption(
-            "Что показывает: макс. температуру в каждом штате сегодня. "
-            "Синее — холодно, красное — жарко. Наведи на штат для деталей."
-        )
-        fig_t = px.choropleth(
-            df, locations="state_code", locationmode="USA-states",
-            color=temp_col, scope="usa", color_continuous_scale="RdYlBu_r",
-            hover_name="state_name",
-            hover_data={temp_col: ":.0f", "weather_desc": True,
-                        "units": ":,", "state_code": False},
-            labels={temp_col: f"Макс {unit_label}", "units": "Units 30д"},
-        )
-        fig_t.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=380,
-                            coloraxis_colorbar=dict(title=unit_label))
-        st.plotly_chart(fig_t, use_container_width=True)
-    with col_r:
-        st.subheader("📦 Продажи 30д")
-        st.caption(
-            "Что показывает: сколько units продано в штате за 30 дней. "
-            "Темнее зелёный — больше продаж. Крупные штаты (CA/TX/FL) "
-            "ожидаемо лидируют — это абсолютные числа, без поправки на население."
-        )
-        fig_s = px.choropleth(
-            df, locations="state_code", locationmode="USA-states",
-            color="units", scope="usa", color_continuous_scale="Greens",
-            hover_name="state_name",
-            hover_data={"units": ":,", "orders": ":,", "state_code": False},
-            labels={"units": "Units 30д"},
-        )
-        fig_s.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=380,
-                            coloraxis_colorbar=dict(title="Units"))
-        st.plotly_chart(fig_s, use_container_width=True)
+    # ---------- карта температуры (на всю ширину) ----------
+    st.subheader(f"🌡️ Температура сегодня ({unit_label})")
+    st.caption(
+        "Что показывает: макс. температуру в каждом штате сегодня. "
+        "Синее — холодно, красное — жарко. Наведи на штат для деталей."
+    )
+    fig_t = px.choropleth(
+        df, locations="state_code", locationmode="USA-states",
+        color=temp_col, scope="usa", color_continuous_scale="RdYlBu_r",
+        hover_name="state_name",
+        hover_data={temp_col: ":.0f", "weather_desc": True,
+                    "units": ":,", "state_code": False},
+        labels={temp_col: f"Макс {unit_label}", "units": "Units 30д"},
+    )
+    fig_t.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0), height=480,
+        coloraxis_colorbar=dict(title=unit_label),
+        geo=dict(bgcolor="rgba(0,0,0,0)", lakecolor="rgba(0,0,0,0)"),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig_t, use_container_width=True)
+
+    # ---------- карта продаж (на всю ширину) ----------
+    st.subheader("📦 Продажи 30д")
+    st.caption(
+        "Что показывает: сколько units продано в штате за 30 дней. "
+        "Темнее зелёный — больше продаж. Крупные штаты (CA/TX/FL) "
+        "ожидаемо лидируют — это абсолютные числа, без поправки на население."
+    )
+    fig_s = px.choropleth(
+        df, locations="state_code", locationmode="USA-states",
+        color="units", scope="usa", color_continuous_scale="Greens",
+        hover_name="state_name",
+        hover_data={"units": ":,", "orders": ":,", "state_code": False},
+        labels={"units": "Units 30д"},
+    )
+    fig_s.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0), height=480,
+        coloraxis_colorbar=dict(title="Units"),
+        geo=dict(bgcolor="rgba(0,0,0,0)", lakecolor="rgba(0,0,0,0)"),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig_s, use_container_width=True)
 
     # ============================================================
     # PENETRATION INDEX
@@ -253,8 +260,12 @@ def show_weather_tab(engine):
                         "population": ":,", "state_code": False},
             labels={"index": "Penetration"},
         )
-        fig_p.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=420,
-                            coloraxis_colorbar=dict(title="Index"))
+        fig_p.update_layout(
+            margin=dict(l=0, r=0, t=0, b=0), height=520,
+            coloraxis_colorbar=dict(title="Index"),
+            geo=dict(bgcolor="rgba(0,0,0,0)", lakecolor="rgba(0,0,0,0)"),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        )
         st.plotly_chart(fig_p, use_container_width=True)
         st.caption("🔵 синий = сильнее рынка (index>1) · 🔴 красный = недобор (index<1)")
 
