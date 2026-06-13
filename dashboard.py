@@ -11393,7 +11393,7 @@ def show_fba_operations():
     st.markdown("---")
 
     # ── Таби ──
-    tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance", "🏥 Inventory Health", "📋 Tender", "🌦 Weather"])
+    tabs = st.tabs(["🚀 Shipments", "📋 Items", "🗑 Removals", "⚠️ Non-Compliance", "🏥 Inventory Health", "📋 Tender"])
 
     # ── TAB 0: Shipments ──
     with tabs[0]:
@@ -11783,19 +11783,6 @@ def show_fba_operations():
                 "- `tender_tab.py` не запушений на GitHub (перевір що він поруч з `dashboard.py`)\n"
                 "- `openpyxl` відсутній у `requirements.txt`"
             )
-
-    # ── TAB 6: Weather (карта по штатах з weather.weather_all) ──
-    with tabs[6]:
-        if WEATHER_OK:
-            show_weather_tab(get_engine())
-        else:
-            st.error(f"❌ weather_tab недоступний: {WEATHER_ERR}")
-            st.info(
-                "Типові причини:\n"
-                "- `weather_tab.py` не запушений на GitHub (перевір що він поруч з `dashboard.py`)\n"
-                "- `plotly` відсутній у `requirements.txt`"
-            )
-
 
     # ── AI ──
     ctx = f"""FBA Operations: {total_shipments} shipments | Active: {active_ship} | Received: {recv_rate:.1f}% | Removals: {total_removals} ({removal_units} units) | NonCompliance: {nc_count}"""
@@ -14463,6 +14450,7 @@ NAV_I18N = {
     "💲 Pricing / BuyBox":             {"UA": "💲 Ціни / BuyBox",      "EN": "💲 Pricing / BuyBox", "RU": "💲 Цены / BuyBox"},
     "🎯 BuyBox Monitor":               {"UA": "🎯 BuyBox Monitor",      "EN": "🎯 BuyBox Monitor",   "RU": "🎯 BuyBox Монитор"},
     "📦 FBA Operations":               {"UA": "📦 FBA Операції",       "EN": "📦 FBA Operations",   "RU": "📦 FBA Операции"},
+    "🌦 Weather":                      {"UA": "🌦 Погода",             "EN": "🌦 Weather",          "RU": "🌦 Погода"},
     "📋 Податки (Tax)":                {"UA": "📋 Податки",            "EN": "📋 Tax",              "RU": "📋 Налоги"},
     "⭐ Amazon Reviews":               {"UA": "⭐ Відгуки",             "EN": "⭐ Reviews",          "RU": "⭐ Отзывы"},
     "📣 Customer Feedback":            {"UA": "📣 Customer Feedback",  "EN": "📣 Customer Feedback","RU": "📣 Customer Feedback"},
@@ -14496,6 +14484,7 @@ main_nav = [
     "💲 Pricing / BuyBox",
     "🎯 BuyBox Monitor",
     "📦 FBA Operations",
+    "🌦 Weather",
     "📋 Податки (Tax)",
     "⭐ Amazon Reviews",
     "📣 Customer Feedback",
@@ -14570,6 +14559,9 @@ elif report_choice == "📨 Review Requests":
 elif report_choice == "💲 Pricing / BuyBox":         show_pricing()
 elif report_choice == "🎯 BuyBox Monitor":           show_buybox_monitor()
 elif report_choice == "📦 FBA Operations":           show_fba_operations()
+elif report_choice == "🌦 Weather":
+    if WEATHER_OK: show_weather_tab(get_engine())
+    else:          st.error(f"❌ weather_tab недоступний: {WEATHER_ERR}")
 elif report_choice == "📋 Податки (Tax)":            show_tax(t)
 elif report_choice == "🧠 AI Дашборд":               show_ai_dashboard()
 elif report_choice == "📦 Restock Agent":            show_restock_agent(t)
