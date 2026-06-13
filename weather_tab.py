@@ -24,8 +24,7 @@ except ImportError:
 
 
 # ============================================================
-# НАСЕЛЕНИЕ ШТАТОВ — fallback (Census 2023 est., тыс. чел.)
-# Используется если Census API недоступен.
+# НАСЕЛЕНИЕ ШТАТОВ — fallback (Census 2023 est.)
 # ============================================================
 _POP_FALLBACK = {
     "CA": 38965193, "TX": 30503301, "FL": 22610726, "NY": 19571216,
@@ -45,10 +44,10 @@ _POP_FALLBACK = {
 
 
 # ============================================================
-# DATA LOADERS (кэш)
+# DATA LOADERS
 # ============================================================
 
-@st.cache_data(ttl=86400)  # население — раз в сутки за глаза
+@st.cache_data(ttl=86400)
 def _load_population():
     """Население штатов: Census API -> fallback на зашитые данные."""
     key = os.environ.get("CENSUS_API_KEY", "")
@@ -61,7 +60,6 @@ def _load_population():
             )
             if r.status_code == 200:
                 data = r.json()
-                # маппинг NAME -> code через справочник имён
                 name_to_code = {
                     "Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR",
                     "California":"CA","Colorado":"CO","Connecticut":"CT","Delaware":"DE",
@@ -149,7 +147,6 @@ def show_weather_tab(engine):
         "Полезно как контекст и для логистики (задержки доставки при flood/гроза)."
     )
 
-    # --- переключатель единиц температуры ---
     unit = st.radio("Единицы температуры", ["°F", "°C"],
                     horizontal=True, index=1, key="weather_unit")
     is_c = unit == "°C"
@@ -184,6 +181,10 @@ def show_weather_tab(engine):
     col_l, col_r = st.columns(2)
     with col_l:
         st.subheader(f"🌡️ Температура сегодня ({unit_label})")
+        st.caption(
+            "Что показывает: макс. температуру в каждом штате сегодня. "
+            "Синее — холодно, красное — жарко. Наведи на штат для деталей."
+        )
         fig_t = px.choropleth(
             df, locations="state_code", locationmode="USA-states",
             color=temp_col, scope="usa", color_continuous_scale="RdYlBu_r",
@@ -197,6 +198,11 @@ def show_weather_tab(engine):
         st.plotly_chart(fig_t, use_container_width=True)
     with col_r:
         st.subheader("📦 Продажи 30д")
+        st.caption(
+            "Что показывает: сколько units продано в штате за 30 дней. "
+            "Темнее зелёный — больше продаж. Крупные штаты (CA/TX/FL) "
+            "ожидаемо лидируют — это абсолютные числа, без поправки на население."
+        )
         fig_s = px.choropleth(
             df, locations="state_code", locationmode="USA-states",
             color="units", scope="usa", color_continuous_scale="Greens",
@@ -209,10 +215,15 @@ def show_weather_tab(engine):
         st.plotly_chart(fig_s, use_container_width=True)
 
     # ============================================================
-    # PENETRATION INDEX — доля продаж vs доля населения
+    # PENETRATION INDEX
     # ============================================================
     st.divider()
     st.subheader("🎯 Penetration Index — где недопроникновение")
+    st.markdown(
+        "**Зачем это:** карта «Продажи 30д» выше всегда подсвечивает крупные "
+        "штаты — там просто больше людей. Penetration Index убирает этот эффект "
+        "и показывает, где ты продаёшь **сильнее или слабее, чем размер рынка**."
+    )
 
     pop_map, pop_src = _load_population()
     pen = df[["state_code", "state_name", "units", "orders"]].copy()
@@ -224,16 +235,14 @@ def show_weather_tab(engine):
     if total_units > 0 and total_pop > 0:
         pen["sales_share"] = pen["units"] / total_units
         pen["pop_share"] = pen["population"] / total_pop
-        # индекс: >1 = сильнее рынка, <1 = недобор
         pen["index"] = (pen["sales_share"] / pen["pop_share"]).round(2)
 
         st.caption(
-            f"Индекс = (доля продаж штата) / (доля населения). "
-            f">1 — ты сильнее рынка, <1 — недопроникновение (потенциал роста). "
-            f"Население: {pop_src}."
+            f"Как считается: индекс = (доля твоих продаж в штате) / (доля "
+            f"населения штата в США). Например, штат даёт 4% продаж, а это 2% "
+            f"населения → индекс 2.0 (вдвое сильнее рынка). Население: {pop_src}."
         )
 
-        # карта индекса (расходящаяся шкала вокруг 1.0)
         fig_p = px.choropleth(
             pen, locations="state_code", locationmode="USA-states",
             color="index", scope="usa",
@@ -249,10 +258,15 @@ def show_weather_tab(engine):
         st.plotly_chart(fig_p, use_container_width=True)
         st.caption("🔵 синий = сильнее рынка (index>1) · 🔴 красный = недобор (index<1)")
 
-        # две колонки: топ-недобор и топ-перепроникновение
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("**🔴 Топ недопроникновение (потенциал роста)**")
+            st.caption(
+                "Штаты, где продаёшь МЕНЬШЕ, чем позволяет их население "
+                "(индекс < 1). Сюда можно расти — но учти: для merino юг "
+                "(MS, AR, LA) структурно слабее из-за тёплого климата, "
+                "это не всегда «упущенная выгода»."
+            )
             under = pen[pen["units"] > 0].nsmallest(10, "index")[
                 ["state_name", "index", "units", "population"]
             ].rename(columns={"state_name": "Штат", "index": "Индекс",
@@ -260,21 +274,26 @@ def show_weather_tab(engine):
             st.dataframe(under, use_container_width=True, hide_index=True)
         with col2:
             st.markdown("**🔵 Топ перепроникновение (сильнее рынка)**")
+            st.caption(
+                "Штаты, где продаёшь БОЛЬШЕ, чем их доля населения "
+                "(индекс > 1). Твоя сильная база — обычно холодные/аутдор "
+                "штаты (AK, CO, WA, OR), где merino востребован. "
+                "Малые штаты тут могут давать завышенный индекс на малых объёмах."
+            )
             over = pen.nlargest(10, "index")[
                 ["state_name", "index", "units", "population"]
             ].rename(columns={"state_name": "Штат", "index": "Индекс",
                               "units": "Units 30д", "population": "Население"})
             st.dataframe(over, use_container_width=True, hide_index=True)
 
-        st.caption(
-            "💡 Штаты с большим населением и низким индексом — приоритет для "
-            "рекламы/расширения. Высокий индекс при экстрим-погоде (см. выше) — "
-            "следи за логистикой, там твоя основная база."
-        )
-
     # ---------- экстремальная погода ----------
     st.divider()
     st.subheader("⚠️ Экстремальная погода в штатах с продажами")
+    st.caption(
+        "Что показывает: штаты, где сейчас одновременно (а) экстрим — гроза, "
+        "flood-риск, жара или мороз — И (б) есть твои продажи. Сигнал для "
+        "логистики: в этих штатах возможны задержки FBA-доставки и рост возвратов."
+    )
     mask = (
         (df["thunderstorm"].fillna(False) | df["flood_risk"].fillna(False)
          | (df[temp_col] > hot_threshold) | (df[temp_col] < cold_threshold))
@@ -293,11 +312,14 @@ def show_weather_tab(engine):
             "precipitation_sum_mm": "Осадки мм",
             "units": "Units 30д", "orders": "Заказы 30д"})
         st.dataframe(show, use_container_width=True, hide_index=True)
-        st.caption("💡 Логистика: при flood/гроза возможны задержки FBA-доставки "
-                   "и рост возвратов — учитывай в Tender-планировании.")
 
     # ---------- прогноз ----------
     with st.expander(f"🔮 Прогноз 16 дней — температура ({unit_label}) в топ-штатах"):
+        st.caption(
+            "Что показывает: прогноз макс. температуры на 16 дней вперёд по "
+            "топ-8 штатам твоих продаж. Резкое падение линии = приближается "
+            "похолодание (повод заранее проверить сток тёплых SKU)."
+        )
         fc = _load_forecast(engine, days=16)
         if fc.empty:
             st.info("Прогнозных строк нет (forecast в weather_all пуст).")
@@ -311,8 +333,6 @@ def show_weather_tab(engine):
                 pivot = fc_top.pivot_table(index="date", columns="state_code",
                                            values=fc_temp_col, aggfunc="first")
                 st.line_chart(pivot)
-                st.caption(f"Макс. температура ({unit_label}) на 16 дней вперёд "
-                           "по топ-8 штатам продаж.")
 
     st.divider()
     st.caption("Данные обновляются ежедневно (loader #15). Кэш страницы — 30 мин.")
