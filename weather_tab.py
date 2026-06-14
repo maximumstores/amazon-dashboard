@@ -419,6 +419,16 @@ def show_weather_tab(engine, ai_fn=None):
             "и прогноз, и даст 3-4 конкретных вывода. Учитывает, что погода НЕ "
             "предсказывает дневной спрос (фокус на гео-потенциале и логистике)."
         )
+        # выбор провайдера — пишем в тот же session_state, что читает call_ai
+        cur_provider = st.session_state.get("ai_provider", "")
+        default_idx = 0 if cur_provider.startswith("Claude") else 1
+        provider = st.radio(
+            "AI-модель", ["Claude", "Gemini"],
+            horizontal=True, index=default_idx, key="weather_ai_provider",
+            help="Claude лучше следует ограничениям промпта. "
+                 "Выбор синхронизируется с вкладкой «AI Дашборд».",
+        )
+        st.session_state["ai_provider"] = provider
         if st.button("🧠 Сгенерировать AI-анализ", key="weather_ai_btn"):
             # --- собираем компактную сводку для промпта ---
             top_sales = (df.sort_values("units", ascending=False)
@@ -428,16 +438,24 @@ def show_weather_tab(engine, ai_fn=None):
                 for _, r in top_sales.iterrows()
             )
 
+            # Тёплые южные штаты исключаем из "потенциала роста" —
+            # их низкий индекс структурный (merino там не сезон), не недоработка.
+            WARM_SOUTH = {"MS", "AR", "AL", "LA", "OK", "TX", "FL", "GA",
+                          "SC", "MS", "TN", "NM", "AZ", "NV", "HI"}
             pen_lines = ""
             try:
-                under5 = pen[pen["units"] > 0].nsmallest(5, "index")
+                under_pool = pen[(pen["units"] > 0)
+                                 & (~pen["state_code"].isin(WARM_SOUTH))]
+                under5 = under_pool.nsmallest(5, "index")
                 over5 = pen.nlargest(5, "index")
                 pen_lines = (
-                    "Недопроникновение (index<1, потенциал): "
-                    + "; ".join(f"{r['state_name']} idx={r['index']:.2f} "
-                                f"({int(r['units'])} units)"
-                                for _, r in under5.iterrows())
-                    + ". Перепроникновение (index>1, сильная база): "
+                    "Недопроникновение в ПРОХЛАДНЫХ/умеренных штатах "
+                    "(реальный потенциал роста, тёплый юг уже исключён): "
+                    + ("; ".join(f"{r['state_name']} idx={r['index']:.2f} "
+                                 f"({int(r['units'])} units)"
+                                 for _, r in under5.iterrows())
+                       or "нет явных кандидатов")
+                    + ". Перепроникновение (index>1, сильная база для удержания): "
                     + "; ".join(f"{r['state_name']} idx={r['index']:.2f} "
                                 f"({int(r['units'])} units)"
                                 for _, r in over5.iterrows())
@@ -482,4 +500,4 @@ def show_weather_tab(engine, ai_fn=None):
         )
     with col_b:
         st.link_button("📊 Открыть Google Sheets", WEATHER_SHEET_URL,
-                       use_container_width=True) 
+                       use_container_width=True)
