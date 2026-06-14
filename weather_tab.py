@@ -500,4 +500,4 @@ def show_weather_tab(engine, ai_fn=None):
         )
     with col_b:
         st.link_button("📊 Открыть Google Sheets", WEATHER_SHEET_URL,
-                       use_container_width=True)
+                       use_container_width=True) 
