@@ -232,11 +232,11 @@ def show_weather_tab(engine, ai_fn=None):
     # PENETRATION INDEX
     # ============================================================
     st.divider()
-    st.subheader("🎯 Penetration Index — где недопроникновение")
+    st.subheader("🎯 Где продаём лучше или хуже рынка")
     st.markdown(
         "**Зачем это:** карта «Продажи 30д» выше всегда подсвечивает крупные "
-        "штаты — там просто больше людей. Penetration Index убирает этот эффект "
-        "и показывает, где ты продаёшь **сильнее или слабее, чем размер рынка**."
+        "штаты — там просто больше людей. Здесь мы делим продажи на население "
+        "и видим, где ты продаёшь **сильнее или слабее, чем людей там живёт**."
     )
 
     pop_map, pop_src = _load_population()
@@ -252,9 +252,10 @@ def show_weather_tab(engine, ai_fn=None):
         pen["index"] = (pen["sales_share"] / pen["pop_share"]).round(2)
 
         st.caption(
-            f"Как считается: индекс = (доля твоих продаж в штате) / (доля "
-            f"населения штата в США). Например, штат даёт 4% продаж, а это 2% "
-            f"населения → индекс 2.0 (вдвое сильнее рынка). Население: {pop_src}."
+            f"Как считается: делим долю твоих продаж в штате на долю его "
+            f"населения. Пример: штат даёт 4% продаж, а в нём живёт 2% людей "
+            f"страны → показатель 2.0 (продаёшь вдвое сильнее, чем людей). "
+            f"Население: {pop_src}."
         )
 
         fig_p = px.choropleth(
@@ -265,42 +266,41 @@ def show_weather_tab(engine, ai_fn=None):
             hover_name="state_name",
             hover_data={"index": ":.2f", "units": ":,",
                         "population": ":,", "state_code": False},
-            labels={"index": "Penetration"},
+            labels={"index": "Продажи/Люди"},
         )
         fig_p.update_layout(
             margin=dict(l=0, r=0, t=0, b=0), height=520,
-            coloraxis_colorbar=dict(title="Index"),
+            coloraxis_colorbar=dict(title="Показ."),
             geo=dict(bgcolor="rgba(0,0,0,0)", lakecolor="rgba(0,0,0,0)"),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(fig_p, use_container_width=True, key="weather_map_penetration")
-        st.caption("🔵 синий = сильнее рынка (index>1) · 🔴 красный = недобор (index<1)")
+        st.caption("🔵 синий = продаём МНОГО (больше, чем людей) · 🔴 красный = продаём МАЛО (меньше, чем людей)")
 
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("**🔴 Топ недопроникновение (потенциал роста)**")
+            st.markdown("**🔴 Продаём мало — куда можно расти**")
             st.caption(
-                "Штаты, где продаёшь МЕНЬШЕ, чем позволяет их население "
-                "(индекс < 1). Сюда можно расти — но учти: для merino юг "
-                "(MS, AR, LA) структурно слабее из-за тёплого климата, "
-                "это не всегда «упущенная выгода»."
+                "Штаты, где продаёшь МЕНЬШЕ, чем там людей живёт. Сюда можно "
+                "расти — но учти: для merino тёплый юг (MS, AR, LA) слабее "
+                "из-за климата, это не всегда упущенная выгода."
             )
             under = pen[pen["units"] > 0].nsmallest(10, "index")[
                 ["state_name", "index", "units", "population"]
-            ].rename(columns={"state_name": "Штат", "index": "Индекс",
+            ].rename(columns={"state_name": "Штат", "index": "Показатель",
                               "units": "Units 30д", "population": "Население"})
             st.dataframe(under, use_container_width=True, hide_index=True, key="weather_tbl_under")
         with col2:
-            st.markdown("**🔵 Топ перепроникновение (сильнее рынка)**")
+            st.markdown("**🔵 Продаём много — наша сильная база**")
             st.caption(
-                "Штаты, где продаёшь БОЛЬШЕ, чем их доля населения "
-                "(индекс > 1). Твоя сильная база — обычно холодные/аутдор "
-                "штаты (AK, CO, WA, OR), где merino востребован. "
-                "Малые штаты тут могут давать завышенный индекс на малых объёмах."
+                "Штаты, где продаёшь БОЛЬШЕ, чем там людей живёт. Твоя сильная "
+                "база — обычно холодные/аутдор штаты (AK, CO, WA, OR), где "
+                "merino нужен. Маленькие штаты могут давать большой показатель "
+                "на малых числах — не обманись."
             )
             over = pen.nlargest(10, "index")[
                 ["state_name", "index", "units", "population"]
-            ].rename(columns={"state_name": "Штат", "index": "Индекс",
+            ].rename(columns={"state_name": "Штат", "index": "Показатель",
                               "units": "Units 30д", "population": "Население"})
             st.dataframe(over, use_container_width=True, hide_index=True, key="weather_tbl_over")
 
@@ -500,4 +500,4 @@ def show_weather_tab(engine, ai_fn=None):
         )
     with col_b:
         st.link_button("📊 Открыть Google Sheets", WEATHER_SHEET_URL,
-                       use_container_width=True) 
+                       use_container_width=True)
