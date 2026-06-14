@@ -37,6 +37,14 @@ except Exception as _e:
     WEATHER_ERR = f"{type(_e).__name__}: {_e}"
 
 try:
+    from margin_tab import show_margin_tab
+    MARGIN_OK = True
+    MARGIN_ERR = None
+except Exception as _e:
+    MARGIN_OK = False
+    MARGIN_ERR = f"{type(_e).__name__}: {_e}"
+
+try:
     from customer_feedback_page import show_customer_feedback
     CF_OK = True
     CF_ERR = None
@@ -14451,6 +14459,7 @@ NAV_I18N = {
     "🎯 BuyBox Monitor":               {"UA": "🎯 BuyBox Monitor",      "EN": "🎯 BuyBox Monitor",   "RU": "🎯 BuyBox Монитор"},
     "📦 FBA Operations":               {"UA": "📦 FBA Операції",       "EN": "📦 FBA Operations",   "RU": "📦 FBA Операции"},
     "🌦 Weather":                      {"UA": "🌦 Погода",             "EN": "🌦 Weather",          "RU": "🌦 Погода"},
+    "💰 Маржа":                        {"UA": "💰 Маржа",              "EN": "💰 Margin",           "RU": "💰 Маржа"},
     "📋 Податки (Tax)":                {"UA": "📋 Податки",            "EN": "📋 Tax",              "RU": "📋 Налоги"},
     "⭐ Amazon Reviews":               {"UA": "⭐ Відгуки",             "EN": "⭐ Reviews",          "RU": "⭐ Отзывы"},
     "📣 Customer Feedback":            {"UA": "📣 Customer Feedback",  "EN": "📣 Customer Feedback","RU": "📣 Customer Feedback"},
@@ -14485,6 +14494,7 @@ main_nav = [
     "🎯 BuyBox Monitor",
     "📦 FBA Operations",
     "🌦 Weather",
+    "💰 Маржа",
     "📋 Податки (Tax)",
     "⭐ Amazon Reviews",
     "📣 Customer Feedback",
@@ -14562,6 +14572,9 @@ elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "🌦 Weather":
     if WEATHER_OK: show_weather_tab(get_engine(), ai_fn=call_ai)
     else:          st.error(f"❌ weather_tab недоступний: {WEATHER_ERR}")
+elif report_choice == "💰 Маржа":
+    if MARGIN_OK: show_margin_tab(get_engine())
+    else:         st.error(f"❌ margin_tab недоступний: {MARGIN_ERR}")
 elif report_choice == "📋 Податки (Tax)":            show_tax(t)
 elif report_choice == "🧠 AI Дашборд":               show_ai_dashboard()
 elif report_choice == "📦 Restock Agent":            show_restock_agent(t)
@@ -14582,6 +14595,8 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
 
 
 
