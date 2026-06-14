@@ -145,7 +145,7 @@ def _load_forecast(_engine, days=16):
 # MAIN TAB
 # ============================================================
 
-def show_weather_tab(engine):
+def show_weather_tab(engine, ai_fn=None):
     st.header("🌦️ Погода × Продажи (мониторинг)")
     st.caption(
         "Контекстный мониторинг: где сейчас экстремальная погода и как "
@@ -406,6 +406,72 @@ def show_weather_tab(engine):
                     "прохладнее всего в этот день при наличии продаж."
                 )
 
+    # ============================================================
+    # AI-АНАЛИЗ (через call_ai из dashboard.py, передан как ai_fn)
+    # ============================================================
+    st.divider()
+    st.subheader("🤖 AI-анализ погоды и продаж")
+    if ai_fn is None:
+        st.caption("AI-анализ недоступен (ai_fn не передан из dashboard.py).")
+    else:
+        st.caption(
+            "Нажми кнопку — AI посмотрит на penetration index, экстрим-погоду "
+            "и прогноз, и даст 3-4 конкретных вывода. Учитывает, что погода НЕ "
+            "предсказывает дневной спрос (фокус на гео-потенциале и логистике)."
+        )
+        if st.button("🧠 Сгенерировать AI-анализ", key="weather_ai_btn"):
+            # --- собираем компактную сводку для промпта ---
+            top_sales = (df.sort_values("units", ascending=False)
+                         .head(8)[["state_name", "units"]])
+            top_sales_str = "; ".join(
+                f"{r['state_name']}: {int(r['units'])} units"
+                for _, r in top_sales.iterrows()
+            )
+
+            pen_lines = ""
+            try:
+                under5 = pen[pen["units"] > 0].nsmallest(5, "index")
+                over5 = pen.nlargest(5, "index")
+                pen_lines = (
+                    "Недопроникновение (index<1, потенциал): "
+                    + "; ".join(f"{r['state_name']} idx={r['index']:.2f} "
+                                f"({int(r['units'])} units)"
+                                for _, r in under5.iterrows())
+                    + ". Перепроникновение (index>1, сильная база): "
+                    + "; ".join(f"{r['state_name']} idx={r['index']:.2f} "
+                                f"({int(r['units'])} units)"
+                                for _, r in over5.iterrows())
+                )
+            except Exception:
+                pen_lines = "(penetration index недоступен)"
+
+            extreme_str = "нет"
+            if not extreme.empty:
+                extreme_str = "; ".join(
+                    f"{r['state_name']}: {r['weather_desc']} "
+                    f"{r[temp_col]:.0f}{unit_label} ({int(r['units'])} units)"
+                    for _, r in extreme.head(8).iterrows()
+                )
+
+            prompt = f"""Ты — аналитик Amazon FBA для бренда merino.tech (шерстяная одежда merino, сезонный товар: бельё, носки, штаны, лонгсливы). Анализируй данные "погода × продажи" по штатам США.
+
+ВАЖНЫЙ КОНТЕКСТ: статистический анализ показал, что погода ПОЧТИ НЕ предсказывает дневной спрос (детренд-корреляция ≈ −0.04). Поэтому НЕ давай советов вида "похолодает → закупай больше". Фокусируйся на: (1) географическом потенциале через penetration index, (2) логистических рисках от экстремальной погоды, (3) портрете покупателя.
+
+ДАННЫЕ:
+- Топ-8 штатов по продажам (30д): {top_sales_str}
+- Penetration index: {pen_lines}
+- Экстремальная погода сейчас в штатах с продажами: {extreme_str}
+- Всего units за 30д: {int(df['units'].sum())}, штатов с продажами: {int((df['units']>0).sum())}
+
+Дай 3-4 КОНКРЕТНЫХ вывода с действиями. Кратко, по делу, на русском. Каждый вывод — заголовок + 1-2 предложения объяснения."""
+
+            with st.spinner("AI анализирует данные..."):
+                result = ai_fn(prompt)
+            st.markdown(result)
+
+    # ============================================================
+    # ФУТЕР: ссылка на Google Sheets
+    # ============================================================
     st.divider()
     col_a, col_b = st.columns([3, 1])
     with col_a:
