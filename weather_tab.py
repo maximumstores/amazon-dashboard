@@ -204,7 +204,7 @@ def show_weather_tab(engine):
         geo=dict(bgcolor="rgba(0,0,0,0)", lakecolor="rgba(0,0,0,0)"),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     )
-    st.plotly_chart(fig_t, use_container_width=True)
+    st.plotly_chart(fig_t, use_container_width=True, key="weather_map_temp")
 
     # ---------- карта продаж (на всю ширину) ----------
     st.subheader("📦 Продажи 30д")
@@ -226,7 +226,7 @@ def show_weather_tab(engine):
         geo=dict(bgcolor="rgba(0,0,0,0)", lakecolor="rgba(0,0,0,0)"),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     )
-    st.plotly_chart(fig_s, use_container_width=True)
+    st.plotly_chart(fig_s, use_container_width=True, key="weather_map_sales")
 
     # ============================================================
     # PENETRATION INDEX
@@ -273,7 +273,7 @@ def show_weather_tab(engine):
             geo=dict(bgcolor="rgba(0,0,0,0)", lakecolor="rgba(0,0,0,0)"),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig_p, use_container_width=True)
+        st.plotly_chart(fig_p, use_container_width=True, key="weather_map_penetration")
         st.caption("🔵 синий = сильнее рынка (index>1) · 🔴 красный = недобор (index<1)")
 
         col1, col2 = st.columns(2)
@@ -289,7 +289,7 @@ def show_weather_tab(engine):
                 ["state_name", "index", "units", "population"]
             ].rename(columns={"state_name": "Штат", "index": "Индекс",
                               "units": "Units 30д", "population": "Население"})
-            st.dataframe(under, use_container_width=True, hide_index=True)
+            st.dataframe(under, use_container_width=True, hide_index=True, key="weather_tbl_under")
         with col2:
             st.markdown("**🔵 Топ перепроникновение (сильнее рынка)**")
             st.caption(
@@ -302,7 +302,7 @@ def show_weather_tab(engine):
                 ["state_name", "index", "units", "population"]
             ].rename(columns={"state_name": "Штат", "index": "Индекс",
                               "units": "Units 30д", "population": "Население"})
-            st.dataframe(over, use_container_width=True, hide_index=True)
+            st.dataframe(over, use_container_width=True, hide_index=True, key="weather_tbl_over")
 
     # ---------- экстремальная погода ----------
     st.divider()
@@ -331,7 +331,7 @@ def show_weather_tab(engine):
             "state_name": "Штат", temp_col: f"Макс {unit_label}",
             "precipitation_sum_mm": "Осадки мм",
             "units": "Units 30д", "orders": "Заказы 30д"})
-        st.dataframe(show, use_container_width=True, hide_index=True)
+        st.dataframe(show, use_container_width=True, hide_index=True, key="weather_tbl_extreme")
 
     # ---------- прогноз: КАРТА со слайдером дней ----------
     st.divider()
@@ -384,7 +384,7 @@ def show_weather_tab(engine):
                 geo=dict(bgcolor="rgba(0,0,0,0)", lakecolor="rgba(0,0,0,0)"),
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             )
-            st.plotly_chart(fig_fc, use_container_width=True)
+            st.plotly_chart(fig_fc, use_container_width=True, key="weather_map_forecast")
 
             # таблица: прогноз по штатам с продажами на выбранный день
             st.markdown(f"**Прогноз на {sel_day.strftime('%a %d %b')} — штаты с продажами**")
@@ -400,7 +400,7 @@ def show_weather_tab(engine):
                                   "precipitation_sum_mm", "units"]].rename(columns={
                     "state_name": "Штат", fc_temp_col: f"Макс {unit_label}",
                     "precipitation_sum_mm": "Осадки мм", "units": "Units 30д"})
-                st.dataframe(fc_show, use_container_width=True, hide_index=True)
+                st.dataframe(fc_show, use_container_width=True, hide_index=True, key="weather_tbl_forecast")
                 st.caption(
                     "Отсортировано от холодных к тёплым. Верх таблицы = где "
                     "прохладнее всего в этот день при наличии продаж."
