@@ -22,6 +22,13 @@ try:
 except ImportError:
     requests = None
 
+# Google Sheets, куда пишет loader #15 (тот же ID, что в 15_weather_loader.py).
+# Можно переопределить через env SPREADSHEET_ID.
+WEATHER_SHEET_ID = os.environ.get(
+    "SPREADSHEET_ID", "1sVL1U8cixv8BSyQVtf1GNnf3kvSEGUAjbYyHVS3DeuM"
+)
+WEATHER_SHEET_URL = f"https://docs.google.com/spreadsheets/d/{WEATHER_SHEET_ID}"
+
 
 # ============================================================
 # НАСЕЛЕНИЕ ШТАТОВ — fallback (Census 2023 est.)
@@ -400,4 +407,13 @@ def show_weather_tab(engine):
                 )
 
     st.divider()
-    st.caption("Данные обновляются ежедневно (loader #15). Кэш страницы — 30 мин.")
+    col_a, col_b = st.columns([3, 1])
+    with col_a:
+        st.caption(
+            "Данные обновляются ежедневно (loader #15). Кэш страницы — 30 мин. "
+            "Те же данные пишутся в Google Sheets (листы weather_history, "
+            "weather_forecast, weather_alerts, flood_alerts и др.)."
+        )
+    with col_b:
+        st.link_button("📊 Открыть Google Sheets", WEATHER_SHEET_URL,
+                       use_container_width=True)
