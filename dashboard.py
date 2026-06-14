@@ -14560,7 +14560,7 @@ elif report_choice == "💲 Pricing / BuyBox":         show_pricing()
 elif report_choice == "🎯 BuyBox Monitor":           show_buybox_monitor()
 elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "🌦 Weather":
-    if WEATHER_OK: show_weather_tab(get_engine())
+    if WEATHER_OK: show_weather_tab(get_engine(), ai_fn=call_ai)
     else:          st.error(f"❌ weather_tab недоступний: {WEATHER_ERR}")
 elif report_choice == "📋 Податки (Tax)":            show_tax(t)
 elif report_choice == "🧠 AI Дашборд":               show_ai_dashboard()
@@ -14582,6 +14582,8 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
 
 
 
