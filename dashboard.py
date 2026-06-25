@@ -7695,7 +7695,7 @@ def show_listings():
     try:
         with engine.connect() as conn:
             df_all = pd.read_sql(text("SELECT * FROM listings_all"), conn)
-            df_cat = pd.read_sql(text("SELECT asin, brand, main_image_url, sales_rank, sales_rank_category, color, size, product_type FROM catalog_items"), conn)
+            df_cat = pd.read_sql(text("SELECT asin, item_name AS cat_item_name, brand, main_image_url, sales_rank, sales_rank_category, color, size, product_type FROM catalog_items"), conn)
     except Exception as e:
         st.error(f"Помилка: {e}"); return
 
@@ -7707,6 +7707,14 @@ def show_listings():
     df_all['open_date']= pd.to_datetime(df_all['open_date'], errors='coerce')
 
     df = df_all.merge(df_cat, left_on='asin1', right_on='asin', how='left')
+
+    # Title: пріоритет catalog_items, fallback на listings
+    if 'item_name' not in df.columns:
+        df['item_name'] = ''
+    if 'cat_item_name' in df.columns:
+        _li = df['item_name'].fillna('').astype(str).str.strip()
+        df['item_name'] = _li.where(_li != '', df['cat_item_name'].fillna(''))
+    df['item_name'] = df['item_name'].fillna('').astype(str).str.strip().replace('', '—')
 
     # ── Фільтри ──
     df_f = df.copy()
@@ -8062,7 +8070,7 @@ def show_custom_quality():
     try:
         with engine.connect() as conn:
             df_all = pd.read_sql(text("SELECT * FROM listings_all"), conn)
-            df_cat = pd.read_sql(text("SELECT asin, brand, main_image_url, sales_rank, sales_rank_category, color, size, product_type FROM catalog_items"), conn)
+            df_cat = pd.read_sql(text("SELECT asin, item_name AS cat_item_name, brand, main_image_url, sales_rank, sales_rank_category, color, size, product_type FROM catalog_items"), conn)
     except Exception as e:
         st.error(f"Помилка: {e}"); return
 
@@ -8074,6 +8082,14 @@ def show_custom_quality():
     df_all['open_date'] = pd.to_datetime(df_all['open_date'], errors='coerce')
 
     df_full = df_all.merge(df_cat, left_on='asin1', right_on='asin', how='left')
+
+    # Title: пріоритет catalog_items, fallback на listings
+    if 'item_name' not in df_full.columns:
+        df_full['item_name'] = ''
+    if 'cat_item_name' in df_full.columns:
+        _li = df_full['item_name'].fillna('').astype(str).str.strip()
+        df_full['item_name'] = _li.where(_li != '', df_full['cat_item_name'].fillna(''))
+    df_full['item_name'] = df_full['item_name'].fillna('').astype(str).str.strip().replace('', '—')
 
     def _opts(col):
         if col not in df_full.columns: return []
@@ -14595,6 +14611,23 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
 
 
 
