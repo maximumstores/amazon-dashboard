@@ -7792,7 +7792,7 @@ def show_listings():
     # ══════════════════════════════════════════════════════
     # ТАБИ
     # ══════════════════════════════════════════════════════
-    tabs = st.tabs(["📋 По SKU", "🔗 По ASIN", "⚠️ Дефекти", "🆕 Нові листинги", "❓ Без catalog"])
+    tabs = st.tabs(["📋 По SKU", "🔗 По ASIN", "⚠️ Дефекти", "🆕 Нові листинги", "❓ Без catalog", "💲 Ціни"])
 
     # ══════════════════════════════════════
     # TAB 0 — Каталог по SKU
@@ -8053,6 +8053,87 @@ def show_listings():
         st.caption(f"{len(df_no_cat_dedup):,} ASIN без size/brand")
         st.download_button("📥 CSV без catalog", df_no_cat_dedup[show_nc].to_csv(index=False).encode(),
                            "no_catalog_data.csv", "text/csv", key="dl_nocat")
+
+    # ══════════════════════════════════════
+    # TAB 5 — Ціни (всі види цін з v_asin_pricing)
+    # ══════════════════════════════════════
+    with tabs[5]:
+        st.markdown("#### 💲 Ціни по ASIN")
+        st.caption("Усі види цін з Amazon Pricing API: listing / my / regular / business / buybox / lowest / landed")
+
+        try:
+            with engine.connect() as conn:
+                df_pr = pd.read_sql(text("SELECT * FROM v_asin_pricing"), conn)
+        except Exception as e:
+            st.error(f"VIEW v_asin_pricing недоступний: {e}")
+            st.info("Запусти: python listings_loader.py pricing")
+            df_pr = pd.DataFrame()
+
+        if df_pr.empty:
+            st.warning("Немає даних по цінах. Спершу прожени pricing-лоадер.")
+        else:
+            # числові колонки для метрик
+            price_cols = ['price', 'my_price', 'regular_price', 'business_price',
+                          'buybox_price', 'lowest_price', 'landed_price', 'shipping']
+            for c in price_cols:
+                if c in df_pr.columns:
+                    df_pr[c] = pd.to_numeric(df_pr[c].replace('', None), errors='coerce')
+            if 'offer_count' in df_pr.columns:
+                df_pr['offer_count'] = pd.to_numeric(df_pr['offer_count'].replace('', None), errors='coerce')
+
+            # ── фільтр по пошуку (той самий search_q з сайдбару) ──
+            df_prf = df_pr.copy()
+            if search_q:
+                m = (df_prf['asin'].astype(str).str.contains(search_q, case=False, na=False) |
+                     df_prf['title'].astype(str).str.contains(search_q, case=False, na=False))
+                df_prf = df_prf[m]
+            if sel_mp != "Всі":
+                df_prf = df_prf[df_prf['marketplace'].astype(str).str.contains(sel_mp.replace("Amazon.",""), case=False, na=False)]
+
+            # ── KPI ──
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("🔗 ASIN з цінами", f"{len(df_prf):,}")
+            c2.metric("💰 З my_price", f"{df_prf['my_price'].notna().sum():,}")
+            c3.metric("🏆 З BuyBox", f"{df_prf['buybox_price'].notna().sum():,}")
+            c4.metric("📊 Avg my_price",
+                      f"${df_prf['my_price'].mean():.2f}" if df_prf['my_price'].notna().any() else "—")
+
+            # ── розподіл my_price ──
+            df_mp = df_prf[df_prf['my_price'].notna() & (df_prf['my_price'] > 0)]
+            if not df_mp.empty:
+                fig_p = px.histogram(df_mp, x='my_price', nbins=30,
+                                     color_discrete_sequence=['#4CAF50'], height=260)
+                fig_p.update_layout(margin=dict(l=0, r=0, t=10, b=0), xaxis_title="My Price $")
+                st.plotly_chart(fig_p, width="stretch")
+
+            # ── таблиця ──
+            show_p = [c for c in ['asin', 'title', 'brand', 'marketplace', 'currency',
+                                  'price', 'my_price', 'regular_price', 'business_price',
+                                  'buybox_price', 'lowest_price', 'landed_price', 'shipping',
+                                  'offer_count', 'map'] if c in df_prf.columns]
+            col_cfg_p = {
+                'asin':           st.column_config.TextColumn("ASIN"),
+                'title':          st.column_config.TextColumn("Назва", width="large"),
+                'brand':          st.column_config.TextColumn("Brand"),
+                'marketplace':    st.column_config.TextColumn("MP"),
+                'currency':       st.column_config.TextColumn("Cur"),
+                'price':          st.column_config.NumberColumn("Listing $", format="$%.2f"),
+                'my_price':       st.column_config.NumberColumn("My $", format="$%.2f"),
+                'regular_price':  st.column_config.NumberColumn("Regular $", format="$%.2f"),
+                'business_price': st.column_config.NumberColumn("B2B $", format="$%.2f"),
+                'buybox_price':   st.column_config.NumberColumn("BuyBox $", format="$%.2f"),
+                'lowest_price':   st.column_config.NumberColumn("Lowest $", format="$%.2f"),
+                'landed_price':   st.column_config.NumberColumn("Landed $", format="$%.2f"),
+                'shipping':       st.column_config.NumberColumn("Ship $", format="$%.2f"),
+                'offer_count':    st.column_config.NumberColumn("Offers", format="%d"),
+                'map':            st.column_config.TextColumn("MAP"),
+            }
+            st.dataframe(df_prf[show_p].sort_values('my_price', ascending=False, na_position='last'),
+                         column_config=col_cfg_p, width="stretch", hide_index=True, height=500)
+            st.caption(f"{len(df_prf):,} ASIN · усі види цін")
+            st.download_button("📥 CSV (всі ціни по ASIN)",
+                               df_prf[show_p].to_csv(index=False).encode(),
+                               "asins_pricing.csv", "text/csv", key="dl_pricing")
 
     # ── AI ──
     ctx = f"""Listings: {total} SKU | Active: {active_cnt} | Inactive: {inactive_cnt} | FBA: {fba_cnt} | Avg price: ${avg_price:.2f} | Unique ASIN: {unique_asins}"""
@@ -14628,24 +14709,6 @@ st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
 
 
  
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- 
-
 
 
 
