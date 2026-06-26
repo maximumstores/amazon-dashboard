@@ -4077,6 +4077,11 @@ def render_scp(engine):
     # sqlalchemy expanding bindparam для IN (...)
     week_params = {"mk": marketplace, "weeks": tuple(sel_weeks)}
 
+    scp_search = st.text_input(
+        "🔍 Пошук по ASIN", "", key="scp_search_asin",
+        placeholder="B0... (порожньо = всі)",
+    ).strip()
+
     tab_child, tab_parent = st.tabs(["👶 По чайлду", "👪 По паренту"])
 
     # ================== CHILD ==================
@@ -4108,6 +4113,8 @@ def render_scp(engine):
         )
         if only_mine_c:
             df = df[df["category"].notna() & (df["category"] != "")]
+        if scp_search:
+            df = df[df["asin"].astype(str).str.contains(scp_search, case=False, na=False)]
 
         k1, k2, k3 = st.columns(3)
         k1.metric("Σ Impressions", f"{int(df['impressions'].sum()):,}")
@@ -4177,6 +4184,8 @@ def render_scp(engine):
         )
         if only_mine_p:
             dp = dp[dp["category"].notna() & (dp["category"] != "")]
+        if scp_search:
+            dp = dp[dp["parent_asin"].astype(str).str.contains(scp_search, case=False, na=False)]
         st.caption(
             "Взвешенный CTR = ΣClicks/ΣImpressions, ConvR = ΣPurchases/ΣClicks "
             "(рекомендуется). *_simple = простое среднее по чайлдам."
@@ -14959,25 +14968,6 @@ st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
 
 
  
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- 
-
-
-
 
 
  
