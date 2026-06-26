@@ -4101,6 +4101,14 @@ def render_scp(engine):
             week_params,
         )
 
+        only_mine_c = st.checkbox(
+            "Только мои товары (исключить чужие ASIN)",
+            value=True, key="scp_mine_child",
+            help="Оставляет только ASIN, которые есть в каталоге (с категорией).",
+        )
+        if only_mine_c:
+            df = df[df["category"].notna() & (df["category"] != "")]
+
         k1, k2, k3 = st.columns(3)
         k1.metric("Σ Impressions", f"{int(df['impressions'].sum()):,}")
         k2.metric("Σ Clicks", f"{int(df['clicks'].sum()):,}")
@@ -4110,6 +4118,8 @@ def render_scp(engine):
             columns={"ctr": "CTR %", "conv_rate": "ConvR %",
                      "category": "Категория"}
         )
+        if "Категория" in show.columns:
+            show["Категория"] = show["Категория"].fillna("—").replace("", "—")
         st.dataframe(show, use_container_width=True, hide_index=True)
 
         st.download_button(
@@ -4154,6 +4164,13 @@ def render_scp(engine):
             """,
             week_params,
         )
+        only_mine_p = st.checkbox(
+            "Только мои товары (исключить чужие ASIN)",
+            value=True, key="scp_mine_parent",
+            help="Оставляет только паренты, которые есть в каталоге (с категорией).",
+        )
+        if only_mine_p:
+            dp = dp[dp["category"].notna() & (dp["category"] != "")]
         st.caption(
             "Взвешенный CTR = ΣClicks/ΣImpressions, ConvR = ΣPurchases/ΣClicks "
             "(рекомендуется). *_simple = простое среднее по чайлдам."
@@ -4170,6 +4187,8 @@ def render_scp(engine):
                 "category": "Категория",
             }
         )
+        if "Категория" in show_p.columns:
+            show_p["Категория"] = show_p["Категория"].fillna("—").replace("", "—")
         st.dataframe(show_p, use_container_width=True, hide_index=True)
 
         st.download_button(
@@ -14925,9 +14944,6 @@ st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
 
 
 
-
-
- 
 
 
  
