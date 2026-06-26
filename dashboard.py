@@ -4009,6 +4009,174 @@ def show_inventory_finance(df_filtered, t):
     insights_inventory(df_filtered)
 
 
+# ============================================
+# 🔎 SEARCH CATALOGUE PERFORMANCE (scp_child / scp_parent)
+# ============================================
+@st.cache_data(ttl=900)
+def _scp_query(_engine, sql, params):
+    """Кешований запит. _engine з підкресленням — щоб Streamlit його не хешував.
+    list/tuple-параметри автоматично розгортаються для IN (...) (expanding bindparam)."""
+    from sqlalchemy import bindparam
+    stmt = text(sql)
+    for _k, _v in (params or {}).items():
+        if isinstance(_v, (list, tuple)):
+            stmt = stmt.bindparams(bindparam(_k, expanding=True))
+    with _engine.connect() as conn:
+        return pd.read_sql(stmt, conn, params=params)
+
+
+def _to_pct(df, cols):
+    df = df.copy()
+    for c in cols:
+        if c in df.columns:
+            df[c] = (df[c].astype(float) * 100).round(2)
+    return df
+
+
+def render_scp(engine):
+    """Раздел Search Catalogue Performance: CTR/Conv по чайлду и по паренту."""
+    st.markdown("### 🔎 Search Catalogue Performance")
+
+    # --- Проверка наличия данных ---
+    try:
+        mk = _scp_query(
+            engine,
+            "SELECT DISTINCT marketplace FROM public.scp_child ORDER BY 1",
+            {},
+        )
+    except Exception as e:
+        st.error(f"Таблица scp_child недоступна: {e}")
+        st.caption("Запусти loader: `python 22_search_catalog_performance_loader.py 8`")
+        return
+
+    if mk.empty:
+        st.warning(
+            "Нет данных. Запусти loader: "
+            "`python 22_search_catalog_performance_loader.py 8`"
+        )
+        return
+
+    # --- Фильтры ---
+    c1, c2 = st.columns([1, 2])
+    marketplace = c1.selectbox(
+        "Marketplace", mk["marketplace"].tolist(), key="scp_mk"
+    )
+    weeks = _scp_query(
+        engine,
+        "SELECT DISTINCT week_label FROM public.scp_child "
+        "WHERE marketplace=:mk ORDER BY 1 DESC",
+        {"mk": marketplace},
+    )["week_label"].tolist()
+    sel_weeks = c2.multiselect(
+        "Недели", weeks, default=weeks[:4], key="scp_weeks"
+    )
+    if not sel_weeks:
+        st.info("Выбери хотя бы одну неделю.")
+        return
+
+    # sqlalchemy expanding bindparam для IN (...)
+    week_params = {"mk": marketplace, "weeks": tuple(sel_weeks)}
+
+    tab_child, tab_parent = st.tabs(["👶 По чайлду", "👪 По паренту"])
+
+    # ================== CHILD ==================
+    with tab_child:
+        df = _scp_query(
+            engine,
+            """
+            SELECT week_label, asin,
+                   impressions, clicks, cart_adds, purchases, ctr, conv_rate
+            FROM public.scp_child
+            WHERE marketplace=:mk AND week_label IN :weeks
+            ORDER BY week_label DESC, impressions DESC
+            """,
+            week_params,
+        )
+
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Σ Impressions", f"{int(df['impressions'].sum()):,}")
+        k2.metric("Σ Clicks", f"{int(df['clicks'].sum()):,}")
+        k3.metric("Σ Purchases", f"{int(df['purchases'].sum()):,}")
+
+        show = _to_pct(df, ["ctr", "conv_rate"]).rename(
+            columns={"ctr": "CTR %", "conv_rate": "ConvR %"}
+        )
+        st.dataframe(show, use_container_width=True, hide_index=True)
+
+        st.download_button(
+            "⬇️ CSV (child)",
+            show.to_csv(index=False).encode("utf-8"),
+            f"scp_child_{marketplace}.csv",
+            "text/csv",
+            key="scp_dl_child",
+        )
+
+        if not df.empty:
+            asin = st.selectbox(
+                "Тренд CTR/ConvR по ASIN",
+                sorted(df["asin"].unique()),
+                key="scp_child_asin",
+            )
+            trend = _to_pct(
+                df[df["asin"] == asin].sort_values("week_label"),
+                ["ctr", "conv_rate"],
+            )
+            st.line_chart(trend.set_index("week_label")[["ctr", "conv_rate"]])
+
+    # ================== PARENT ==================
+    with tab_parent:
+        dp = _scp_query(
+            engine,
+            """
+            SELECT week_label, parent_asin, child_count,
+                   impressions, clicks, cart_adds, purchases,
+                   ctr_weighted, conv_weighted, ctr_simple, conv_simple
+            FROM public.scp_parent
+            WHERE marketplace=:mk AND week_label IN :weeks
+            ORDER BY week_label DESC, impressions DESC
+            """,
+            week_params,
+        )
+        st.caption(
+            "Взвешенный CTR = ΣClicks/ΣImpressions, ConvR = ΣPurchases/ΣClicks "
+            "(рекомендуется). *_simple = простое среднее по чайлдам."
+        )
+
+        show_p = _to_pct(
+            dp, ["ctr_weighted", "conv_weighted", "ctr_simple", "conv_simple"]
+        ).rename(
+            columns={
+                "ctr_weighted": "CTR % (взвеш.)",
+                "conv_weighted": "ConvR % (взвеш.)",
+                "ctr_simple": "CTR % (средн.)",
+                "conv_simple": "ConvR % (средн.)",
+            }
+        )
+        st.dataframe(show_p, use_container_width=True, hide_index=True)
+
+        st.download_button(
+            "⬇️ CSV (parent)",
+            show_p.to_csv(index=False).encode("utf-8"),
+            f"scp_parent_{marketplace}.csv",
+            "text/csv",
+            key="scp_dl_parent",
+        )
+
+        if not dp.empty:
+            p = st.selectbox(
+                "Тренд по паренту",
+                sorted(dp["parent_asin"].unique()),
+                key="scp_parent_asin",
+            )
+            tp = _to_pct(
+                dp[dp["parent_asin"] == p].sort_values("week_label"),
+                ["ctr_weighted", "conv_weighted"],
+            )
+            st.line_chart(
+                tp.set_index("week_label")[["ctr_weighted", "conv_weighted"]]
+            )
+
+
 def show_sqp(t=None):
     """
     📊 Brand Analytics — Search Query Performance (SQP)
@@ -10213,8 +10381,14 @@ def show_pricing():
             st.info("Немає даних pricing_competitive")
         else:
             # join наша ціна vs competitive
-            merged_comp = df_curr[['asin','listing_price']].merge(
-                df_comp[['asin','listing_price','landed_price','number_of_offers']].rename(
+            # ВАЖЛИВО: df_curr/df_comp містять ВСІ snapshot-и (ORDER BY snapshot_time DESC).
+            # Беремо лише найсвіжіший рядок на ASIN — інакше outer-merge дає
+            # декартів добуток (тисячі рядків × тисячі) → Styler перевищує
+            # ліміт у 262144 клітинки і Streamlit падає.
+            _curr_latest = df_curr.drop_duplicates(subset='asin', keep='first')
+            _comp_latest = df_comp.drop_duplicates(subset='asin', keep='first')
+            merged_comp = _curr_latest[['asin','listing_price']].merge(
+                _comp_latest[['asin','listing_price','landed_price','number_of_offers']].rename(
                     columns={'listing_price':'comp_price','landed_price':'comp_landed'}),
                 on='asin', how='outer'
             )
@@ -14562,6 +14736,7 @@ NAV_I18N = {
     "📣 Customer Feedback":            {"UA": "📣 Customer Feedback",  "EN": "📣 Customer Feedback","RU": "📣 Customer Feedback"},
     "🔍 Keepa Listings":               {"UA": "🔍 Keepa листинги",     "EN": "🔍 Keepa Listings",   "RU": "🔍 Keepa листинги"},
     "📊 Brand Analytics":              {"UA": "📊 Brand Analytics",    "EN": "📊 Brand Analytics",  "RU": "📊 Brand Analytics"},
+    "🔎 Search Catalogue Performance": {"UA": "🔎 Search Catalogue",    "EN": "🔎 Search Catalogue", "RU": "🔎 Search Catalogue"},
     "── AI Агенти ──":                 {"UA": "── AI Агенти ──",       "EN": "── AI Agents ──",     "RU": "── AI Агенты ──"},
     "🧠 AI Дашборд":                   {"UA": "🧠 AI Дашборд",          "EN": "🧠 AI Dashboard",     "RU": "🧠 AI Дашборд"},
     "📦 Restock Agent":                {"UA": "📦 Restock Agent",      "EN": "📦 Restock Agent",    "RU": "📦 Restock Agent"},
@@ -14596,6 +14771,7 @@ main_nav = [
     "⭐ Amazon Reviews",
     "📣 Customer Feedback",
     "📊 Brand Analytics",
+    "🔎 Search Catalogue Performance",
     "── AI Агенти ──",
     "🧠 AI Дашборд",
     "📦 Restock Agent",
@@ -14677,6 +14853,7 @@ elif report_choice == "🧠 AI Дашборд":               show_ai_dashboard(
 elif report_choice == "📦 Restock Agent":            show_restock_agent(t)
 elif report_choice == "📈 Прогноз (Forecast)":       show_forecast(t)
 elif report_choice == "📊 Brand Analytics":          show_sqp(t)
+elif report_choice == "🔎 Search Catalogue Performance": render_scp(get_engine())
 elif report_choice == "⭐ Amazon Reviews":           show_reviews(t)
 elif report_choice == "📣 Customer Feedback":
     if CF_OK: show_customer_feedback()
@@ -14703,6 +14880,12 @@ st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
 
 
 
+
+
+
+
+
+ 
 
 
 
