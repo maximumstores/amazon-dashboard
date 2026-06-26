@@ -10430,25 +10430,36 @@ def show_pricing():
         if df_off.empty:
             st.info("Немає даних pricing_offers")
         else:
-            st.markdown(f"#### 📋 Всі офери ({len(df_off)} записів)")
+            # ВАЖЛИВО: df_off містить ВСІ snapshot-и (ORDER BY snapshot_time DESC).
+            # Беремо лише найсвіжіший — це поточні офери, а не вся історія.
+            # Інакше графіки рахують offer_type/BB по всій історії (перекручено),
+            # а Styler на повній таблиці перевищує ліміт 262144 клітинки → краш.
+            if 'snapshot_time' in df_off.columns and df_off['snapshot_time'].notna().any():
+                df_off_cur = df_off[df_off['snapshot_time'] == df_off['snapshot_time'].max()]
+            else:
+                df_off_cur = df_off
+            st.markdown(f"#### 📋 Поточні офери ({len(df_off_cur)} записів · останній snapshot)")
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("##### 📦 По offer_type")
-                ot = df_off['offer_type'].value_counts().reset_index()
+                ot = df_off_cur['offer_type'].value_counts().reset_index()
                 ot.columns = ['Type','Count']
                 fig7 = px.pie(ot, values='Count', names='Type', hole=0.4, height=300)
                 st.plotly_chart(fig7, width="stretch")
             with col2:
                 st.markdown("##### 🏆 BB Winners в офферах")
-                bbo = df_off['is_buybox_winner'].value_counts().reset_index()
+                bbo = df_off_cur['is_buybox_winner'].value_counts().reset_index()
                 bbo.columns = ['Winner','Count']
                 fig8 = px.pie(bbo, values='Count', names='Winner', hole=0.4, height=300,
                               color_discrete_sequence=['#4CAF50','#F44336'])
                 st.plotly_chart(fig8, width="stretch")
 
             show_o = [c for c in ['asin','offer_type','fulfillment','price','listing_price','shipping','is_buybox_winner','total_offer_count','seller_id'] if c in df_off.columns]
-            st.dataframe(df_off[show_o].style.format({c:'${:.2f}' for c in ['price','listing_price','shipping'] if c in df_off.columns}),
+            # .head(2000) — запобіжник проти ліміту Styler (2000×9 = 18k клітинок)
+            df_off_show = df_off_cur[show_o].head(2000)
+            st.dataframe(df_off_show.style.format({c:'${:.2f}' for c in ['price','listing_price','shipping'] if c in df_off_show.columns}),
                          width="stretch", hide_index=True)
+            st.caption(f"Показано {len(df_off_show):,} з {len(df_off_cur):,} оферів останнього snapshot")
             st.download_button("📥 CSV", df_off.to_csv(index=False).encode(), "offers.csv", "text/csv")
 
     # ── AI ──
@@ -14876,6 +14887,16 @@ st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
 
 
 
+
+
+
+
+
+
+
+
+
+ 
 
 
 
