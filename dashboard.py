@@ -4084,11 +4084,19 @@ def render_scp(engine):
         df = _scp_query(
             engine,
             """
-            SELECT week_label, asin,
-                   impressions, clicks, cart_adds, purchases, ctr, conv_rate
-            FROM public.scp_child
-            WHERE marketplace=:mk AND week_label IN :weeks
-            ORDER BY week_label DESC, impressions DESC
+            SELECT c.week_label, c.asin,
+                   ci.category,
+                   c.impressions, c.clicks, c.cart_adds, c.purchases,
+                   c.ctr, c.conv_rate
+            FROM public.scp_child c
+            LEFT JOIN (
+                SELECT asin, marketplace,
+                       MAX(browse_node_name) AS category
+                FROM public.catalog_items
+                GROUP BY asin, marketplace
+            ) ci ON ci.asin = c.asin AND ci.marketplace = c.marketplace
+            WHERE c.marketplace=:mk AND c.week_label IN :weeks
+            ORDER BY c.week_label DESC, c.impressions DESC
             """,
             week_params,
         )
@@ -4099,7 +4107,8 @@ def render_scp(engine):
         k3.metric("Σ Purchases", f"{int(df['purchases'].sum()):,}")
 
         show = _to_pct(df, ["ctr", "conv_rate"]).rename(
-            columns={"ctr": "CTR %", "conv_rate": "ConvR %"}
+            columns={"ctr": "CTR %", "conv_rate": "ConvR %",
+                     "category": "Категория"}
         )
         st.dataframe(show, use_container_width=True, hide_index=True)
 
@@ -4128,12 +4137,20 @@ def render_scp(engine):
         dp = _scp_query(
             engine,
             """
-            SELECT week_label, parent_asin, child_count,
-                   impressions, clicks, cart_adds, purchases,
-                   ctr_weighted, conv_weighted, ctr_simple, conv_simple
-            FROM public.scp_parent
-            WHERE marketplace=:mk AND week_label IN :weeks
-            ORDER BY week_label DESC, impressions DESC
+            SELECT p.week_label, p.parent_asin,
+                   ci.category,
+                   p.child_count,
+                   p.impressions, p.clicks, p.cart_adds, p.purchases,
+                   p.ctr_weighted, p.conv_weighted, p.ctr_simple, p.conv_simple
+            FROM public.scp_parent p
+            LEFT JOIN (
+                SELECT asin, marketplace,
+                       MAX(browse_node_name) AS category
+                FROM public.catalog_items
+                GROUP BY asin, marketplace
+            ) ci ON ci.asin = p.parent_asin AND ci.marketplace = p.marketplace
+            WHERE p.marketplace=:mk AND p.week_label IN :weeks
+            ORDER BY p.week_label DESC, p.impressions DESC
             """,
             week_params,
         )
@@ -4150,6 +4167,7 @@ def render_scp(engine):
                 "conv_weighted": "ConvR % (взвеш.)",
                 "ctr_simple": "CTR % (средн.)",
                 "conv_simple": "ConvR % (средн.)",
+                "category": "Категория",
             }
         )
         st.dataframe(show_p, use_container_width=True, hide_index=True)
@@ -14909,18 +14927,7 @@ st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
 
 
 
-
-
-
-
  
-
-
-
-
-
-
-
 
 
  
