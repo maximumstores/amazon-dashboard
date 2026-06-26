@@ -4120,7 +4120,13 @@ def render_scp(engine):
         )
         if "Категория" in show.columns:
             show["Категория"] = show["Категория"].fillna("—").replace("", "—")
-        st.dataframe(show, use_container_width=True, hide_index=True)
+        show_disp = show.copy()
+        show_disp["asin"] = "https://www.amazon.com/dp/" + show_disp["asin"].astype(str)
+        st.dataframe(
+            show_disp, use_container_width=True, hide_index=True,
+            column_config={"asin": st.column_config.LinkColumn(
+                "ASIN", display_text=r"/dp/([A-Z0-9]+)")},
+        )
 
         st.download_button(
             "⬇️ CSV (child)",
@@ -4189,7 +4195,13 @@ def render_scp(engine):
         )
         if "Категория" in show_p.columns:
             show_p["Категория"] = show_p["Категория"].fillna("—").replace("", "—")
-        st.dataframe(show_p, use_container_width=True, hide_index=True)
+        show_p_disp = show_p.copy()
+        show_p_disp["parent_asin"] = "https://www.amazon.com/dp/" + show_p_disp["parent_asin"].astype(str)
+        st.dataframe(
+            show_p_disp, use_container_width=True, hide_index=True,
+            column_config={"parent_asin": st.column_config.LinkColumn(
+                "Parent ASIN", display_text=r"/dp/([A-Z0-9]+)")},
+        )
 
         st.download_button(
             "⬇️ CSV (parent)",
@@ -14931,6 +14943,22 @@ elif report_choice == "🔌 API":                       show_api_docs()
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
 
 
 
