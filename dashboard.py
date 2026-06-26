@@ -4178,6 +4178,20 @@ def render_scp(engine):
 
 
 def show_sqp(t=None):
+    """📊 Brand Analytics — обгортка: 2 таби (SQP + Search Catalogue Performance).
+    Тіло SQP винесене в _show_sqp_body; render_scp визначений вище."""
+    if t is None: t = translations.get("UA", {})
+    _tab_sqp, _tab_scp = st.tabs([
+        "📊 Search Query Performance",
+        "🔎 Search Catalogue Performance",
+    ])
+    with _tab_sqp:
+        _show_sqp_body(t)
+    with _tab_scp:
+        render_scp(get_engine())
+
+
+def _show_sqp_body(t=None):
     """
     📊 Brand Analytics — Search Query Performance (SQP)
     - Hero KPI
@@ -14782,7 +14796,6 @@ main_nav = [
     "⭐ Amazon Reviews",
     "📣 Customer Feedback",
     "📊 Brand Analytics",
-    "🔎 Search Catalogue Performance",
     "── AI Агенти ──",
     "🧠 AI Дашборд",
     "📦 Restock Agent",
@@ -14880,6 +14893,10 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
 
 
 
