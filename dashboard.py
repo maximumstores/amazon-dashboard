@@ -4033,6 +4033,149 @@ def _to_pct(df, cols):
     return df
 
 
+# --- Пивот по неделям (legacy Google Sheets layout) ---
+def _scp_build_pivot(df, index_col, metrics, weeks_sorted, extra_cols=None):
+    """Широкий пивот: строки = index_col, колонки = MultiIndex(week_label, metric).
+
+    metrics: список (src_col, disp_name, kind), kind ∈ {'int','pct'}.
+             pct хранится как value*100, округл. до 2; int — числовой (float, без дробей).
+    weeks_sorted: недели по возрастанию (только выбранные) → порядок колонок слева направо.
+    extra_cols: [(src_col, disp_name)] — плоские левые колонки ('', disp) (Категория, Чайлдов)."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    work = df.drop_duplicates(subset=[index_col, "week_label"]).copy()
+    frames = []
+    for src, disp, kind in metrics:
+        if src not in work.columns:
+            continue
+        val = pd.to_numeric(work[src], errors="coerce")
+        if kind == "pct":
+            val = (val * 100).round(2)
+        elif kind == "money":
+            val = val.round(2)
+        else:
+            val = val.round(0)
+        frames.append(pd.DataFrame({
+            index_col: work[index_col].values,
+            "week_label": work["week_label"].values,
+            "metric": disp,
+            "value": val.values,
+        }))
+    if not frames:
+        return pd.DataFrame()
+    long_df = pd.concat(frames, ignore_index=True)
+    piv = long_df.pivot(index=index_col, columns=["week_label", "metric"], values="value")
+
+    # порядок: недели по возрастанию × метрики в заданном порядке
+    metric_order = [disp for _, disp, _ in metrics]
+    present_weeks = list(piv.columns.get_level_values(0).unique())
+    week_order = [w for w in weeks_sorted if w in present_weeks]
+    ordered = [(w, m) for w in week_order for m in metric_order if (w, m) in piv.columns]
+    piv = piv.reindex(columns=pd.MultiIndex.from_tuples(ordered))
+
+    # плоские left-колонки (Категория/Чайлдов) — слева, в заданном порядке
+    if extra_cols:
+        src_lookup = df.drop_duplicates(subset=[index_col]).set_index(index_col)
+        ex_data = {}
+        for src, disp in extra_cols:
+            if src in src_lookup.columns:
+                ex_data[("", disp)] = src_lookup[src].reindex(piv.index)
+        if ex_data:
+            ex_df = pd.DataFrame(ex_data, index=piv.index)
+            ex_df.columns = pd.MultiIndex.from_tuples(list(ex_data.keys()))
+            piv = pd.concat([ex_df, piv], axis=1)
+    return piv
+
+
+def _scp_style_pivot(piv):
+    """Styler: CTR/ConvR — 2 знака, счётчики — целые с разделителем тысяч."""
+    fmt = {}
+    for col in piv.columns:
+        lvl1 = col[1] if isinstance(col, tuple) else col
+        if lvl1 in ("CTR %", "ConvR %"):
+            fmt[col] = "{:.2f}"
+        elif lvl1 == "Sales $":
+            fmt[col] = "{:,.2f}"
+        elif lvl1 in ("Imp", "Clicks", "Purch", "Чайлдов"):
+            fmt[col] = "{:,.0f}"
+    return piv.style.format(fmt, na_rep="—")
+
+
+def _scp_pivot_xlsx(piv):
+    """Пивот → XLSX bytes. merge_cells=True даёт объединённые заголовки-блоки по неделям;
+    заголовки жирные, первая колонка (ASIN) заморожена. Требует openpyxl."""
+    import io
+    from openpyxl.styles import Font
+    bio = io.BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        piv.to_excel(writer, sheet_name="Pivot", merge_cells=True)
+        ws = writer.sheets["Pivot"]
+        nlev = piv.columns.nlevels  # 2 header-строки (week_label, metric)
+        for r in range(1, nlev + 1):
+            for cell in ws[r]:
+                cell.font = Font(bold=True)
+        # заморозить строки-заголовки + первую колонку (index/ASIN)
+        ws.freeze_panes = ws.cell(row=nlev + 1, column=2)
+    return bio.getvalue()
+
+
+def _scp_wow(df, key_col, ctr_col, conv_col):
+    """WoW-дельты vs предыдущей недели того же key (по start_date, не по строке label).
+    ctr/conv — доли (0..1); pp = разница в п.п. (×100). Нет предыдущей недели → NaN → '—'."""
+    if df is None or df.empty or "start_date" not in getattr(df, "columns", []):
+        d = df.copy() if df is not None else pd.DataFrame()
+        for c in ("Δ Impr %", "Δ CTR pp", "Δ ConvR pp"):
+            d[c] = pd.NA
+        return d
+    d = df.sort_values([key_col, "start_date"]).copy()
+    g = d.groupby(key_col, sort=False)
+    p_impr = g["impressions"].shift(1)
+    p_ctr = g[ctr_col].shift(1)
+    p_conv = g[conv_col].shift(1)
+    d["Δ Impr %"] = ((d["impressions"] - p_impr) / p_impr.where(p_impr != 0) * 100).round(1)
+    d["Δ CTR pp"] = ((d[ctr_col] - p_ctr) * 100).round(2)
+    d["Δ ConvR pp"] = ((d[conv_col] - p_conv) * 100).round(2)
+    return d
+
+
+_SCP_PCT_COLS = (
+    "CTR %", "ConvR %",
+    "CTR % (взвеш.)", "ConvR % (взвеш.)",
+    "CTR % (средн.)", "ConvR % (средн.)",
+)
+_SCP_INT_COLS = ("impressions", "clicks", "cart_adds", "purchases", "child_count")
+_SCP_DELTA_COLS = ("Δ Impr %", "Δ CTR pp", "Δ ConvR pp")
+
+
+def _scp_style_table(df_disp):
+    """Styler длинной таблицы: формат чисел + красный/зелёный на WoW-дельтах."""
+    def _c(v):
+        if pd.isna(v):
+            return ""
+        return "color:#c0392b" if v < 0 else ("color:#1e8e3e" if v > 0 else "")
+    sty = df_disp.style
+    present = [c for c in _SCP_DELTA_COLS if c in df_disp.columns]
+    if present:
+        _apply = getattr(sty, "map", getattr(sty, "applymap", None))
+        if _apply is not None:
+            sty = _apply(_c, subset=present)
+    fmt = {}
+    if "Sales $" in df_disp.columns:
+        fmt["Sales $"] = "${:,.2f}"
+    for c in _SCP_PCT_COLS:
+        if c in df_disp.columns:
+            fmt[c] = "{:.2f}"
+    for c in _SCP_INT_COLS:
+        if c in df_disp.columns:
+            fmt[c] = "{:,.0f}"
+    if "Δ Impr %" in df_disp.columns:
+        fmt["Δ Impr %"] = "{:+.1f}%"
+    for c in ("Δ CTR pp", "Δ ConvR pp"):
+        if c in df_disp.columns:
+            fmt[c] = "{:+.2f}"
+    return sty.format(fmt, na_rep="—")
+
+
 def render_scp(engine):
     """Раздел Search Catalogue Performance: CTR/Conv по чайлду и по паренту."""
     st.markdown("### 🔎 Search Catalogue Performance")
@@ -4082,6 +4225,11 @@ def render_scp(engine):
         placeholder="B0... (порожньо = всі)",
     ).strip()
 
+    scp_view = st.radio(
+        "Вид", ["Таблица", "Пивот по неделям"],
+        horizontal=True, key="scp_view",
+    )
+
     tab_child, tab_parent = st.tabs(["👶 По чайлду", "👪 По паренту"])
 
     # ================== CHILD ==================
@@ -4089,10 +4237,10 @@ def render_scp(engine):
         df = _scp_query(
             engine,
             """
-            SELECT c.week_label, c.asin,
+            SELECT c.week_label, c.start_date, c.asin,
                    ci.category,
                    c.impressions, c.clicks, c.cart_adds, c.purchases,
-                   c.ctr, c.conv_rate
+                   c.sales, c.ctr, c.conv_rate
             FROM public.scp_child c
             LEFT JOIN (
                 SELECT asin, marketplace,
@@ -4116,55 +4264,89 @@ def render_scp(engine):
         if scp_search:
             df = df[df["asin"].astype(str).str.contains(scp_search, case=False, na=False)]
 
-        k1, k2, k3 = st.columns(3)
+        k1, k2, k3, k4 = st.columns(4)
         k1.metric("Σ Impressions", f"{int(df['impressions'].sum()):,}")
         k2.metric("Σ Clicks", f"{int(df['clicks'].sum()):,}")
         k3.metric("Σ Purchases", f"{int(df['purchases'].sum()):,}")
+        k4.metric("Σ Sales", f"${df['sales'].sum():,.2f}")
 
-        show = _to_pct(df, ["ctr", "conv_rate"]).rename(
-            columns={"ctr": "CTR %", "conv_rate": "ConvR %",
-                     "category": "Категория"}
-        )
-        if "Категория" in show.columns:
-            show["Категория"] = show["Категория"].fillna("—").replace("", "—")
-        show_disp = show.copy()
-        show_disp["asin"] = "https://www.amazon.com/dp/" + show_disp["asin"].astype(str)
-        st.dataframe(
-            show_disp, use_container_width=True, hide_index=True,
-            column_config={"asin": st.column_config.LinkColumn(
-                "ASIN", display_text=r"/dp/([A-Z0-9]+)")},
-        )
-
-        st.download_button(
-            "⬇️ CSV (child)",
-            show.to_csv(index=False).encode("utf-8"),
-            f"scp_child_{marketplace}.csv",
-            "text/csv",
-            key="scp_dl_child",
-        )
-
-        if not df.empty:
-            asin = st.selectbox(
-                "Тренд CTR/ConvR по ASIN",
-                sorted(df["asin"].unique()),
-                key="scp_child_asin",
+        if scp_view == "Таблица":
+            _wow = _scp_wow(df, "asin", "ctr", "conv_rate")
+            show = _to_pct(_wow, ["ctr", "conv_rate"]).rename(
+                columns={"ctr": "CTR %", "conv_rate": "ConvR %",
+                         "category": "Категория", "sales": "Sales $"}
             )
-            trend = _to_pct(
-                df[df["asin"] == asin].sort_values("week_label"),
-                ["ctr", "conv_rate"],
+            show = show.drop(columns=[c for c in ["start_date"] if c in show.columns])
+            if "Категория" in show.columns:
+                show["Категория"] = show["Категория"].fillna("—").replace("", "—")
+            show_disp = show.copy()
+            show_disp["asin"] = "https://www.amazon.com/dp/" + show_disp["asin"].astype(str)
+            st.dataframe(
+                _scp_style_table(show_disp), use_container_width=True, hide_index=True,
+                column_config={"asin": st.column_config.LinkColumn(
+                    "ASIN", display_text=r"/dp/([A-Z0-9]+)")},
             )
-            st.line_chart(trend.set_index("week_label")[["ctr", "conv_rate"]])
+
+            st.download_button(
+                "⬇️ CSV (child)",
+                show.to_csv(index=False).encode("utf-8"),
+                f"scp_child_{marketplace}.csv",
+                "text/csv",
+                key="scp_dl_child",
+            )
+
+            if not df.empty:
+                asin = st.selectbox(
+                    "Тренд CTR/ConvR по ASIN",
+                    sorted(df["asin"].unique()),
+                    key="scp_child_asin",
+                )
+                trend = _to_pct(
+                    df[df["asin"] == asin].sort_values("week_label"),
+                    ["ctr", "conv_rate"],
+                )
+                st.line_chart(trend.set_index("week_label")[["ctr", "conv_rate"]])
+        else:
+            # --- Пивот по неделям (child) ---
+            piv = _scp_build_pivot(
+                df, "asin",
+                [("impressions", "Imp", "int"), ("clicks", "Clicks", "int"),
+                 ("ctr", "CTR %", "pct"), ("purchases", "Purch", "int"),
+                 ("conv_rate", "ConvR %", "pct"), ("sales", "Sales $", "money")],
+                sorted(sel_weeks), extra_cols=[("category", "Категория")],
+            )
+            if piv.empty:
+                st.info("Нет данных для пивота по выбранным неделям.")
+            else:
+                st.dataframe(_scp_style_pivot(piv), use_container_width=True)
+                cA, cB = st.columns(2)
+                cA.download_button(
+                    "⬇️ CSV пивот (child)",
+                    piv.to_csv().encode("utf-8"),
+                    f"scp_child_pivot_{marketplace}.csv",
+                    "text/csv", key="scp_dl_child_piv",
+                )
+                try:
+                    cB.download_button(
+                        "⬇️ XLSX пивот (child)",
+                        _scp_pivot_xlsx(piv),
+                        f"scp_child_pivot_{marketplace}.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="scp_dl_child_xlsx",
+                    )
+                except Exception as _xe:
+                    cB.caption(f"XLSX недоступен ({_xe}). Установи: `pip install openpyxl`")
 
     # ================== PARENT ==================
     with tab_parent:
         dp = _scp_query(
             engine,
             """
-            SELECT p.week_label, p.parent_asin,
+            SELECT p.week_label, p.start_date, p.parent_asin,
                    ci.category,
                    p.child_count,
                    p.impressions, p.clicks, p.cart_adds, p.purchases,
-                   p.ctr_weighted, p.conv_weighted, p.ctr_simple, p.conv_simple
+                   p.sales, p.ctr_weighted, p.conv_weighted, p.ctr_simple, p.conv_simple
             FROM public.scp_parent p
             LEFT JOIN (
                 SELECT asin, marketplace,
@@ -4191,48 +4373,87 @@ def render_scp(engine):
             "(рекомендуется). *_simple = простое среднее по чайлдам."
         )
 
-        show_p = _to_pct(
-            dp, ["ctr_weighted", "conv_weighted", "ctr_simple", "conv_simple"]
-        ).rename(
-            columns={
-                "ctr_weighted": "CTR % (взвеш.)",
-                "conv_weighted": "ConvR % (взвеш.)",
-                "ctr_simple": "CTR % (средн.)",
-                "conv_simple": "ConvR % (средн.)",
-                "category": "Категория",
-            }
-        )
-        if "Категория" in show_p.columns:
-            show_p["Категория"] = show_p["Категория"].fillna("—").replace("", "—")
-        show_p_disp = show_p.copy()
-        show_p_disp["parent_asin"] = "https://www.amazon.com/dp/" + show_p_disp["parent_asin"].astype(str)
-        st.dataframe(
-            show_p_disp, use_container_width=True, hide_index=True,
-            column_config={"parent_asin": st.column_config.LinkColumn(
-                "Parent ASIN", display_text=r"/dp/([A-Z0-9]+)")},
-        )
+        if scp_view == "Таблица":
+            _wowp = _scp_wow(dp, "parent_asin", "ctr_weighted", "conv_weighted")
+            show_p = _to_pct(
+                _wowp, ["ctr_weighted", "conv_weighted", "ctr_simple", "conv_simple"]
+            ).rename(
+                columns={
+                    "ctr_weighted": "CTR % (взвеш.)",
+                    "conv_weighted": "ConvR % (взвеш.)",
+                    "ctr_simple": "CTR % (средн.)",
+                    "conv_simple": "ConvR % (средн.)",
+                    "category": "Категория",
+                    "sales": "Sales $",
+                }
+            )
+            show_p = show_p.drop(columns=[c for c in ["start_date"] if c in show_p.columns])
+            if "Категория" in show_p.columns:
+                show_p["Категория"] = show_p["Категория"].fillna("—").replace("", "—")
+            show_p_disp = show_p.copy()
+            show_p_disp["parent_asin"] = "https://www.amazon.com/dp/" + show_p_disp["parent_asin"].astype(str)
+            st.dataframe(
+                _scp_style_table(show_p_disp), use_container_width=True, hide_index=True,
+                column_config={"parent_asin": st.column_config.LinkColumn(
+                    "Parent ASIN", display_text=r"/dp/([A-Z0-9]+)")},
+            )
 
-        st.download_button(
-            "⬇️ CSV (parent)",
-            show_p.to_csv(index=False).encode("utf-8"),
-            f"scp_parent_{marketplace}.csv",
-            "text/csv",
-            key="scp_dl_parent",
-        )
+            st.download_button(
+                "⬇️ CSV (parent)",
+                show_p.to_csv(index=False).encode("utf-8"),
+                f"scp_parent_{marketplace}.csv",
+                "text/csv",
+                key="scp_dl_parent",
+            )
 
-        if not dp.empty:
-            p = st.selectbox(
-                "Тренд по паренту",
-                sorted(dp["parent_asin"].unique()),
-                key="scp_parent_asin",
+            if not dp.empty:
+                p = st.selectbox(
+                    "Тренд по паренту",
+                    sorted(dp["parent_asin"].unique()),
+                    key="scp_parent_asin",
+                )
+                tp = _to_pct(
+                    dp[dp["parent_asin"] == p].sort_values("week_label"),
+                    ["ctr_weighted", "conv_weighted"],
+                )
+                st.line_chart(
+                    tp.set_index("week_label")[["ctr_weighted", "conv_weighted"]]
+                )
+        else:
+            # --- Пивот по неделям (parent) ---
+            # CTR %/ConvR % берём из ctr_weighted/conv_weighted (= ΣClicks/ΣImpr, ΣPurch/ΣClicks).
+            # SQL-проверка: SELECT week_label, parent_asin, clicks, impressions,
+            #   ROUND(clicks::numeric/NULLIF(impressions,0),4) AS ctr_check, ctr_weighted
+            #   FROM public.scp_parent WHERE parent_asin=:p;  → ctr_check == ctr_weighted.
+            piv = _scp_build_pivot(
+                dp, "parent_asin",
+                [("impressions", "Imp", "int"), ("clicks", "Clicks", "int"),
+                 ("ctr_weighted", "CTR %", "pct"), ("purchases", "Purch", "int"),
+                 ("conv_weighted", "ConvR %", "pct"), ("sales", "Sales $", "money")],
+                sorted(sel_weeks),
+                extra_cols=[("child_count", "Чайлдов"), ("category", "Категория")],
             )
-            tp = _to_pct(
-                dp[dp["parent_asin"] == p].sort_values("week_label"),
-                ["ctr_weighted", "conv_weighted"],
-            )
-            st.line_chart(
-                tp.set_index("week_label")[["ctr_weighted", "conv_weighted"]]
-            )
+            if piv.empty:
+                st.info("Нет данных для пивота по выбранным неделям.")
+            else:
+                st.dataframe(_scp_style_pivot(piv), use_container_width=True)
+                cA, cB = st.columns(2)
+                cA.download_button(
+                    "⬇️ CSV пивот (parent)",
+                    piv.to_csv().encode("utf-8"),
+                    f"scp_parent_pivot_{marketplace}.csv",
+                    "text/csv", key="scp_dl_parent_piv",
+                )
+                try:
+                    cB.download_button(
+                        "⬇️ XLSX пивот (parent)",
+                        _scp_pivot_xlsx(piv),
+                        f"scp_parent_pivot_{marketplace}.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="scp_dl_parent_xlsx",
+                    )
+                except Exception as _xe:
+                    cB.caption(f"XLSX недоступен ({_xe}). Установи: `pip install openpyxl`")
 
 
 def show_sqp(t=None):
@@ -14951,6 +15172,23 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
 
 
 
