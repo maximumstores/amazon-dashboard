@@ -4176,188 +4176,6 @@ def _scp_style_table(df_disp):
     return sty.format(fmt, na_rep="—")
 
 
-# --- Справочник ASIN (asin_attributes): brand/stage/sku/avatar/model ---
-_SCP_ATTR_FIELDS = ["sku", "brand", "stage", "avatar", "model"]
-_SCP_ATTR_DISP = {"brand": "Brand", "stage": "Stage", "sku": "SKU",
-                  "avatar": "Avatar", "model": "Model", "market": "Market"}
-
-
-def _scp_nz(v):
-    """'' / NaN / 'None' → None; иначе стриженная строка."""
-    if v is None:
-        return None
-    try:
-        if isinstance(v, float) and pd.isna(v):
-            return None
-    except Exception:
-        pass
-    s = str(v).strip()
-    return s if s and s.lower() not in ("nan", "none") else None
-
-
-def _scp_ensure_attributes(engine):
-    with engine.connect() as conn:
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS public.asin_attributes (
-                marketplace TEXT,
-                asin        TEXT,
-                sku         TEXT,
-                brand       TEXT,
-                stage       TEXT,
-                avatar      TEXT,
-                model       TEXT,
-                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (marketplace, asin)
-            )
-        """))
-        conn.commit()
-
-
-def _scp_find_listings_source(engine):
-    """Авто-детект таблицы листингов (есть sku-подобная + asin-подобная колонки)
-    через information_schema — БЕЗ хардкода имени. Возвращает лучшего кандидата + список."""
-    try:
-        with engine.connect() as conn:
-            cols = pd.read_sql(text("""
-                SELECT table_name, column_name
-                FROM information_schema.columns
-                WHERE table_schema='public'
-            """), conn)
-    except Exception:
-        return None
-    by_tbl = {}
-    for _, r in cols.iterrows():
-        by_tbl.setdefault(r["table_name"], set()).add(str(r["column_name"]).lower())
-    sku_names  = ["seller_sku", "sku", "msku", "seller-sku"]
-    asin_names = ["asin1", "asin", "asin_1"]
-    cands = []
-    for tbl, cset in by_tbl.items():
-        sku_c  = next((c for c in sku_names  if c in cset), None)
-        asin_c = next((c for c in asin_names if c in cset), None)
-        if sku_c and asin_c:
-            cands.append({"table": tbl, "sku_col": sku_c, "asin_col": asin_c,
-                          "has_brand": "brand" in cset})
-    if not cands:
-        return None
-    pref = ["listings_all", "listings_open", "merchant_listings", "all_listings"]
-    cands.sort(key=lambda c: (pref.index(c["table"]) if c["table"] in pref else 99, c["table"]))
-    best = dict(cands[0]); best["candidates"] = cands
-    return best
-
-
-def _scp_seed_attributes(engine, marketplace):
-    """Засеять asin_attributes (marketplace, asin, sku, brand) для всех ASIN из scp_child.
-    sku — из авто-найденной таблицы листингов, brand — из catalog_items. stage/avatar/model = NULL.
-    ON CONFLICT DO NOTHING — ручные правки не затираются."""
-    src = _scp_find_listings_source(engine)
-    cat_cols = _table_cols("catalog_items")
-    has_cat_brand = "brand" in cat_cols and "asin" in cat_cols
-    if src:
-        sku_e  = f'l."{src["sku_col"]}"'
-        asin_e = f'l."{src["asin_col"]}"'
-        l_join = (f'LEFT JOIN (SELECT {asin_e} AS asin, MIN({sku_e}) AS sku '
-                  f'FROM public."{src["table"]}" WHERE {asin_e} IS NOT NULL GROUP BY 1) l '
-                  f'ON l.asin = c.asin')
-        l_sku = "l.sku"
-    else:
-        l_join, l_sku = "", "NULL"
-    if has_cat_brand:
-        ci_join = ("LEFT JOIN (SELECT asin, MAX(brand) AS brand FROM public.catalog_items "
-                   "WHERE brand IS NOT NULL GROUP BY asin) ci ON ci.asin = c.asin")
-        ci_brand = "ci.brand"
-    else:
-        ci_join, ci_brand = "", "NULL"
-    sql = f"""
-        INSERT INTO public.asin_attributes (marketplace, asin, sku, brand)
-        SELECT c.marketplace, c.asin, {l_sku}, {ci_brand}
-        FROM (SELECT DISTINCT marketplace, asin FROM public.scp_child WHERE marketplace=:mk) c
-        {l_join}
-        {ci_join}
-        ON CONFLICT (marketplace, asin) DO NOTHING
-    """
-    with engine.connect() as conn:
-        conn.execute(text(sql), {"mk": marketplace})
-        conn.commit()
-    return src
-
-
-def _scp_load_attributes(engine, marketplace):
-    """Не кешируем — чтобы правки в редакторе сразу видел join отчёта."""
-    try:
-        with engine.connect() as conn:
-            return pd.read_sql(text("""
-                SELECT asin, sku, brand, stage, avatar, model
-                FROM public.asin_attributes WHERE marketplace=:mk
-            """), conn, params={"mk": marketplace})
-    except Exception:
-        return pd.DataFrame(columns=["asin", "sku", "brand", "stage", "avatar", "model"])
-
-
-def _scp_save_attributes(engine, marketplace, edited_df):
-    with engine.connect() as conn:
-        for _, r in edited_df.iterrows():
-            asin = _scp_nz(r.get("asin"))
-            if not asin:
-                continue
-            conn.execute(text("""
-                INSERT INTO public.asin_attributes
-                    (marketplace, asin, sku, brand, stage, avatar, model, updated_at)
-                VALUES (:mk, :asin, :sku, :brand, :stage, :avatar, :model, NOW())
-                ON CONFLICT (marketplace, asin) DO UPDATE SET
-                    sku=EXCLUDED.sku, brand=EXCLUDED.brand, stage=EXCLUDED.stage,
-                    avatar=EXCLUDED.avatar, model=EXCLUDED.model, updated_at=NOW()
-            """), {
-                "mk": marketplace, "asin": asin,
-                "sku": _scp_nz(r.get("sku")), "brand": _scp_nz(r.get("brand")),
-                "stage": _scp_nz(r.get("stage")), "avatar": _scp_nz(r.get("avatar")),
-                "model": _scp_nz(r.get("model")),
-            })
-        conn.commit()
-
-
-def _scp_attach_attrs(df, attr_df, key_col, marketplace):
-    """LEFT JOIN атрибутов в df по key_col(==asin). NULL → '' (не 'None'). +колонка market."""
-    if df is None or df.empty:
-        return df
-    d = df.copy()
-    if attr_df is not None and not attr_df.empty:
-        a = attr_df.drop_duplicates(subset=["asin"]).rename(columns={"asin": key_col})
-        d = d.merge(a, on=key_col, how="left", suffixes=("", "_attr"))
-    for f in _SCP_ATTR_FIELDS:
-        if f not in d.columns:
-            d[f] = ""
-        d[f] = d[f].where(d[f].notna(), "").astype(str).replace({"nan": "", "None": ""})
-    d["market"] = marketplace
-    return d
-
-
-def _scp_parent_attributes(engine, marketplace, attr_df):
-    """Атрибуты паррента = MIN() по его чайлдам (через scp_parent_map). Fallback: attr_df по parent_asin."""
-    cols = _table_cols("scp_parent_map")
-    parent_c = next((c for c in ["parent_asin", "parent", "parent_sku_asin"] if c in cols), None)
-    child_c = next((c for c in ["child_asin", "asin", "child"] if c in cols), None)
-    if parent_c and child_c and attr_df is not None and not attr_df.empty:
-        try:
-            with engine.connect() as conn:
-                mp = pd.read_sql(text(
-                    f'SELECT "{parent_c}" AS parent_asin, "{child_c}" AS asin FROM public.scp_parent_map'
-                ), conn)
-            merged = mp.merge(attr_df, on="asin", how="left")
-            agg = merged.groupby("parent_asin", as_index=False).agg(
-                {"sku": "min", "brand": "min", "stage": "min",
-                 "avatar": "min", "model": "min"})
-            return agg.rename(columns={"parent_asin": "asin"})
-        except Exception:
-            pass
-    return attr_df if attr_df is not None else pd.DataFrame(
-        columns=["asin", "sku", "brand", "stage", "avatar", "model"])
-
-
-def _scp_reorder_front(df, front):
-    front = [c for c in front if c in df.columns]
-    return df[front + [c for c in df.columns if c not in front]]
-
-
 def render_scp(engine):
     """Раздел Search Catalogue Performance: CTR/Conv по чайлду и по паренту."""
     st.markdown("### 🔎 Search Catalogue Performance")
@@ -4412,62 +4230,6 @@ def render_scp(engine):
         horizontal=True, key="scp_view",
     )
 
-    # --- Справочник ASIN: ensure + автосев (раз в сессию) + редактор ---
-    _scp_ensure_attributes(engine)
-    _seed_flag = f"_scp_attr_seeded_{marketplace}"
-    _seed_src = None
-    if not st.session_state.get(_seed_flag):
-        try:
-            _seed_src = _scp_seed_attributes(engine, marketplace)
-            st.session_state[_seed_flag] = True
-        except Exception as _se:
-            st.warning(f"Справочник: авто-сев не удался ({_se})")
-
-    with st.expander("📋 Справочник ASIN"):
-        _lst = _seed_src or _scp_find_listings_source(engine)
-        if _lst:
-            _cand = ", ".join(c["table"] for c in _lst.get("candidates", []))
-            st.caption(
-                f"Источник SKU (information_schema): `public.{_lst['table']}` "
-                f"(sku=`{_lst['sku_col']}`, asin=`{_lst['asin_col']}`) · Brand: `catalog_items.brand`. "
-                f"Кандидаты: {_cand}"
-            )
-        else:
-            st.caption("Таблица листингов в information_schema не найдена — sku/brand посеяны пустыми.")
-        if st.button("🔄 Пересеять sku/brand из listings", key="scp_attr_reseed"):
-            try:
-                _scp_seed_attributes(engine, marketplace)
-                st.cache_data.clear()
-                st.success("Пересеяно из listings."); st.rerun()
-            except Exception as _re:
-                st.error(f"Seed error: {_re}")
-
-        _attr_edit = _scp_load_attributes(engine, marketplace)
-        for _f in ["sku", "brand", "stage", "avatar", "model"]:
-            if _f not in _attr_edit.columns:
-                _attr_edit[_f] = ""
-            _attr_edit[_f] = _attr_edit[_f].where(_attr_edit[_f].notna(), "")
-        _attr_edit = _attr_edit[["asin", "sku", "brand", "stage", "avatar", "model"]]
-        _edited = st.data_editor(
-            _attr_edit, key="scp_attr_editor", num_rows="fixed",
-            use_container_width=True, hide_index=True,
-            column_config={
-                "asin":   st.column_config.TextColumn("ASIN", disabled=True),
-                "sku":    st.column_config.TextColumn("SKU"),
-                "brand":  st.column_config.TextColumn("Brand"),
-                "stage":  st.column_config.TextColumn("Стадия"),
-                "avatar": st.column_config.TextColumn("Аватар"),
-                "model":  st.column_config.TextColumn("Model"),
-            },
-        )
-        if st.button("💾 Сохранить справочник", key="scp_attr_save", type="primary"):
-            try:
-                _scp_save_attributes(engine, marketplace, _edited)
-                st.cache_data.clear()
-                st.success("Сохранено."); st.rerun()
-            except Exception as _se:
-                st.error(f"Save error: {_se}")
-
     tab_child, tab_parent = st.tabs(["👶 По чайлду", "👪 По паренту"])
 
     # ================== CHILD ==================
@@ -4502,8 +4264,6 @@ def render_scp(engine):
         if scp_search:
             df = df[df["asin"].astype(str).str.contains(scp_search, case=False, na=False)]
 
-        df = _scp_attach_attrs(df, _scp_load_attributes(engine, marketplace), "asin", marketplace)
-
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Σ Impressions", f"{int(df['impressions'].sum()):,}")
         k2.metric("Σ Clicks", f"{int(df['clicks'].sum()):,}")
@@ -4514,17 +4274,11 @@ def render_scp(engine):
             _wow = _scp_wow(df, "asin", "ctr", "conv_rate")
             show = _to_pct(_wow, ["ctr", "conv_rate"]).rename(
                 columns={"ctr": "CTR %", "conv_rate": "ConvR %",
-                         "category": "Категория", "sales": "Sales $",
-                         "brand": "Brand", "stage": "Stage", "sku": "SKU",
-                         "avatar": "Avatar", "model": "Model", "market": "Market"}
+                         "category": "Категория", "sales": "Sales $"}
             )
             show = show.drop(columns=[c for c in ["start_date"] if c in show.columns])
             if "Категория" in show.columns:
                 show["Категория"] = show["Категория"].fillna("—").replace("", "—")
-            # легаси-порядок: Brand | Stage | ASIN | SKU | Avatar | Model | Market | …
-            show = _scp_reorder_front(show, [
-                "Brand", "Stage", "asin", "SKU", "Avatar", "Model", "Market",
-                "week_label", "Категория"])
             show_disp = show.copy()
             show_disp["asin"] = "https://www.amazon.com/dp/" + show_disp["asin"].astype(str)
             st.dataframe(
@@ -4559,10 +4313,7 @@ def render_scp(engine):
                 [("impressions", "Imp", "int"), ("clicks", "Clicks", "int"),
                  ("ctr", "CTR %", "pct"), ("purchases", "Purch", "int"),
                  ("conv_rate", "ConvR %", "pct"), ("sales", "Sales $", "money")],
-                sorted(sel_weeks), extra_cols=[
-                    ("brand", "Brand"), ("stage", "Stage"), ("sku", "SKU"),
-                    ("avatar", "Avatar"), ("model", "Model"), ("market", "Market"),
-                    ("category", "Категория")],
+                sorted(sel_weeks), extra_cols=[("category", "Категория")],
             )
             if piv.empty:
                 st.info("Нет данных для пивота по выбранным неделям.")
@@ -4617,11 +4368,6 @@ def render_scp(engine):
             dp = dp[dp["category"].notna() & (dp["category"] != "")]
         if scp_search:
             dp = dp[dp["parent_asin"].astype(str).str.contains(scp_search, case=False, na=False)]
-
-        dp = _scp_attach_attrs(
-            dp, _scp_parent_attributes(engine, marketplace, _scp_load_attributes(engine, marketplace)),
-            "parent_asin", marketplace)
-
         st.caption(
             "Взвешенный CTR = ΣClicks/ΣImpressions, ConvR = ΣPurchases/ΣClicks "
             "(рекомендуется). *_simple = простое среднее по чайлдам."
@@ -4639,17 +4385,11 @@ def render_scp(engine):
                     "conv_simple": "ConvR % (средн.)",
                     "category": "Категория",
                     "sales": "Sales $",
-                    "brand": "Brand", "stage": "Stage", "sku": "SKU",
-                    "avatar": "Avatar", "model": "Model", "market": "Market",
-                    "child_count": "Чайлдов",
                 }
             )
             show_p = show_p.drop(columns=[c for c in ["start_date"] if c in show_p.columns])
             if "Категория" in show_p.columns:
                 show_p["Категория"] = show_p["Категория"].fillna("—").replace("", "—")
-            show_p = _scp_reorder_front(show_p, [
-                "Brand", "Stage", "parent_asin", "SKU", "Avatar", "Model", "Market",
-                "week_label", "Чайлдов", "Категория"])
             show_p_disp = show_p.copy()
             show_p_disp["parent_asin"] = "https://www.amazon.com/dp/" + show_p_disp["parent_asin"].astype(str)
             st.dataframe(
@@ -4691,10 +4431,7 @@ def render_scp(engine):
                  ("ctr_weighted", "CTR %", "pct"), ("purchases", "Purch", "int"),
                  ("conv_weighted", "ConvR %", "pct"), ("sales", "Sales $", "money")],
                 sorted(sel_weeks),
-                extra_cols=[
-                    ("brand", "Brand"), ("stage", "Stage"), ("sku", "SKU"),
-                    ("avatar", "Avatar"), ("model", "Model"), ("market", "Market"),
-                    ("child_count", "Чайлдов"), ("category", "Категория")],
+                extra_cols=[("child_count", "Чайлдов"), ("category", "Категория")],
             )
             if piv.empty:
                 st.info("Нет данных для пивота по выбранным неделям.")
@@ -15452,18 +15189,6 @@ st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
 
 
  
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
