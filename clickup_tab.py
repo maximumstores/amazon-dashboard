@@ -62,6 +62,10 @@ def show_clickup_tab(engine, ai_fn=None):
 
     now = datetime.now(timezone.utc)
     df["is_overdue"] = (~df["is_done"]) & df["due_date"].notna() & (df["due_date"] < now)
+    if "time_spent_ms" in df.columns:
+        df["time_spent_hours"] = df["time_spent_ms"].fillna(0) / 1000 / 3600
+    else:
+        df["time_spent_hours"] = 0.0
 
     loaded_at = df["loaded_at"].max()
     st.caption(f"Данные обновлены: {loaded_at.strftime('%Y-%m-%d %H:%M UTC')} (кэш вкладки — 5 мин)")
@@ -276,6 +280,60 @@ def show_clickup_tab(engine, ai_fn=None):
         )
     else:
         st.caption("Бэклог-риска по текущим фильтрам не обнаружено.")
+
+    # ============================================================
+    # ЗАТРАЧЕННОЕ ВРЕМЯ
+    # ============================================================
+    time_tracked_total = f["time_spent_hours"].sum()
+    if time_tracked_total > 0:
+        st.divider()
+        st.subheader("⏱ Затраченное время")
+        st.caption(
+            "Часы, реально протреканные в ClickUp (по задачам, где включён time "
+            "tracking). Задачи без трекинга времени в эту сумму не входят."
+        )
+        st.metric("Всего часов", f"{time_tracked_total:,.0f}")
+
+        time_by_space = f.groupby("space_name")["time_spent_hours"].sum().reset_index()
+        time_by_space = time_by_space[time_by_space["time_spent_hours"] > 0].sort_values(
+            "time_spent_hours", ascending=False
+        )
+        col_t1, col_t2 = st.columns([1, 1])
+        with col_t1:
+            st.markdown("**По командам**")
+            st.dataframe(
+                time_by_space.rename(columns={"space_name": "Space", "time_spent_hours": "Часы"}),
+                use_container_width=True, hide_index=True, key="clickup_tbl_time_by_space",
+                column_config={"Часы": st.column_config.NumberColumn(format="%.1f")},
+            )
+        with col_t2:
+            fig_time_space = px.bar(time_by_space, x="space_name", y="time_spent_hours",
+                                    labels={"space_name": "", "time_spent_hours": "Часы"})
+            fig_time_space.update_layout(
+                margin=dict(l=0, r=0, t=10, b=0), height=280,
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_time_space, use_container_width=True, key="clickup_chart_time_by_space")
+
+        time_person_rows = []
+        for _, row in f[f["time_spent_hours"] > 0].iterrows():
+            names = [n.strip() for n in (row["assignees"] or "Unassigned").split(",") if n.strip()] or ["Unassigned"]
+            for n in names:
+                time_person_rows.append({"person": n, "hours": row["time_spent_hours"]})
+        if time_person_rows:
+            time_person_df = pd.DataFrame(time_person_rows).groupby("person")["hours"].sum().reset_index()
+            time_person_df = time_person_df.sort_values("hours", ascending=False)
+            st.markdown("**По исполнителям**")
+            st.dataframe(
+                time_person_df.rename(columns={"person": "Исполнитель", "hours": "Часы"}),
+                use_container_width=True, hide_index=True, key="clickup_tbl_time_by_person",
+                column_config={"Часы": st.column_config.NumberColumn(format="%.1f")},
+            )
+    else:
+        st.caption(
+            "⏱ Time tracking: данных нет — либо в задачах не трекали время, "
+            "либо time tracking не используется в этом workspace."
+        )
 
     # ---------- по исполнителям ----------
     st.divider()
