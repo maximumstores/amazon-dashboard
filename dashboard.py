@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import numpy as np
 import datetime as dt
 from dotenv import load_dotenv   
+from clickup_tab import show_clickup_tab
 import streamlit.components.v1 as components
 from sqlalchemy import create_engine, text
 try:
