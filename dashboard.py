@@ -11,8 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 import datetime as dt
-from dotenv import load_dotenv   
-from clickup_tab import show_clickup_tab
+from dotenv import load_dotenv
 import streamlit.components.v1 as components
 from sqlalchemy import create_engine, text
 try:
@@ -68,6 +67,14 @@ try:
 except Exception as _e:
     RR_OK = False
     RR_ERR = f"{type(_e).__name__}: {_e}"
+
+try:
+    from clickup_tab import show_clickup_tab
+    CLICKUP_OK = True
+    CLICKUP_ERR = None
+except Exception as _e:
+    CLICKUP_OK = False
+    CLICKUP_ERR = f"{type(_e).__name__}: {_e}"
 
 load_dotenv()
 
@@ -15035,6 +15042,7 @@ NAV_I18N = {
     "🎯 BuyBox Monitor":               {"UA": "🎯 BuyBox Monitor",      "EN": "🎯 BuyBox Monitor",   "RU": "🎯 BuyBox Монитор"},
     "📦 FBA Operations":               {"UA": "📦 FBA Операції",       "EN": "📦 FBA Operations",   "RU": "📦 FBA Операции"},
     "🌦 Weather":                      {"UA": "🌦 Погода",             "EN": "🌦 Weather",          "RU": "🌦 Погода"},
+    "📋 ClickUp":                      {"UA": "📋 ClickUp",            "EN": "📋 ClickUp",          "RU": "📋 ClickUp"},
     "💰 Маржа":                        {"UA": "💰 Маржа",              "EN": "💰 Margin",           "RU": "💰 Маржа"},
     "📋 Податки (Tax)":                {"UA": "📋 Податки",            "EN": "📋 Tax",              "RU": "📋 Налоги"},
     "⭐ Amazon Reviews":               {"UA": "⭐ Відгуки",             "EN": "⭐ Reviews",          "RU": "⭐ Отзывы"},
@@ -15071,6 +15079,7 @@ main_nav = [
     "🎯 BuyBox Monitor",
     "📦 FBA Operations",
     "🌦 Weather",
+    "📋 ClickUp",
     "💰 Маржа",
     "📋 Податки (Tax)",
     "⭐ Amazon Reviews",
@@ -15149,6 +15158,9 @@ elif report_choice == "📦 FBA Operations":           show_fba_operations()
 elif report_choice == "🌦 Weather":
     if WEATHER_OK: show_weather_tab(get_engine(), ai_fn=call_ai)
     else:          st.error(f"❌ weather_tab недоступний: {WEATHER_ERR}")
+elif report_choice == "📋 ClickUp":
+    if CLICKUP_OK: show_clickup_tab(get_engine(), ai_fn=call_ai)
+    else:          st.error(f"❌ clickup_tab недоступний: {CLICKUP_ERR}")
 elif report_choice == "💰 Маржа":
     if MARGIN_OK: show_margin_tab(get_engine())
     else:         st.error(f"❌ margin_tab недоступний: {MARGIN_ERR}")
@@ -15173,6 +15185,37 @@ elif report_choice == "🔌 API":                       show_api_docs()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📦 Amazon FBA BI System v5.0 🌍")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+ 
+
+
+ 
+
+
+
+
+
+
+
 
 
 
