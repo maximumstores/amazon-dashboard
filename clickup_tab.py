@@ -196,6 +196,37 @@ def show_clickup_tab(engine, ai_fn=None):
     r3.metric("👤 Без исполнителя", int(orphan_mask.sum()))
     r4.metric("🔥 Просрочено urgent/high", f"{prio_urgent_overdue} / {prio_high_overdue}")
 
+    def _task_table(sub_df, key, sort_col=None, ascending=True):
+        cols = ["space_name", "list_name", "name", "status", "priority", "assignees", "due_date", "date_updated", "url"]
+        show = sub_df[cols].copy()
+        if sort_col:
+            show = show.sort_values(sort_col, ascending=ascending)
+        show["due_date"] = show["due_date"].dt.strftime("%Y-%m-%d")
+        show["date_updated"] = show["date_updated"].dt.strftime("%Y-%m-%d")
+        show = show.rename(columns={
+            "space_name": "Space", "list_name": "List", "name": "Задача",
+            "status": "Статус", "priority": "Приоритет", "assignees": "Кто",
+            "due_date": "Due", "date_updated": "Обновлено", "url": "Ссылка",
+        })
+        st.dataframe(
+            show.head(300), use_container_width=True, hide_index=True, key=key,
+            column_config={"Ссылка": st.column_config.LinkColumn("Ссылка", display_text="Открыть")},
+        )
+        if len(sub_df) > 300:
+            st.caption(f"Показаны первые 300 из {len(sub_df)}.")
+
+    with st.expander(f"⏳ Зависшие задачи ({int(stale_mask.sum())})"):
+        _task_table(open_df[stale_mask], "clickup_tbl_stale", sort_col="date_updated", ascending=True)
+
+    with st.expander(f"📅 Открытые без due date ({int(no_due_mask.sum())})"):
+        _task_table(open_df[no_due_mask], "clickup_tbl_no_due", sort_col="date_updated", ascending=True)
+
+    with st.expander(f"👤 Без исполнителя ({int(orphan_mask.sum())})"):
+        _task_table(open_df[orphan_mask], "clickup_tbl_orphan", sort_col="date_updated", ascending=True)
+
+    with st.expander(f"🔥 Просрочено urgent/high ({len(prio_overdue)})"):
+        _task_table(prio_overdue, "clickup_tbl_prio_overdue", sort_col="due_date", ascending=True)
+
     # ---------- разбивка по приоритету ----------
     st.markdown("**По приоритету**")
     st.caption("Открытые задачи по приоритету — где сконцентрирован urgent/high.")
@@ -224,6 +255,13 @@ def show_clickup_tab(engine, ai_fn=None):
         overdue_bucket = overdue_df["Просрочено"].value_counts().reindex(labels).reset_index()
         overdue_bucket.columns = ["Просрочено", "Задач"]
         st.dataframe(overdue_bucket, use_container_width=True, hide_index=True, key="clickup_tbl_overdue_age")
+
+        picked_bucket = st.selectbox("Показать задачи из бакета", labels, key="clickup_overdue_bucket_pick")
+        with st.expander(f"Задачи: просрочено {picked_bucket}"):
+            _task_table(
+                overdue_df[overdue_df["Просрочено"] == picked_bucket],
+                "clickup_tbl_overdue_bucket_tasks", sort_col="due_date", ascending=True,
+            )
 
     # ---------- бэклог-риск по spaces ----------
     backlog = by_space[(by_space["open"] >= 20) & (by_space["open"] > 2 * by_space["done"].clip(lower=1))]
