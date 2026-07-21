@@ -469,4 +469,4 @@ def show_clickup_tab(engine, ai_fn=None):
     st.caption(
         "Данные синкает clickup_loader.py (полный обход при первом запуске, "
         "дальше инкрементально по date_updated_gt). Кэш вкладки — 5 мин."
-    )
+    ) 
