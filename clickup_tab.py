@@ -166,6 +166,79 @@ def show_clickup_tab(engine, ai_fn=None):
         else:
             st.info("Пока нет снепшотов для этого Space.")
 
+    # ============================================================
+    # РИСКИ
+    # ============================================================
+    st.divider()
+    st.subheader("🚨 Риски")
+    st.caption(
+        "Сигналы, которые не видны в обычных метриках сверху: зависшие задачи, "
+        "задачи без исполнителя, без дедлайна, срочные просрочки и перекос "
+        "бэклога по командам."
+    )
+
+    STALE_DAYS = 14
+    open_df = f[~f["is_done"]].copy()
+
+    stale_mask = open_df["date_updated"].notna() & (
+        (now - open_df["date_updated"]).dt.days > STALE_DAYS
+    )
+    no_due_mask = open_df["due_date"].isna()
+    orphan_mask = open_df["assignees"].isna() | (open_df["assignees"].str.strip() == "")
+
+    prio_overdue = f[f["is_overdue"] & f["priority"].isin(["urgent", "high"])]
+    prio_urgent_overdue = int((prio_overdue["priority"] == "urgent").sum())
+    prio_high_overdue = int((prio_overdue["priority"] == "high").sum())
+
+    r1, r2, r3, r4 = st.columns(4)
+    r1.metric(f"⏳ Зависли (>{STALE_DAYS}д без апдейта)", int(stale_mask.sum()))
+    r2.metric("📅 Открытые без due date", int(no_due_mask.sum()))
+    r3.metric("👤 Без исполнителя", int(orphan_mask.sum()))
+    r4.metric("🔥 Просрочено urgent/high", f"{prio_urgent_overdue} / {prio_high_overdue}")
+
+    # ---------- разбивка по приоритету ----------
+    st.markdown("**По приоритету**")
+    st.caption("Открытые задачи по приоритету — где сконцентрирован urgent/high.")
+    prio_open = open_df["priority"].fillna("не задан").value_counts().reset_index()
+    prio_open.columns = ["Приоритет", "Открытых задач"]
+    col_prio_table, col_prio_chart = st.columns([1, 1])
+    with col_prio_table:
+        st.dataframe(prio_open, use_container_width=True, hide_index=True, key="clickup_tbl_priority")
+    with col_prio_chart:
+        fig_prio = px.bar(prio_open, x="Приоритет", y="Открытых задач")
+        fig_prio.update_layout(
+            margin=dict(l=0, r=0, t=10, b=0), height=280,
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_prio, use_container_width=True, key="clickup_chart_priority")
+
+    # ---------- давность просрочки ----------
+    overdue_df = f[f["is_overdue"]].copy()
+    if not overdue_df.empty:
+        st.markdown("**Давность просрочки**")
+        st.caption("Просрочено на 1 день и просрочено на 3 месяца — разный уровень срочности.")
+        overdue_df["overdue_days"] = (now - overdue_df["due_date"]).dt.days
+        bins = [-1, 3, 7, 30, 10_000]
+        labels = ["0-3 дня", "4-7 дней", "8-30 дней", "30+ дней"]
+        overdue_df["Просрочено"] = pd.cut(overdue_df["overdue_days"], bins=bins, labels=labels)
+        overdue_bucket = overdue_df["Просрочено"].value_counts().reindex(labels).reset_index()
+        overdue_bucket.columns = ["Просрочено", "Задач"]
+        st.dataframe(overdue_bucket, use_container_width=True, hide_index=True, key="clickup_tbl_overdue_age")
+
+    # ---------- бэклог-риск по spaces ----------
+    backlog = by_space[(by_space["open"] >= 20) & (by_space["open"] > 2 * by_space["done"].clip(lower=1))]
+    if not backlog.empty:
+        st.markdown("**📉 Бэклог-риск (open сильно больше done)**")
+        st.caption("Команды, где открытых задач в 2+ раза больше закрытых — сигнал, что не разгребают быстрее, чем прилетает новое.")
+        st.dataframe(
+            backlog[["space_name", "open", "done"]].rename(columns={
+                "space_name": "Space", "open": "Open", "done": "Done",
+            }),
+            use_container_width=True, hide_index=True, key="clickup_tbl_backlog_risk",
+        )
+    else:
+        st.caption("Бэклог-риска по текущим фильтрам не обнаружено.")
+
     # ---------- по исполнителям ----------
     st.divider()
     st.subheader("👥 По исполнителям")
@@ -190,6 +263,35 @@ def show_clickup_tab(engine, ai_fn=None):
         }),
         use_container_width=True, hide_index=True, key="clickup_tbl_by_person",
     )
+
+    # ---------- drill-down: что именно ведёт выбранный исполнитель ----------
+    person_options = by_person["person"].tolist()
+    picked_person = st.selectbox(
+        "Показать задачи исполнителя", person_options, key="clickup_person_pick"
+    )
+    if picked_person:
+        pattern = rf"(^|,\s*){picked_person}(\s*,|$)" if picked_person != "Unassigned" else None
+        if picked_person == "Unassigned":
+            person_tasks = f[f["assignees"].isna() | (f["assignees"].str.strip() == "")]
+        else:
+            person_tasks = f[f["assignees"].str.contains(pattern, na=False, regex=True)]
+
+        person_tasks = person_tasks.sort_values(["is_overdue", "due_date"], ascending=[False, True])
+        st.caption(f"{picked_person}: {len(person_tasks)} задач под текущими фильтрами")
+
+        show_cols = person_tasks[["space_name", "list_name", "name", "status", "due_date", "is_overdue", "url"]].copy()
+        show_cols["due_date"] = show_cols["due_date"].dt.strftime("%Y-%m-%d")
+        show_cols = show_cols.rename(columns={
+            "space_name": "Space", "list_name": "List", "name": "Задача",
+            "status": "Статус", "due_date": "Due", "is_overdue": "Overdue", "url": "Ссылка",
+        })
+        st.dataframe(
+            show_cols.head(300), use_container_width=True, hide_index=True,
+            key="clickup_tbl_person_tasks",
+            column_config={"Ссылка": st.column_config.LinkColumn("Ссылка", display_text="Открыть")},
+        )
+        if len(person_tasks) > 300:
+            st.caption(f"Показаны первые 300 из {len(person_tasks)} — сузь фильтры сверху для остальных.")
 
     # ---------- карточки задач по Spaces ----------
     st.divider()
@@ -255,6 +357,10 @@ def show_clickup_tab(engine, ai_fn=None):
 - По Spaces (open/overdue/done): {space_summary}
 - Люди с наибольшим числом просроченных задач: {top_overdue_people}
 - Всего задач под текущим фильтром: {len(f)}, просрочено: {int(f['is_overdue'].sum())}
+- Зависли без апдейта >{STALE_DAYS}д: {int(stale_mask.sum())}
+- Открытые без due date: {int(no_due_mask.sum())}
+- Без исполнителя: {int(orphan_mask.sum())}
+- Просрочено с приоритетом urgent: {prio_urgent_overdue}, high: {prio_high_overdue}
 
 Дай 3-4 конкретных вывода с действиями: где риск бэклога, кого разгрузить, что просрочено критично. Кратко, по делу, на русском."""
 
