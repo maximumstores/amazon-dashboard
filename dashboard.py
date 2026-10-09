@@ -14772,8 +14772,10 @@ def show_scraper_manager():
 from auth import (
     ensure_tables, create_admin_if_not_exists,
     show_login, logout, can_view,
-    show_admin_panel, ALL_REPORTS
+    show_admin_panel, ALL_REPORTS,
+    google_enabled, google_sign_in
 )
+import usage
 
 try:
     ensure_tables()
@@ -14783,8 +14785,13 @@ except Exception as e:
     st.stop()
 
 if "user" not in st.session_state or not st.session_state.user:
-    show_login()
-    st.stop()
+    if google_enabled():
+        google_sign_in()        # вход через Google (@maximumstores.online)
+    else:
+        show_login()            # пока нет [auth] в Secrets — вход по паролю
+        st.stop()
+if google_enabled():
+    usage.log_login(st.session_state.user.get("email", ""))
 
 user = st.session_state.user
 
@@ -15100,12 +15107,12 @@ tools_nav = [
 
 _eff_bi_role = user.get("bi_role") or user.get("role") or "viewer"
 # ⚙️ Кабінет видно ВСІМ: admin → управління юзерами, viewer → власний профіль
-tools_nav_full = ["⚙️ Кабінет"] + tools_nav
+tools_nav_full = ["⚙️ Кабінет", "📈 Активность дашборда"] + tools_nav
 
 if _eff_bi_role != "admin":
     main_nav       = [r for r in main_nav       if can_view(r)]
     # Кабінет доступний усім (всередині різна поведінка для admin / viewer)
-    tools_nav_full = [r for r in tools_nav_full if (r == "⚙️ Кабінет" or can_view(r))]
+    tools_nav_full = [r for r in tools_nav_full if (r in ("⚙️ Кабінет", "📈 Активность дашборда") or can_view(r))]
 
 all_real = main_nav + tools_nav_full
 if not all_real:
@@ -15180,6 +15187,7 @@ elif report_choice == "🔍 Keepa Listings":
 elif report_choice == "📊 ETL Status":               show_etl_status()
 elif report_choice == "🕷 Scraper Reviews":          show_scraper_manager()
 elif report_choice in ("⚙️ Кабінет", "👑 User Management"): show_admin_panel()
+elif report_choice == "📈 Активность дашборда":    usage.render_activity_page()
 elif report_choice == "ℹ️ Про додаток":              show_about()
 elif report_choice == "🔌 API":                       show_api_docs()
 
