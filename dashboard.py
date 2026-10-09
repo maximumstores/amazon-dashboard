@@ -514,6 +514,9 @@ translations = {
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+if DATABASE_URL:
+    # +psycopg / +psycopg2 в схеме → обычный postgresql:// (в проекте стоит psycopg2, psycopg3 нет)
+    DATABASE_URL = DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://", 1).replace("postgresql+psycopg://", "postgresql://", 1)
 
 @st.cache_resource
 def get_engine():
