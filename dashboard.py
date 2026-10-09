@@ -521,7 +521,7 @@ if DATABASE_URL:
 @st.cache_resource
 def get_engine():
     return create_engine(
-        DATABASE_URL,
+        DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1),   # SQLAlchemy 2.1 по умолчанию берёт psycopg3
         connect_args={"options": "-csearch_path=spapi,public", "connect_timeout": 10},
         pool_size=3,
         max_overflow=2,
