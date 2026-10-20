@@ -87,7 +87,8 @@ def regularity(logins: list[dict], end: date, days: int) -> dict:
     if not base:
         return empty
     win = df[(df["day"] >= start) & (df["day"] <= end)]
-    win_wd = win[win["day"].map(lambda d: d.weekday() < 5)]
+    # .astype(bool): на пустом окне map() даёт object-серию, и pandas принимает её за список колонок
+    win_wd = win[win["day"].map(lambda d: d.weekday() < 5).astype(bool)]
     days_by = win_wd.groupby("email")["day"].nunique().reindex(base, fill_value=0)
     share = (days_by / wd).clip(upper=1) if wd else days_by * 0
     per_user = pd.DataFrame({
